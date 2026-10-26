@@ -42,15 +42,10 @@ import { Deal } from "@/lib/mockData";
 import { useToast } from "@/components/common/ToastProvider";
 
 const DEALS_MORE_VIEWS = [
-  "All Deals",
-  "Closing This Month",
   "Lost Deals",
-  "My Deals",
-  "Open Deals",
-  "Recently Created Deals",
-  "Recently Modified Deals",
   "Today's Deals",
-  "Won Deals"
+  "Recently Created Deals",
+  "Recently Modified Deals"
 ];
 
 export default function PipelineDealsPage() {

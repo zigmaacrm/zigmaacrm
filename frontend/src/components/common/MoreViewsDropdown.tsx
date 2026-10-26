@@ -47,7 +47,7 @@ export default function MoreViewsDropdown({
         }}
         className={`px-2.5 py-1.5 rounded-lg font-bold text-sm transition-colors cursor-pointer select-none outline-none focus:outline-none focus:ring-0 border ${
           isOpen || views.includes(activeView)
-            ? "bg-red-50 text-red-600 border-red-200/80 shadow-2xs"
+            ? "border-slate-200 bg-slate-100 text-slate-800 shadow-2xs"
             : "border-transparent text-slate-500 hover:text-slate-900 hover:bg-slate-100"
         }`}
         title="More views"
