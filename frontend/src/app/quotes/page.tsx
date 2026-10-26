@@ -26,6 +26,7 @@ import { api } from "@/lib/api";
 import { Invoice } from "@/lib/mockData";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { useToast } from "@/components/common/ToastProvider";
+import CustomDropdown from "@/components/common/CustomDropdown";
 
 export default function QuotesPage() {
   const { toast, confirm } = useToast();
@@ -229,28 +230,34 @@ export default function QuotesPage() {
 
               <div className="flex items-center gap-2">
                 {/* Type Filter */}
-                <select
+                <CustomDropdown
                   value={typeFilter}
-                  onChange={(e) => setTypeFilter(e.target.value)}
-                  className="bg-slate-50 border border-slate-200 text-slate-700 text-xs font-semibold px-2.5 py-1.5 rounded-xl focus:outline-none cursor-pointer"
-                >
-                  <option value="ALL">All Types</option>
-                  <option value="QUOTE">Quotations</option>
-                  <option value="INVOICE">Tax Invoices</option>
-                </select>
+                  onChange={(val) => setTypeFilter(String(val))}
+                  size="sm"
+                  variant="input"
+                  className="w-36 text-xs"
+                  options={[
+                    { value: "ALL", label: "All Types" },
+                    { value: "QUOTE", label: "Quotations" },
+                    { value: "INVOICE", label: "Tax Invoices" },
+                  ]}
+                />
 
                 {/* Status Filter */}
-                <select
+                <CustomDropdown
                   value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
-                  className="bg-slate-50 border border-slate-200 text-slate-700 text-xs font-semibold px-2.5 py-1.5 rounded-xl focus:outline-none cursor-pointer"
-                >
-                  <option value="ALL">All Statuses</option>
-                  <option value="DRAFT">Draft</option>
-                  <option value="SENT">Sent / Proposal</option>
-                  <option value="PAID">Paid</option>
-                  <option value="OVERDUE">Overdue</option>
-                </select>
+                  onChange={(val) => setStatusFilter(String(val))}
+                  size="sm"
+                  variant="input"
+                  className="w-40 text-xs"
+                  options={[
+                    { value: "ALL", label: "All Statuses" },
+                    { value: "DRAFT", label: "Draft", dotColor: "bg-slate-400" },
+                    { value: "SENT", label: "Sent / Proposal", dotColor: "bg-blue-500" },
+                    { value: "PAID", label: "Paid", dotColor: "bg-emerald-500" },
+                    { value: "OVERDUE", label: "Overdue", dotColor: "bg-rose-500" },
+                  ]}
+                />
               </div>
             </div>
 

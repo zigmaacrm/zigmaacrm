@@ -62,7 +62,7 @@ export default function NewTaskDrawer({
   const [dueTime, setDueTime] = useState("");
   const [priority, setPriority] = useState<string>("Medium");
   const [status, setStatus] = useState<string>("Pending");
-  const [assignedTo, setAssignedTo] = useState(currentUser?.full_name || "Mohamed Thoufiq");
+  const [assignedTo, setAssignedTo] = useState("");
   const [description, setDescription] = useState("");
 
   // Contact association
@@ -144,7 +144,7 @@ export default function NewTaskDrawer({
         due_time: dueTime.trim() || undefined,
         priority: priority as any,
         status: status || "Pending",
-        assigned_to: assignedTo.trim() || "Mohamed Thoufiq",
+        assigned_to: assignedTo.trim() || undefined,
         description: description.trim() || undefined,
         contact_id: selectedContact?.id || undefined,
         contact_name: selectedContact?.name || (contactSearch.trim() || undefined),
@@ -411,7 +411,7 @@ export default function NewTaskDrawer({
                 type="text"
                 value={assignedTo}
                 onChange={(e) => setAssignedTo(e.target.value)}
-                placeholder="Mohamed Thoufiq"
+                placeholder="e.g. Sales Executive / Account Manager"
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl text-xs px-3.5 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-red-100 focus:border-red-400 font-medium transition-all"
               />
             </div>

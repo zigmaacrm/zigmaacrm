@@ -5,6 +5,7 @@ import { X, Handshake, ArrowRight, Building2, User, Phone, CheckCircle2 } from "
 import { Lead } from "@/lib/mockData";
 import { api } from "@/lib/api";
 import { useToast } from "@/components/common/ToastProvider";
+import CustomDropdown from "@/components/common/CustomDropdown";
 
 interface ConvertToDealModalProps {
   lead: Lead;
@@ -150,7 +151,7 @@ export default function ConvertToDealModal({
                   required
                   value={dealValue}
                   onChange={(e) => setDealValue(e.target.value)}
-                  placeholder="50,000"
+                  placeholder="e.g. 50,000"
                   className="w-full bg-slate-50 text-slate-900 text-sm pl-8 pr-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 font-bold"
                 />
               </div>
@@ -160,17 +161,13 @@ export default function ConvertToDealModal({
               <label className="block text-xs font-bold text-slate-700 mb-1.5">
                 Pipeline Stage <span className="text-red-500">*</span>
               </label>
-              <select
+              <CustomDropdown
                 value={pipelineStage}
-                onChange={(e) => setPipelineStage(e.target.value)}
-                className="w-full bg-slate-50 text-slate-900 text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 font-medium cursor-pointer"
-              >
-                {CONVERT_PIPELINE_STAGES.map((stg) => (
-                  <option key={stg} value={stg}>
-                    {stg}
-                  </option>
-                ))}
-              </select>
+                onChange={(val) => setPipelineStage(String(val))}
+                options={CONVERT_PIPELINE_STAGES}
+                variant="input"
+                className="w-full text-sm font-medium"
+              />
             </div>
           </div>
 

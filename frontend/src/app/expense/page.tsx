@@ -17,6 +17,8 @@ import { api } from "@/lib/api";
 import { formatCurrency } from "@/lib/utils";
 import { Expense } from "@/lib/mockData";
 import { useToast } from "@/components/common/ToastProvider";
+import CustomDropdown from "@/components/common/CustomDropdown";
+import CustomDatePicker from "@/components/common/CustomDatePicker";
 
 export default function ExpensesPage() {
   const { toast, confirm } = useToast();
@@ -105,19 +107,22 @@ export default function ExpensesPage() {
             </div>
 
             <div className="flex items-center gap-3">
-              <select
+              <CustomDropdown
                 value={categoryFilter}
-                onChange={(e) => setCategoryFilter(e.target.value)}
-                className="bg-white text-slate-700 text-xs px-3 py-2 rounded-xl border border-slate-200 font-semibold"
-              >
-                <option value="All">All Categories</option>
-                <option value="Marketing">Marketing</option>
-                <option value="Software">Software</option>
-                <option value="Office">Office</option>
-                <option value="Travel">Travel</option>
-                <option value="Salaries">Salaries</option>
-                <option value="Other">Other</option>
-              </select>
+                onChange={(val) => setCategoryFilter(String(val))}
+                size="sm"
+                variant="input"
+                className="w-44 text-xs font-semibold"
+                options={[
+                  { value: "All", label: "All Categories" },
+                  { value: "Marketing", label: "Marketing" },
+                  { value: "Software", label: "Software" },
+                  { value: "Office", label: "Office" },
+                  { value: "Travel", label: "Travel" },
+                  { value: "Salaries", label: "Salaries" },
+                  { value: "Other", label: "Other" },
+                ]}
+              />
 
               <button
                 onClick={() => setShowAddModal(true)}
@@ -265,18 +270,13 @@ export default function ExpensesPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">Category</label>
-                  <select
+                  <CustomDropdown
                     value={category}
-                    onChange={(e) => setCategory(e.target.value as any)}
-                    className="w-full bg-slate-50 text-slate-900 text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500"
-                  >
-                    <option value="Software">Software</option>
-                    <option value="Marketing">Marketing</option>
-                    <option value="Office">Office</option>
-                    <option value="Travel">Travel</option>
-                    <option value="Salaries">Salaries</option>
-                    <option value="Other">Other</option>
-                  </select>
+                    onChange={(val) => setCategory(val as any)}
+                    options={["Software", "Marketing", "Office", "Travel", "Salaries", "Other"]}
+                    variant="input"
+                    className="w-full text-xs font-medium"
+                  />
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">Amount (₹) *</label>
@@ -293,38 +293,42 @@ export default function ExpensesPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">Payment Date</label>
-                  <input
-                    type="date"
+                  <CustomDatePicker
                     value={date}
-                    onChange={(e) => setDate(e.target.value)}
-                    className="w-full bg-slate-50 text-slate-900 text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500"
+                    onChange={(d) => setDate(d)}
+                    placeholder="Select payment date"
+                    className="w-full text-xs"
                   />
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">Payment Method</label>
-                  <select
+                  <CustomDropdown
                     value={paymentMethod}
-                    onChange={(e) => setPaymentMethod(e.target.value as any)}
-                    className="w-full bg-slate-50 text-slate-900 text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500"
-                  >
-                    <option value="Card">Corporate Card</option>
-                    <option value="UPI">UPI</option>
-                    <option value="Bank Transfer">Bank Transfer (NEFT/RTGS)</option>
-                    <option value="Cash">Cash</option>
-                  </select>
+                    onChange={(val) => setPaymentMethod(val as any)}
+                    options={[
+                      { value: "Card", label: "Corporate Card" },
+                      { value: "UPI", label: "UPI" },
+                      { value: "Bank Transfer", label: "Bank Transfer (NEFT/RTGS)" },
+                      { value: "Cash", label: "Cash" },
+                    ]}
+                    variant="input"
+                    className="w-full text-xs font-medium"
+                  />
                 </div>
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">Status</label>
-                <select
+                <CustomDropdown
                   value={status}
-                  onChange={(e) => setStatus(e.target.value as any)}
-                  className="w-full bg-slate-50 text-slate-900 text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500"
-                >
-                  <option value="Paid">Paid</option>
-                  <option value="Pending">Pending Approval</option>
-                </select>
+                  onChange={(val) => setStatus(val as any)}
+                  options={[
+                    { value: "Paid", label: "Paid", dotColor: "bg-emerald-500" },
+                    { value: "Pending", label: "Pending Approval", dotColor: "bg-amber-500" },
+                  ]}
+                  variant="input"
+                  className="w-full text-xs font-medium"
+                />
               </div>
 
               <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">

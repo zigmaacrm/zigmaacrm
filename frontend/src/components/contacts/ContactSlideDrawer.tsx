@@ -39,6 +39,7 @@ import CallDialerModal from "@/components/common/CallDialerModal";
 import LeadSourceSelect from "@/components/common/LeadSourceSelect";
 import { SourceBadge } from "@/components/common/SourceBadge";
 import WhatsAppIcon from "@/components/common/WhatsAppIcon";
+import CustomDropdown from "@/components/common/CustomDropdown";
 
 interface ContactSlideDrawerProps {
   contact: Contact | null;
@@ -1304,17 +1305,13 @@ export default function ContactSlideDrawer({
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Pipeline Stage
                   </label>
-                  <select
+                  <CustomDropdown
                     value={dealStage}
-                    onChange={(e) => setDealStage(e.target.value)}
-                    className="w-full bg-slate-50 text-slate-900 text-xs px-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 font-medium"
-                  >
-                    <option value="New Deal">New Deal</option>
-                    <option value="Discovery">Discovery</option>
-                    <option value="Proposal Sent">Proposal Sent</option>
-                    <option value="Negotiation">Negotiation</option>
-                    <option value="Won">Won</option>
-                  </select>
+                    onChange={(val) => setDealStage(String(val))}
+                    options={["New Deal", "Discovery", "Proposal Sent", "Negotiation", "Won"]}
+                    variant="input"
+                    className="w-full text-xs font-medium"
+                  />
                 </div>
               </div>
 

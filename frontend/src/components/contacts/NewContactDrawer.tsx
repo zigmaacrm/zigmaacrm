@@ -58,9 +58,7 @@ export default function NewContactDrawer({
   const [designation, setDesignation] = useState("");
   const [source, setSource] = useState("Manual");
   const [lifecycleStage, setLifecycleStage] = useState("New");
-  const [assignedOwner, setAssignedOwner] = useState(
-    currentUser?.full_name || "Mohamed Thoufiq"
-  );
+  const [assignedOwner, setAssignedOwner] = useState("");
   const [customData, setCustomData] = useState<Record<string, any>>({});
   const [teamMembers, setTeamMembers] = useState<any[]>([]);
 
@@ -106,7 +104,7 @@ export default function NewContactDrawer({
       source: source as any,
       status: stageValue as any,
       lifecycle_stage: stageValue as any,
-      assigned_to: assignedOwner || "Mohamed Thoufiq",
+      assigned_to: assignedOwner.trim() || undefined,
       custom_data: customData,
       custom_properties: customData
     } as any;
@@ -176,7 +174,7 @@ export default function NewContactDrawer({
                 <input
                   type="text"
                   required
-                  placeholder="Rahul"
+                  placeholder="e.g. Rahul"
                   value={firstName}
                   onChange={(e) => setFirstName(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 focus:border-red-500 focus:bg-white focus:ring-2 focus:ring-red-100 rounded-xl text-xs px-3.5 py-2.5 text-slate-900 transition-all font-medium outline-none"
@@ -189,7 +187,7 @@ export default function NewContactDrawer({
                 </label>
                 <input
                   type="text"
-                  placeholder="Sharma"
+                  placeholder="e.g. Sharma"
                   value={lastName}
                   onChange={(e) => setLastName(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 focus:border-red-500 focus:bg-white focus:ring-2 focus:ring-red-100 rounded-xl text-xs px-3.5 py-2.5 text-slate-900 transition-all font-medium outline-none"
@@ -214,7 +212,7 @@ export default function NewContactDrawer({
                   <input
                     type="tel"
                     required
-                    placeholder="98765 43210"
+                    placeholder="e.g. 98765 43210"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-200 focus:border-red-500 focus:bg-white focus:ring-2 focus:ring-red-100 rounded-xl text-xs pl-9 pr-3.5 py-2.5 text-slate-900 transition-all font-medium outline-none font-mono"
@@ -231,7 +229,7 @@ export default function NewContactDrawer({
                 <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="email"
-                  placeholder="rahul.sharma@company.com"
+                  placeholder="e.g. rahul.sharma@company.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 focus:border-red-500 focus:bg-white focus:ring-2 focus:ring-red-100 rounded-xl text-xs pl-9 pr-3.5 py-2.5 text-slate-900 transition-all font-medium outline-none"
@@ -257,7 +255,7 @@ export default function NewContactDrawer({
                   <Building2 className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
-                    placeholder="Acme Global Inc"
+                    placeholder="e.g. Acme Global Inc"
                     value={companyName}
                     onChange={(e) => setCompanyName(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-200 focus:border-red-500 focus:bg-white focus:ring-2 focus:ring-red-100 rounded-xl text-xs pl-9 pr-3.5 py-2.5 text-slate-900 transition-all font-medium outline-none"
@@ -271,7 +269,7 @@ export default function NewContactDrawer({
                 </label>
                 <input
                   type="text"
-                  placeholder="VP of Growth"
+                  placeholder="e.g. VP of Growth"
                   value={designation}
                   onChange={(e) => setDesignation(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 focus:border-red-500 focus:bg-white focus:ring-2 focus:ring-red-100 rounded-xl text-xs px-3.5 py-2.5 text-slate-900 transition-all font-medium outline-none"
@@ -333,7 +331,7 @@ export default function NewContactDrawer({
                   value={assignedOwner}
                   onChange={(e) => setAssignedOwner(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 focus:border-red-500 focus:bg-white focus:ring-2 focus:ring-red-100 rounded-xl text-xs px-3.5 py-2.5 text-slate-900 font-medium outline-none"
-                  placeholder="Mohamed Thoufiq"
+                  placeholder="e.g. Sales Executive / Account Manager"
                 />
               )}
             </div>

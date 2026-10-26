@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import { Lead } from "@/lib/mockData";
 import { useToast } from "@/components/common/ToastProvider";
 import LeadSourceSelect from "@/components/common/LeadSourceSelect";
+import CustomDropdown from "@/components/common/CustomDropdown";
 
 interface Props {
   lead: Lead | null;
@@ -112,7 +113,7 @@ export default function EditLeadModal({ lead, isOpen, onClose, onLeadUpdated }: 
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="Rajesh Sharma"
+                placeholder="e.g. Rajesh Sharma"
                 className="w-full bg-slate-50 text-slate-900 text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-600 focus:bg-white"
               />
             </div>
@@ -131,7 +132,7 @@ export default function EditLeadModal({ lead, isOpen, onClose, onLeadUpdated }: 
                   required
                   value={phone.replace(/^\+91\s*/, "")}
                   onChange={(e) => setPhone(e.target.value)}
-                  placeholder="98765 43210"
+                  placeholder="e.g. 98765 43210"
                   className="w-full bg-slate-50 text-slate-900 text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-600 focus:bg-white font-mono"
                 />
               </div>
@@ -145,7 +146,7 @@ export default function EditLeadModal({ lead, isOpen, onClose, onLeadUpdated }: 
                 type="text"
                 value={companyName}
                 onChange={(e) => setCompanyName(e.target.value)}
-                placeholder="TechCorp India"
+                placeholder="e.g. TechCorp India"
                 className="w-full bg-slate-50 text-slate-900 text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-600 focus:bg-white"
               />
             </div>
@@ -155,7 +156,7 @@ export default function EditLeadModal({ lead, isOpen, onClose, onLeadUpdated }: 
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="rajesh@techcorp.in"
+                placeholder="e.g. rajesh@techcorp.in"
                 className="w-full bg-slate-50 text-slate-900 text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-600 focus:bg-white"
               />
             </div>
@@ -171,17 +172,13 @@ export default function EditLeadModal({ lead, isOpen, onClose, onLeadUpdated }: 
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">Stage</label>
-              <select
+              <CustomDropdown
                 value={stage}
-                onChange={(e) => setStage(e.target.value)}
-                className="w-full bg-slate-50 text-slate-900 text-xs px-2.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-600 focus:bg-white font-medium"
-              >
-                <option value="New Lead">New Lead</option>
-                <option value="Contacted / Follow-up">Contacted</option>
-                <option value="Proposal Sent">Proposal Sent</option>
-                <option value="Closed / Won">Closed / Won</option>
-                <option value="Lost">Lost</option>
-              </select>
+                onChange={(val) => setStage(String(val))}
+                options={["New Lead", "Contacted / Follow-up", "Proposal Sent", "Closed / Won", "Lost"]}
+                variant="input"
+                className="w-full text-xs font-medium"
+              />
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">Deal (₹)</label>

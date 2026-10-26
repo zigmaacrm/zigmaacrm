@@ -125,7 +125,7 @@ export default function AddLeadModal({ isOpen, onClose, onLeadAdded }: Props) {
                   required
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
-                  placeholder="98765 43210"
+                  placeholder="e.g. 98765 43210"
                   className="w-full bg-slate-50 text-slate-900 text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white font-mono"
                 />
               </div>
@@ -149,7 +149,7 @@ export default function AddLeadModal({ isOpen, onClose, onLeadAdded }: Props) {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="rajesh@techcorp.in"
+                placeholder="e.g. rajesh@techcorp.in"
                 className="w-full bg-slate-50 text-slate-900 text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
               />
             </div>

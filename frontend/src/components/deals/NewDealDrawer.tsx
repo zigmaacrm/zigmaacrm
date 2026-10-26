@@ -150,9 +150,9 @@ export default function NewDealDrawer({
         contact_id: selectedContactId || undefined,
         contact_phone: contacts.find((c) => String(c.id) === String(selectedContactId))?.phone || undefined,
         contact_email: contacts.find((c) => String(c.id) === String(selectedContactId))?.email || undefined,
-        probability: Number(probability) || 50,
-        close_date: closeDate || new Date().toISOString().split("T")[0],
-        expected_close_date: closeDate || new Date().toISOString().split("T")[0],
+        probability: (stage === "Won" || stage === "Closed Won") ? 100 : 50,
+        close_date: new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0],
+        expected_close_date: new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0],
         custom_data: {
           ...customData,
           company_name: companyName.trim() || (contactName ? `${contactName}'s Account` : "Enterprise Client"),
@@ -365,56 +365,13 @@ export default function NewDealDrawer({
             </div>
           </div>
 
-          {/* SECTION 3: PROBABILITY & FORECAST */}
-          <div className="space-y-4 pt-2">
-            <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
-              <Calendar className="w-4 h-4 text-red-600" />
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
-                3. Probability & Forecast
-              </h3>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3.5">
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-bold text-slate-700">
-                    Win Probability
-                  </label>
-                  <span className="text-xs font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-full border border-red-100">
-                    {probability}%
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  step="5"
-                  value={probability}
-                  onChange={(e) => setProbability(e.target.value)}
-                  className="w-full accent-red-600 cursor-pointer h-2 bg-slate-200 rounded-lg mt-2"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Expected Close Date
-                </label>
-                <CustomDatePicker
-                  value={closeDate}
-                  onChange={(val) => setCloseDate(val)}
-                  placeholder="Select close date"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* SECTION 4: CUSTOM FIELDS (IF ANY) */}
+          {/* SECTION 3: CUSTOM FIELDS (IF ANY) */}
           {customFields.length > 0 && (
             <div className="space-y-3 pt-2">
               <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
                 <span className="w-2 h-2 rounded-full bg-slate-400" />
                 <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
-                  Custom Attributes
+                  3. Custom Attributes
                 </h3>
               </div>
 
