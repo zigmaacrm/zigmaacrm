@@ -107,6 +107,9 @@ export default function DashboardPage() {
         if (u) setCurrentUser(u);
       };
       loadUser();
+      api.getMe().then((me) => {
+        if (me) setCurrentUser(me);
+      }).catch(() => {});
       window.addEventListener("zigmaa_user_updated", loadUser);
       window.addEventListener("zigmaa_role_changed", () => {
         setActiveRole(api.getActiveRole());
@@ -283,6 +286,57 @@ export default function DashboardPage() {
     }
   };
 
+  // Deduplicate and aggregate sources into clean, unique categories without repetitions
+  const deduplicatedSources = useMemo(() => {
+    if (!metrics?.source_breakdown) return [];
+
+    const map = new Map<string, { label: string; count: number }>();
+
+    for (const item of metrics.source_breakdown) {
+      if (!item.count || item.count <= 0) continue;
+      const s = (item.source || "").toUpperCase().replace(/[-_]/g, " ");
+      let canon = "Manual";
+      if (s.includes("META") || s.includes("FACEBOOK") || s.includes("INSTAGRAM")) {
+        canon = "Meta Ads";
+      } else if (s.includes("GOOGLE")) {
+        canon = "Google Ads";
+      } else if (s.includes("WHATSAPP")) {
+        canon = "WhatsApp";
+      } else if (s.includes("WEB") || s.includes("FORM")) {
+        canon = "Website Form";
+      } else if (s.includes("CSV") || s.includes("EXCEL") || s.includes("IMPORT")) {
+        canon = "Excel / CSV Import";
+      } else if (s.includes("REFERRAL")) {
+        canon = "Referral";
+      } else if (s.includes("COLD") || s.includes("OUTREACH")) {
+        canon = "Cold Outreach";
+      } else if (s.includes("LINKEDIN")) {
+        canon = "LinkedIn Ads";
+      } else if (s.includes("YOUTUBE")) {
+        canon = "YouTube";
+      } else {
+        canon = item.source?.trim() || "Manual";
+      }
+
+      const existing = map.get(canon);
+      if (existing) {
+        existing.count += item.count;
+      } else {
+        map.set(canon, { label: canon, count: item.count });
+      }
+    }
+
+    const total = Array.from(map.values()).reduce((acc, curr) => acc + curr.count, 0) || metrics.total_leads || 1;
+
+    return Array.from(map.values())
+      .sort((a, b) => b.count - a.count)
+      .map((item) => ({
+        source: item.label,
+        count: item.count,
+        percentage: Math.round((item.count / total) * 1000) / 10
+      }));
+  }, [metrics?.source_breakdown, metrics?.total_leads]);
+
   // Helper for source icon & styling
   const getSourceMeta = (source: string) => {
     const s = (source || "").toUpperCase();
@@ -294,6 +348,18 @@ export default function DashboardPage() {
     }
     if (s.includes("GOOGLE")) {
       return { label: "Google Ads", icon: Globe, color: "bg-amber-500", text: "text-amber-600", bg: "bg-amber-50" };
+    }
+    if (s.includes("WHATSAPP")) {
+      return { label: "WhatsApp", icon: MessageSquare, color: "bg-emerald-600", text: "text-emerald-600", bg: "bg-emerald-50" };
+    }
+    if (s.includes("CSV") || s.includes("EXCEL") || s.includes("IMPORT")) {
+      return { label: "Excel / CSV Import", icon: Users, color: "bg-indigo-500", text: "text-indigo-600", bg: "bg-indigo-50" };
+    }
+    if (s.includes("REFERRAL")) {
+      return { label: "Referral", icon: Users, color: "bg-purple-500", text: "text-purple-600", bg: "bg-purple-50" };
+    }
+    if (s.includes("COLD")) {
+      return { label: "Cold Outreach", icon: Phone, color: "bg-cyan-500", text: "text-cyan-600", bg: "bg-cyan-50" };
     }
     return { label: source || "Manual", icon: Users, color: "bg-slate-500", text: "text-slate-600", bg: "bg-slate-50" };
   };
@@ -320,7 +386,7 @@ export default function DashboardPage() {
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <Header />
 
-        <main className="flex-1 overflow-y-auto p-5 lg:p-7 space-y-6 custom-scrollbar bg-[#F8FAFC] dark:bg-[#0b0f19]">
+        <main className="flex-1 overflow-y-auto p-4 lg:p-6 space-y-5 pb-6 custom-scrollbar bg-[#F8FAFC] dark:bg-[#0b0f19]">
           {/* Dynamic Greeting & Live Clock Header Controls */}
           <div className="flex flex-wrap items-center justify-between gap-4 pb-1">
             <div>
@@ -517,9 +583,9 @@ export default function DashboardPage() {
           </div>
 
           {/* 2. MIDDLE SECTION: PIPELINE STAGES & SOURCE BREAKDOWN */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
             {/* Left: Pipeline Stage Distribution (8 Cols) */}
-            <div className="lg:col-span-8 p-6 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-5">
+            <div className="lg:col-span-8 p-5 lg:p-6 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <div>
                   <h3 className="text-sm font-bold text-slate-900">Pipeline Stage Distribution</h3>
@@ -589,7 +655,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Right: Lead Source Performance (4 Cols) */}
-            <div className="lg:col-span-4 p-6 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-5">
+            <div className="lg:col-span-4 p-5 lg:p-6 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <div>
                   <h3 className="text-sm font-bold text-slate-900">Source Performance</h3>
@@ -604,14 +670,18 @@ export default function DashboardPage() {
                     <div key={i} className="h-9 bg-slate-50 rounded-xl animate-pulse" />
                   ))}
                 </div>
+              ) : deduplicatedSources.length === 0 ? (
+                <div className="py-8 text-center text-xs text-slate-400">
+                  No inbound sources recorded yet.
+                </div>
               ) : (
-                <div className="space-y-3.5">
-                  {metrics?.source_breakdown.map((src, idx) => {
+                <div className="space-y-3">
+                  {deduplicatedSources.map((src, idx) => {
                     const meta = getSourceMeta(src.source);
                     const Icon = meta.icon;
 
                     return (
-                      <div key={idx} className="space-y-1.5">
+                      <div key={idx} className="space-y-1">
                         <div className="flex items-center justify-between text-xs">
                           <div className="flex items-center gap-1.5">
                             <Icon className={`w-3.5 h-3.5 ${meta.text}`} />
@@ -636,7 +706,7 @@ export default function DashboardPage() {
           </div>
 
           {/* 3. BOTTOM OPERATIONAL FEEDS: RECENT INBOUND LEADS & TODAY'S DUE TASKS */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
             {/* Bottom Left: Recent Inbound Leads (7 Cols) */}
             <div className="lg:col-span-7 p-6 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">

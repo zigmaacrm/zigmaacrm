@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { X, UserPlus, Sparkles } from "lucide-react";
 import { api } from "@/lib/api";
 import { useToast } from "@/components/common/ToastProvider";
+import LeadSourceSelect from "@/components/common/LeadSourceSelect";
 
 interface Props {
   isOpen: boolean;
@@ -147,17 +148,10 @@ export default function AddLeadModal({ isOpen, onClose, onLeadAdded }: Props) {
 
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1">Lead Source</label>
-            <select
+            <LeadSourceSelect
               value={adSource}
-              onChange={(e) => setAdSource(e.target.value)}
-              className="w-full bg-slate-50 text-slate-900 text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white font-medium"
-            >
-              <option value="Meta Ads">Meta Ads (Instagram / FB)</option>
-              <option value="Google Ads">Google Search Ads</option>
-              <option value="Website Form">Website Form & Direct</option>
-              <option value="Referral">Partner / Referral</option>
-              <option value="Manual">Manual Entry</option>
-            </select>
+              onChange={(val) => setAdSource(val)}
+            />
           </div>
 
           {/* Dynamic Custom Fields */}

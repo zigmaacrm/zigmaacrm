@@ -81,14 +81,9 @@ const SOURCES = [
 ];
 
 const CONTACTS_MORE_VIEWS = [
-  "Customers",
-  "With Open Deals",
-  "Without Deals",
   "Untouched Enquiries (> 24h)",
   "Converted / Won",
-  "Junk / Disqualified",
-  "Recently modified",
-  "Recently created"
+  "Junk / Disqualified"
 ];
 
 export type SmartViewTab =

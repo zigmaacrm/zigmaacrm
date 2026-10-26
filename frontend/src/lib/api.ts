@@ -472,7 +472,7 @@ export const zigmaaApi = {
       id: data.user?.id || `google-${Date.now()}`,
       organization_id: data.user?.organization_id || "org-1",
       email: googleUser.email,
-      full_name: data.user?.full_name || googleUser.name || "Google User",
+      full_name: data.user?.full_name || "User",
       picture: googleUser.picture || data.user?.picture || data.user?.avatar_url,
       avatar_url: googleUser.picture || data.user?.picture || data.user?.avatar_url,
       role: data.user?.role || "ADMIN",

@@ -6,6 +6,7 @@ import { Contact } from "@/lib/mockData";
 import { api } from "@/lib/api";
 import { useToast } from "@/components/common/ToastProvider";
 import CustomDropdown from "@/components/common/CustomDropdown";
+import LeadSourceSelect from "@/components/common/LeadSourceSelect";
 
 interface NewContactDrawerProps {
   isOpen: boolean;
@@ -296,18 +297,11 @@ export default function NewContactDrawer({
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Lead Source
                 </label>
-                <div className="relative">
-                  <Tag className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <select
-                    value={source}
-                    onChange={(e) => setSource(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 focus:border-red-500 focus:bg-white focus:ring-2 focus:ring-red-100 rounded-xl text-xs pl-9 pr-3.5 py-2.5 text-slate-900 font-semibold outline-none cursor-pointer"
-                  >
-                    {SOURCES.map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                </div>
+                <LeadSourceSelect
+                  value={source}
+                  onChange={(val) => setSource(val)}
+                  options={SOURCES}
+                />
               </div>
 
               <div>

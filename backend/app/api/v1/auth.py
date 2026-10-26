@@ -39,9 +39,8 @@ async def google_login(payload: GoogleLoginSchema, db: AsyncSession = Depends(ge
         )
 
     user_updated = False
-    if payload.name and payload.name.strip():
-        user.full_name = payload.name.strip()
-        user_updated = True
+    # STRICT: Do not take name from Google. Only provide the registered full name given in sign up.
+    # Only take the Google profile photo (picture) and email.
     if payload.picture and payload.picture.strip():
         user.avatar_url = payload.picture.strip()
         user_updated = True

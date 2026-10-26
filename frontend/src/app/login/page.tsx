@@ -380,7 +380,6 @@ export default function LoginPage() {
                 // Authenticate with CRM backend (verifies email is registered)
                 const gRes = await api.loginWithGoogle({
                   email: profile.email,
-                  name: profile.name,
                   picture: profile.picture,
                   token: tokenResponse.access_token,
                 });

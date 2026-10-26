@@ -39,6 +39,13 @@ const ACTIVITY_TYPES = [
 
 const PRIORITIES = ["Low", "Medium", "High", "Urgent"];
 
+const STATUS_OPTIONS = [
+  { value: "Pending", label: "Pending", dotColor: "bg-amber-500" },
+  { value: "To Do", label: "To Do", dotColor: "bg-slate-400" },
+  { value: "In Progress", label: "In Progress", dotColor: "bg-blue-500" },
+  { value: "Completed", label: "Completed", dotColor: "bg-emerald-500" },
+];
+
 export default function NewTaskDrawer({
   isOpen,
   onClose,
@@ -54,6 +61,7 @@ export default function NewTaskDrawer({
   const [dueDate, setDueDate] = useState("");
   const [dueTime, setDueTime] = useState("");
   const [priority, setPriority] = useState<string>("Medium");
+  const [status, setStatus] = useState<string>("Pending");
   const [assignedTo, setAssignedTo] = useState(currentUser?.full_name || "Mohamed Thoufiq");
   const [description, setDescription] = useState("");
 
@@ -135,7 +143,7 @@ export default function NewTaskDrawer({
         due_date: dueDate,
         due_time: dueTime.trim() || undefined,
         priority: priority as any,
-        status: "PENDING",
+        status: status || "Pending",
         assigned_to: assignedTo.trim() || "Mohamed Thoufiq",
         description: description.trim() || undefined,
         contact_id: selectedContact?.id || undefined,
@@ -148,6 +156,7 @@ export default function NewTaskDrawer({
       setTitle("");
       setActivityType("Call");
       setPriority("Medium");
+      setStatus("Pending");
       setDescription("");
       setSelectedContact(null);
       setContactSearch("");
@@ -379,19 +388,32 @@ export default function NewTaskDrawer({
                 />
               </div>
 
-              {/* Assigned To */}
+              {/* Status */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Assigned To
+                  Status
                 </label>
-                <input
-                  type="text"
-                  value={assignedTo}
-                  onChange={(e) => setAssignedTo(e.target.value)}
-                  placeholder="Mohamed Thoufiq"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl text-xs px-3.5 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-red-100 focus:border-red-400 font-medium transition-all"
+                <CustomDropdown
+                  value={status}
+                  options={STATUS_OPTIONS}
+                  onChange={(val) => setStatus(val)}
+                  variant="input"
                 />
               </div>
+            </div>
+
+            {/* Assigned To */}
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                Assigned To
+              </label>
+              <input
+                type="text"
+                value={assignedTo}
+                onChange={(e) => setAssignedTo(e.target.value)}
+                placeholder="Mohamed Thoufiq"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl text-xs px-3.5 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-red-100 focus:border-red-400 font-medium transition-all"
+              />
             </div>
 
             {/* Description / Notes */}

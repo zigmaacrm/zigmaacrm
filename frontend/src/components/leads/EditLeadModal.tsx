@@ -5,6 +5,7 @@ import { X, Sparkles, Building2, Phone, Mail, DollarSign, Edit3 } from "lucide-r
 import { api } from "@/lib/api";
 import { Lead } from "@/lib/mockData";
 import { useToast } from "@/components/common/ToastProvider";
+import LeadSourceSelect from "@/components/common/LeadSourceSelect";
 
 interface Props {
   lead: Lead | null;
@@ -154,20 +155,10 @@ export default function EditLeadModal({ lead, isOpen, onClose, onLeadUpdated }: 
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">Source</label>
-              <select
+              <LeadSourceSelect
                 value={adSource}
-                onChange={(e) => setAdSource(e.target.value)}
-                className="w-full bg-slate-50 text-slate-900 text-xs px-2.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-600 focus:bg-white font-medium"
-              >
-                <option value="Meta Ads">Meta Ads</option>
-                <option value="Google Ads">Google Ads</option>
-                <option value="Website Form">Website Form</option>
-                <option value="WhatsApp">WhatsApp</option>
-                <option value="Youtube">Youtube</option>
-                <option value="Instagram">Instagram</option>
-                <option value="Cold Call">Cold Call</option>
-                <option value="Referral">Referral</option>
-              </select>
+                onChange={(val) => setAdSource(val)}
+              />
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">Stage</label>

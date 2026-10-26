@@ -36,6 +36,8 @@ import { formatCurrency, formatDate } from "@/lib/utils";
 import { useToast } from "@/components/common/ToastProvider";
 import SendEmailModal from "@/components/contacts/SendEmailModal";
 import CallDialerModal from "@/components/common/CallDialerModal";
+import LeadSourceSelect from "@/components/common/LeadSourceSelect";
+import { SourceBadge } from "@/components/common/SourceBadge";
 
 interface ContactSlideDrawerProps {
   contact: Contact | null;
@@ -1027,46 +1029,33 @@ export default function ContactSlideDrawer({
                     </div>
                     {editingField === "source" ? (
                       <div className="flex items-center gap-1.5 mt-1">
-                        <select
-                          autoFocus
-                          value={editForm.source}
-                          onChange={(e) => setEditForm({ ...editForm, source: e.target.value })}
-                          className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-xs font-bold text-slate-900 focus:outline-none focus:border-red-500"
-                        >
-                          <option value="Manual">Manual</option>
-                          <option value="Meta Ads">Meta Ads</option>
-                          <option value="Google Ads">Google Ads</option>
-                          <option value="Website Form">Website Form</option>
-                          <option value="Referral">Referral</option>
-                          <option value="Cold Outreach">Cold Outreach</option>
-                          <option value="WhatsApp">WhatsApp</option>
-                          <option value="Instagram">Instagram</option>
-                          <option value="LinkedIn Ads">LinkedIn Ads</option>
-                          <option value="YouTube">YouTube</option>
-                          <option value="Advertisement">Advertisement</option>
-                        </select>
+                        <div className="flex-1">
+                          <LeadSourceSelect
+                            value={editForm.source}
+                            onChange={(val) => setEditForm({ ...editForm, source: val })}
+                          />
+                        </div>
                         <button
                           type="button"
                           disabled={savingField}
                           onClick={() => handleSaveField("Lead Source")}
-                          className="p-1 rounded bg-red-600 text-white hover:bg-red-700 cursor-pointer disabled:opacity-50"
+                          className="h-10 px-2.5 rounded-xl bg-red-600 text-white hover:bg-red-700 cursor-pointer disabled:opacity-50 flex items-center justify-center shrink-0"
+                          title="Save"
                         >
-                          <Check className="w-3.5 h-3.5" />
+                          <Check className="w-4 h-4" />
                         </button>
                         <button
                           type="button"
                           onClick={() => setEditingField(null)}
-                          className="p-1 rounded bg-slate-200 text-slate-600 hover:bg-slate-300 cursor-pointer"
+                          className="h-10 px-2.5 rounded-xl bg-slate-200 text-slate-600 hover:bg-slate-300 cursor-pointer flex items-center justify-center shrink-0"
+                          title="Cancel"
                         >
-                          <X className="w-3.5 h-3.5" />
+                          <X className="w-4 h-4" />
                         </button>
                       </div>
                     ) : (
-                      <div className="mt-0.5">
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                          <Tag className="w-3 h-3 text-slate-500" />
-                          <span>{editForm.source || "Manual"}</span>
-                        </span>
+                      <div className="mt-1">
+                        <SourceBadge source={editForm.source || currentContact.source || "Manual"} />
                       </div>
                     )}
                   </div>

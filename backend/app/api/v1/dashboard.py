@@ -198,32 +198,41 @@ async def get_dashboard_metrics(
             if len(today_due_tasks) >= 5:
                 break
 
-    # 4. Source Breakdown from contacts
+    # 4. Source Breakdown from contacts (clean, deduplicated & canonicalized)
     source_counts: Dict[str, int] = {}
     for c in contacts:
-        src = (c.source or "MANUAL").strip().upper()
-        if not src:
-            src = "MANUAL"
-        source_counts[src] = source_counts.get(src, 0) + 1
+        raw_src = (c.source or "Manual").strip()
+        s_norm = raw_src.upper().replace("-", "_").replace(" ", "_")
+        if "META" in s_norm or "FACEBOOK" in s_norm or "INSTAGRAM" in s_norm:
+            canon = "Meta Ads"
+        elif "GOOGLE" in s_norm:
+            canon = "Google Ads"
+        elif "WHATSAPP" in s_norm:
+            canon = "WhatsApp"
+        elif "WEB" in s_norm or "FORM" in s_norm:
+            canon = "Website Form"
+        elif "CSV" in s_norm or "EXCEL" in s_norm or "IMPORT" in s_norm:
+            canon = "Excel / CSV Import"
+        elif "REFERRAL" in s_norm:
+            canon = "Referral"
+        elif "COLD" in s_norm or "OUTREACH" in s_norm:
+            canon = "Cold Outreach"
+        elif "LINKEDIN" in s_norm:
+            canon = "LinkedIn Ads"
+        elif "YOUTUBE" in s_norm:
+            canon = "YouTube"
+        else:
+            canon = "Manual"
+        source_counts[canon] = source_counts.get(canon, 0) + 1
 
     source_breakdown = []
     for src, cnt in sorted(source_counts.items(), key=lambda x: x[1], reverse=True):
-        pct = round((cnt / total_leads * 100), 1) if total_leads > 0 else 0.0
-        source_breakdown.append({
-            "source": src,
-            "count": cnt,
-            "percentage": pct
-        })
-
-    # Ensure major sources appear even if 0
-    standard_sources = ["META_ADS", "WEBSITE_FORM", "MANUAL"]
-    existing_srcs = {item["source"] for item in source_breakdown}
-    for std in standard_sources:
-        if std not in existing_srcs:
+        if cnt > 0:
+            pct = round((cnt / total_leads * 100), 1) if total_leads > 0 else 0.0
             source_breakdown.append({
-                "source": std,
-                "count": 0,
-                "percentage": 0.0
+                "source": src,
+                "count": cnt,
+                "percentage": pct
             })
 
     # 5. Recent Leads (top 5 latest contacts)

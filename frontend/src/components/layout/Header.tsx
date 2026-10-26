@@ -78,15 +78,17 @@ export default function Header({ title }: HeaderProps) {
       // Load logged-in user details with automatic backend profile refresh
       const loadUser = async () => {
         let user = api.getCurrentUser();
-        if (!user || !user.email) {
-          try {
-            user = await api.getMe();
-          } catch {}
-        }
         if (user) {
           setCurrentUser(user);
           setAvatarError(false);
         }
+        try {
+          const fresh = await api.getMe();
+          if (fresh) {
+            setCurrentUser(fresh);
+            setAvatarError(false);
+          }
+        } catch {}
       };
 
       loadUser();

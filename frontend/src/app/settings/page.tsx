@@ -205,22 +205,23 @@ export default function SettingsPage() {
         if (user.phone) setPhone(user.phone);
         if (user.organization_name) setCompanyName(user.organization_name);
         if (user.picture || user.avatar_url) setUserPhoto(user.picture || user.avatar_url);
-      } else {
-        api.getMe().then((me) => {
-          if (me) {
-            setCurrentUser(me);
-            if (me.role) setActiveRole(me.role);
-            if (me.full_name) {
-              setFullName(me.full_name);
-              setSignatoryName(me.full_name);
-            }
-            if (me.email) setEmail(me.email);
-            if (me.phone) setPhone(me.phone);
-            if (me.organization_name) setCompanyName(me.organization_name);
-            if (me.picture || me.avatar_url) setUserPhoto(me.picture || me.avatar_url);
-          }
-        }).catch(() => {});
       }
+
+      // Always fetch latest profile from backend /auth/me so registered signup name is fresh
+      api.getMe().then((me) => {
+        if (me) {
+          setCurrentUser(me);
+          if (me.role) setActiveRole(me.role);
+          if (me.full_name) {
+            setFullName(me.full_name);
+            setSignatoryName(me.full_name);
+          }
+          if (me.email) setEmail(me.email);
+          if (me.phone) setPhone(me.phone);
+          if (me.organization_name) setCompanyName(me.organization_name);
+          if (me.picture || me.avatar_url) setUserPhoto(me.picture || me.avatar_url);
+        }
+      }).catch(() => {});
 
       // Load persistent organization settings
       api.getOrganizationSettings().then((org) => {
