@@ -75,31 +75,31 @@ export default function Header({ title }: HeaderProps) {
       };
       window.addEventListener("zigmaa_role_changed", handleRoleChange);
 
-      // Load logged-in user details with automatic backend profile refresh
-      const loadUser = async () => {
-        let user = api.getCurrentUser();
+      // Load logged-in user details from cache and fetch once from backend
+      const loadUserFromCache = () => {
+        const user = api.getCurrentUser();
         if (user) {
           setCurrentUser(user);
           setAvatarError(false);
         }
-        try {
-          const fresh = await api.getMe();
-          if (fresh) {
-            setCurrentUser(fresh);
-            setAvatarError(false);
-          }
-        } catch {}
       };
 
-      loadUser();
-      window.addEventListener("zigmaa_user_updated", loadUser);
-      window.addEventListener("storage", loadUser);
+      loadUserFromCache();
+      api.getMe().then((fresh) => {
+        if (fresh) {
+          setCurrentUser(fresh);
+          setAvatarError(false);
+        }
+      }).catch(() => {});
+
+      window.addEventListener("zigmaa_user_updated", loadUserFromCache);
+      window.addEventListener("storage", loadUserFromCache);
 
       return () => {
         window.removeEventListener("zigmaa_sidebar_toggle", handleSidebarChange);
         window.removeEventListener("zigmaa_role_changed", handleRoleChange);
-        window.removeEventListener("zigmaa_user_updated", loadUser);
-        window.removeEventListener("storage", loadUser);
+        window.removeEventListener("zigmaa_user_updated", loadUserFromCache);
+        window.removeEventListener("storage", loadUserFromCache);
       };
     }
   }, []);

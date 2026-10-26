@@ -278,9 +278,6 @@ export const zigmaaApi = {
     if (mergedUser?.role && typeof window !== "undefined") {
       localStorage.setItem("zigmaa_active_role", mergedUser.role);
     }
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("zigmaa_user_updated"));
-    }
     return mergedUser;
   },
 
