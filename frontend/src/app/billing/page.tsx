@@ -126,22 +126,8 @@ export default function BillingPage() {
         <Header />
 
         <main className="flex-1 overflow-y-auto p-6 lg:p-8 space-y-6 custom-scrollbar bg-[#F8FAFC] dark:bg-[#0b0f19]">
-          {/* Header */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-2xl bg-white border border-slate-200 shadow-xs">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-2xl bg-red-50 text-red-600 border border-red-100">
-                <Receipt className="w-6 h-6" />
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-slate-900 tracking-tight">
-                  Invoices & Quotations
-                </h1>
-                <p className="text-xs text-slate-500 font-medium">
-                  Issue professional commercial invoices, quotes, and payment receipts
-                </p>
-              </div>
-            </div>
-
+          {/* Action Row */}
+          <div className="flex items-center justify-end">
             <button
               onClick={() => setShowCreateModal(true)}
               className="flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-semibold shadow-sm transition-all"

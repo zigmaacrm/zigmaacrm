@@ -100,35 +100,26 @@ export default function AccountsPage() {
         <Header />
 
         <main className="flex-1 overflow-y-auto p-6 lg:p-8 space-y-6 custom-scrollbar">
-          {/* Header */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Accounts Directory</h1>
-              <p className="text-xs text-slate-500 font-medium mt-0.5">
-                Manage organization accounts, companies, and business relationships
-              </p>
+          {/* Action Row */}
+          <div className="flex items-center justify-end gap-3">
+            <div className="relative w-64">
+              <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-400" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search accounts..."
+                className="w-full bg-white text-slate-900 text-xs pl-9 pr-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500"
+              />
             </div>
 
-            <div className="flex items-center gap-3">
-              <div className="relative w-64">
-                <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-400" />
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search accounts..."
-                  className="w-full bg-white text-slate-900 text-xs pl-9 pr-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500"
-                />
-              </div>
-
-              <button
-                onClick={() => setShowAddModal(true)}
-                className="flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-semibold shadow-sm transition-all"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Add Account</span>
-              </button>
-            </div>
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-semibold shadow-sm transition-all"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Account</span>
+            </button>
           </div>
 
           {/* Accounts Grid or Zero State */}

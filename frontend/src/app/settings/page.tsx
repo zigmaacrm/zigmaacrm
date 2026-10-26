@@ -464,30 +464,9 @@ export default function SettingsPage() {
         <Header />
 
         <main className="flex-1 overflow-y-auto p-6 lg:p-8 space-y-6 custom-scrollbar bg-[#F8FAFC] dark:bg-[#0b0f19]">
-          {/* Header */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 rounded-2xl bg-white border border-slate-200 shadow-xs">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-2xl bg-red-50 text-red-600 border border-red-100">
-                <Settings className="w-6 h-6" />
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-slate-900 tracking-tight">Settings & Preferences</h1>
-                <p className="text-xs text-slate-500 font-medium mt-0.5">
-                  Manage your profile, inbound webhooks, email connectivity, and calendar integrations.
-                </p>
-              </div>
-            </div>
-
-            {saved && (
-              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold">
-                <CheckCircle2 className="w-4 h-4" />
-                <span>Settings Saved!</span>
-              </div>
-            )}
-          </div>
-
           {/* 1. Horizontal Tabbed Navigation Header */}
-          <div className="flex items-center gap-2 border-b border-slate-200/90 pb-2 text-sm font-semibold text-slate-600 flex-wrap sm:flex-nowrap">
+          <div className="flex items-center justify-between border-b border-slate-200/90 pb-2 text-sm font-semibold text-slate-600 flex-wrap gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
               onClick={() => setActiveTab("profile")}
@@ -591,8 +570,14 @@ export default function SettingsPage() {
               <Calendar className="w-4 h-4" />
               <span>Integrations</span>
             </button>
+            </div>
 
-
+            {saved && (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold">
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Settings Saved!</span>
+              </div>
+            )}
           </div>
 
           <div className="w-full max-w-5xl mx-auto space-y-6">

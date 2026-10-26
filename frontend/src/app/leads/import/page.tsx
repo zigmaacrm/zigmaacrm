@@ -100,18 +100,11 @@ export default function BulkImportPage() {
         <Header />
 
         <main className="flex-1 overflow-y-auto p-6 lg:p-8 space-y-6 custom-scrollbar">
-          {/* Header */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 rounded-2xl bg-white border border-slate-200 shadow-xs">
-            <div>
-              <h1 className="text-xl font-bold text-slate-900 tracking-tight">Bulk CSV Lead Import</h1>
-              <p className="text-xs text-slate-500 font-medium mt-0.5">
-                Upload your existing database or lead export file to quickly populate your CRM
-              </p>
-            </div>
-
+          {/* Action Row */}
+          <div className="flex items-center justify-end">
             <button
               onClick={downloadSampleCSV}
-              className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition-colors shrink-0"
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold shadow-2xs transition-colors shrink-0"
             >
               <Download className="w-3.5 h-3.5 text-emerald-600" />
               <span>Download Sample Template</span>

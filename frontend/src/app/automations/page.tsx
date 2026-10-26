@@ -176,22 +176,8 @@ export default function AutomationsPage() {
         <Header />
 
         <main className="flex-1 overflow-y-auto p-5 lg:p-7 space-y-5 custom-scrollbar bg-[#F8FAFC] dark:bg-[#0b0f19]">
-          {/* Header Bar */}
-          <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-red-100 text-red-600 flex items-center justify-center">
-                  <Zap className="w-4.5 h-4.5" />
-                </div>
-                <h1 className="text-xl font-extrabold text-slate-900">Workflow Automation</h1>
-              </div>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Set up automated triggers, WhatsApp responses, and owner assignment rules.
-              </p>
-            </div>
-
-            {/* Actions: Tabs & Create Workflow */}
-            <div className="flex items-center gap-3">
+          {/* Actions: Tabs & Create Workflow */}
+          <div className="flex items-center justify-end gap-3">
               {/* Navigation Tabs */}
               <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200 shadow-2xs">
                 {(["All Workflows", "History Logs"] as const).map((tab) => (
@@ -219,7 +205,6 @@ export default function AutomationsPage() {
                 <span>Create Workflow</span>
               </button>
             </div>
-          </div>
 
           {/* TAB 1: ALL WORKFLOWS (TABLE VIEW) */}
           {activeTab === "All Workflows" && (

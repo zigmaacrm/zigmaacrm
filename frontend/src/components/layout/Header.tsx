@@ -122,13 +122,19 @@ export default function Header({ title }: HeaderProps) {
   const getPageTitle = () => {
     if (title) return title;
     if (!pathname || pathname === "/") return "Dashboard";
+    if (pathname.startsWith("/leads/import")) return "Bulk Lead Import";
     if (pathname.startsWith("/leads")) return "Leads";
     if (pathname.startsWith("/contacts")) return "Contacts";
     if (pathname.startsWith("/deals") || pathname.startsWith("/pipeline")) return "Deals";
     if (pathname.startsWith("/tasks")) return "Tasks";
     if (pathname.startsWith("/events") || pathname.startsWith("/calendar")) return "Calendar & Meetings";
-    if (pathname.startsWith("/automations")) return "Automations";
-    if (pathname.startsWith("/settings")) return "Settings";
+    if (pathname.startsWith("/quotes")) return "Quotes & Invoicing";
+    if (pathname.startsWith("/expense")) return "Expense Tracker";
+    if (pathname.startsWith("/templates")) return "Sales & Outreach Templates";
+    if (pathname.startsWith("/billing")) return "Invoices & Quotations";
+    if (pathname.startsWith("/accounts")) return "Accounts Directory";
+    if (pathname.startsWith("/automations")) return "Workflow Automations";
+    if (pathname.startsWith("/settings")) return "Settings & Preferences";
     const seg = pathname.replace("/", "").split("/")[0];
     return seg.charAt(0).toUpperCase() + seg.slice(1);
   };

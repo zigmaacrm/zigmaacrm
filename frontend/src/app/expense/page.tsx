@@ -97,41 +97,32 @@ export default function ExpensesPage() {
         <Header />
 
         <main className="flex-1 overflow-y-auto p-6 lg:p-8 space-y-6 custom-scrollbar bg-[#F8FAFC] dark:bg-[#0b0f19]">
-          {/* Header */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Expense Tracker</h1>
-              <p className="text-xs text-slate-500 font-medium mt-0.5">
-                Track operational costs, software subscriptions, marketing expenses, and receipts
-              </p>
-            </div>
+          {/* Controls Row */}
+          <div className="flex items-center justify-end gap-3">
+            <CustomDropdown
+              value={categoryFilter}
+              onChange={(val) => setCategoryFilter(String(val))}
+              size="sm"
+              variant="input"
+              className="w-44 text-xs font-semibold"
+              options={[
+                { value: "All", label: "All Categories" },
+                { value: "Marketing", label: "Marketing" },
+                { value: "Software", label: "Software" },
+                { value: "Office", label: "Office" },
+                { value: "Travel", label: "Travel" },
+                { value: "Salaries", label: "Salaries" },
+                { value: "Other", label: "Other" },
+              ]}
+            />
 
-            <div className="flex items-center gap-3">
-              <CustomDropdown
-                value={categoryFilter}
-                onChange={(val) => setCategoryFilter(String(val))}
-                size="sm"
-                variant="input"
-                className="w-44 text-xs font-semibold"
-                options={[
-                  { value: "All", label: "All Categories" },
-                  { value: "Marketing", label: "Marketing" },
-                  { value: "Software", label: "Software" },
-                  { value: "Office", label: "Office" },
-                  { value: "Travel", label: "Travel" },
-                  { value: "Salaries", label: "Salaries" },
-                  { value: "Other", label: "Other" },
-                ]}
-              />
-
-              <button
-                onClick={() => setShowAddModal(true)}
-                className="flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-semibold shadow-sm transition-all"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Add Expense</span>
-              </button>
-            </div>
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-semibold shadow-sm transition-all"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Expense</span>
+            </button>
           </div>
 
           {/* Quick Metrics (Zero-Default) */}

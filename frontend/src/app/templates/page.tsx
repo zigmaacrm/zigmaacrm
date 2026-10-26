@@ -88,15 +88,8 @@ export default function TemplatesPage() {
         <Header />
 
         <main className="flex-1 overflow-y-auto p-6 lg:p-8 space-y-6 custom-scrollbar">
-          {/* Header */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Sales & Outreach Templates</h1>
-              <p className="text-xs text-slate-500 font-medium mt-0.5">
-                Standardize your team outreach across WhatsApp, Email, and Google Calendar invites
-              </p>
-            </div>
-
+          {/* Action Row */}
+          <div className="flex items-center justify-end">
             <button
               onClick={() => setShowAddModal(true)}
               className="flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-semibold shadow-sm transition-all"
