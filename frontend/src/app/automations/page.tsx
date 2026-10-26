@@ -176,8 +176,35 @@ export default function AutomationsPage() {
         <Header />
 
         <main className="flex-1 overflow-y-auto p-5 lg:p-7 space-y-5 custom-scrollbar bg-[#F8FAFC] dark:bg-[#0b0f19]">
-          {/* Actions: Tabs & Create Workflow */}
-          <div className="flex items-center justify-end gap-3">
+          {/* Top Control Bar: Search on left, Refresh + Tabs + Create on right */}
+          <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-3">
+            {/* Left: Search input filling available space */}
+            <div className="relative flex-1 min-w-[240px] max-w-md">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Search workflows by name or event..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-8 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-red-500 shadow-2xs font-medium"
+              />
+            </div>
+
+            {/* Right: Refresh button (near All Workflows on left), Tabs, and Create Workflow */}
+            <div className="flex items-center gap-2.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  if (activeTab === "History Logs") loadLogs();
+                  else loadWorkflows();
+                }}
+                className="px-3 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-slate-900 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                title="Refresh"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${(activeTab === "History Logs" ? loadingLogs : loading) ? "animate-spin text-red-600" : ""}`} />
+                <span>Refresh</span>
+              </button>
+
               {/* Navigation Tabs */}
               <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200 shadow-2xs">
                 {(["All Workflows", "History Logs"] as const).map((tab) => (
@@ -205,32 +232,11 @@ export default function AutomationsPage() {
                 <span>Create Workflow</span>
               </button>
             </div>
+          </div>
 
           {/* TAB 1: ALL WORKFLOWS (TABLE VIEW) */}
           {activeTab === "All Workflows" && (
             <div className="space-y-4">
-              {/* Search Toolbar */}
-              <div className="flex items-center justify-between gap-3">
-                <div className="relative">
-                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    placeholder="Search workflows by name or event..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-8 pr-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-red-500 w-64 lg:w-80 shadow-2xs"
-                  />
-                </div>
-
-                <button
-                  onClick={() => loadWorkflows()}
-                  className="px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
-                  title="Refresh workflows"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin text-red-600" : ""}`} />
-                  <span>Refresh</span>
-                </button>
-              </div>
 
               {/* Table Container */}
               <div className="bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden">
