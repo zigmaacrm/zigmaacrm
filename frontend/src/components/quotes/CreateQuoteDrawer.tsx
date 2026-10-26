@@ -243,7 +243,7 @@ export default function CreateQuoteDrawer({
       client_name: clientName.trim(),
       client_company: clientCompany.trim() || undefined,
       client_email: clientEmail.trim() || undefined,
-      client_phone: clientPhone.trim() || undefined,
+      client_phone: clientPhone.trim() ? (clientPhone.trim().startsWith("+") ? clientPhone.trim() : `+91 ${clientPhone.trim()}`) : undefined,
       type: docType,
       status: "DRAFT",
       issue_date: issueDate || new Date().toISOString().split("T")[0],
@@ -289,7 +289,7 @@ export default function CreateQuoteDrawer({
         client_name: clientName.trim(),
         client_company: clientCompany.trim() || undefined,
         client_email: clientEmail.trim() || undefined,
-        client_phone: clientPhone.trim() || undefined,
+        client_phone: clientPhone.trim() ? (clientPhone.trim().startsWith("+") ? clientPhone.trim() : `+91 ${clientPhone.trim()}`) : undefined,
         type: docType,
         status: status,
         issue_date: issueDate || undefined,
@@ -587,15 +587,24 @@ export default function CreateQuoteDrawer({
                 <label className="block text-[11px] font-bold text-slate-700 mb-1">
                   Phone Number
                 </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={clientPhone}
-                    onChange={(e) => setClientPhone(e.target.value)}
-                    placeholder="+91 98765 43210"
-                    className="w-full bg-slate-50 text-slate-900 text-xs pl-8 pr-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white font-medium"
-                  />
-                  <Phone className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-3" />
+                <div className="flex items-center gap-2">
+                  <select
+                    value="+91"
+                    disabled
+                    className="bg-slate-50 border border-slate-200 rounded-xl text-xs px-2.5 py-2.5 text-slate-800 font-semibold focus:outline-none cursor-default"
+                  >
+                    <option value="+91">IN +91</option>
+                  </select>
+                  <div className="relative flex-1">
+                    <input
+                      type="tel"
+                      value={clientPhone.replace(/^\+91\s*/, "")}
+                      onChange={(e) => setClientPhone(e.target.value)}
+                      placeholder="98765 43210"
+                      className="w-full bg-slate-50 text-slate-900 text-xs pl-8 pr-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white font-medium font-mono"
+                    />
+                    <Phone className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-3" />
+                  </div>
                 </div>
               </div>
             </div>

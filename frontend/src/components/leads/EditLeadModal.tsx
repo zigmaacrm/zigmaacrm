@@ -54,7 +54,7 @@ export default function EditLeadModal({ lead, isOpen, onClose, onLeadUpdated }: 
     try {
       await api.updateLead(lead!.id, {
         name,
-        phone,
+        phone: phone.trim().startsWith("+") ? phone.trim() : `+91 ${phone.trim()}`,
         email,
         company_name: companyName,
         ad_source: adSource as any,
@@ -118,14 +118,23 @@ export default function EditLeadModal({ lead, isOpen, onClose, onLeadUpdated }: 
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">Phone Number *</label>
-              <input
-                type="text"
-                required
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="+91 98765 43210"
-                className="w-full bg-slate-50 text-slate-900 text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-600 focus:bg-white"
-              />
+              <div className="flex items-center gap-2">
+                <select
+                  value="+91"
+                  disabled
+                  className="bg-slate-50 border border-slate-200 rounded-xl text-xs px-2.5 py-2.5 text-slate-800 font-semibold focus:outline-none cursor-default"
+                >
+                  <option value="+91">IN +91</option>
+                </select>
+                <input
+                  type="tel"
+                  required
+                  value={phone.replace(/^\+91\s*/, "")}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="98765 43210"
+                  className="w-full bg-slate-50 text-slate-900 text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-600 focus:bg-white font-mono"
+                />
+              </div>
             </div>
           </div>
 

@@ -207,11 +207,7 @@ export default function NewContactDrawer({
                   onChange={(e) => setCountryCode(e.target.value)}
                   className="bg-slate-50 border border-slate-200 rounded-xl text-xs px-2.5 py-2.5 text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-red-100"
                 >
-                  <option value="+91">🇮🇳 +91</option>
-                  <option value="+1">🇺🇸 +1</option>
-                  <option value="+44">🇬🇧 +44</option>
-                  <option value="+971">🇦🇪 +971</option>
-                  <option value="+65">🇸🇬 +65</option>
+                  <option value="+91">IN +91</option>
                 </select>
                 <div className="relative flex-1">
                   <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
