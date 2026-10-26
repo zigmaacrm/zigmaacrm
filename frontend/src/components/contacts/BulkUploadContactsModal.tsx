@@ -12,6 +12,7 @@ import {
   Loader2
 } from "lucide-react";
 import Papa from "papaparse";
+import * as XLSX from "xlsx";
 import { api } from "@/lib/api";
 import { useToast } from "@/components/common/ToastProvider";
 
@@ -41,21 +42,53 @@ export default function BulkUploadContactsModal({
     setFile(selectedFile);
     setError("");
 
-    Papa.parse(selectedFile, {
-      header: true,
-      skipEmptyLines: true,
-      complete: (results) => {
-        if (results.data && results.data.length > 0) {
-          setParsedRows(results.data);
-          setPreviewRows(results.data.slice(0, 5));
-        } else {
-          setError("The selected file is empty or could not be parsed.");
+    const isExcel =
+      selectedFile.name.endsWith(".xlsx") ||
+      selectedFile.name.endsWith(".xls") ||
+      selectedFile.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+      selectedFile.type === "application/vnd.ms-excel";
+
+    if (isExcel) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const buffer = e.target?.result;
+          const workbook = XLSX.read(buffer, { type: "array" });
+          const firstSheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[firstSheetName];
+          const data: any[] = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+
+          if (data && data.length > 0) {
+            setParsedRows(data);
+            setPreviewRows(data.slice(0, 5));
+          } else {
+            setError("The selected Excel sheet has no data rows.");
+          }
+        } catch (err: any) {
+          setError(`Failed to parse Excel file: ${err.message}`);
         }
-      },
-      error: (err) => {
-        setError(`Failed to parse file: ${err.message}`);
-      }
-    });
+      };
+      reader.onerror = () => {
+        setError("Failed to read the Excel file.");
+      };
+      reader.readAsArrayBuffer(selectedFile);
+    } else {
+      Papa.parse(selectedFile, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          if (results.data && results.data.length > 0) {
+            setParsedRows(results.data);
+            setPreviewRows(results.data.slice(0, 5));
+          } else {
+            setError("The selected file is empty or could not be parsed.");
+          }
+        },
+        error: (err) => {
+          setError(`Failed to parse file: ${err.message}`);
+        }
+      });
+    }
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -66,21 +99,67 @@ export default function BulkUploadContactsModal({
   };
 
   const downloadSampleTemplate = () => {
-    const csvContent =
-      "data:text/csv;charset=utf-8," +
-      "name,phone,email,company_name,job_title,source,lifecycle_stage\n" +
-      "Ramesh Chandran,+91 98401 12345,ramesh@techcorp.com,TechCorp India,Director,Meta Ads,New\n" +
-      "Sunita Sharma,+91 98123 77889,sunita@nexus.co,Nexus Solutions,VP Sales,Google Ads,Contacted\n" +
-      "Vijay Raman,+91 97654 11223,vijay@apex.in,Apex Tech,Product Manager,Website,Qualified\n" +
-      "Kavita Krishnan,+91 99887 44556,kavita@krishnan.org,Krishnan & Co,Founder,Manual,Customer\n";
+    const sampleData = [
+      {
+        name: "Ramesh Chandran",
+        phone: "+91 98401 12345",
+        email: "ramesh@techcorp.com",
+        company_name: "TechCorp India",
+        job_title: "Director",
+        source: "Meta Ads",
+        lifecycle_stage: "New"
+      },
+      {
+        name: "Sunita Sharma",
+        phone: "+91 98123 77889",
+        email: "sunita@nexus.co",
+        company_name: "Nexus Solutions",
+        job_title: "VP Sales",
+        source: "Google Ads",
+        lifecycle_stage: "Contacted"
+      },
+      {
+        name: "Vijay Raman",
+        phone: "+91 97654 11223",
+        email: "vijay@apex.in",
+        company_name: "Apex Tech",
+        job_title: "Product Manager",
+        source: "Website Form",
+        lifecycle_stage: "Qualified"
+      },
+      {
+        name: "Kavita Krishnan",
+        phone: "+91 99887 44556",
+        email: "kavita@krishnan.org",
+        company_name: "Krishnan & Co",
+        job_title: "Founder",
+        source: "WhatsApp",
+        lifecycle_stage: "Customer"
+      }
+    ];
 
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", "zigmaa_contacts_template.csv");
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    try {
+      const ws = XLSX.utils.json_to_sheet(sampleData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Contacts");
+      XLSX.writeFile(wb, "zigmaa_contacts_template.xlsx");
+    } catch {
+      // Fallback to CSV if needed
+      const csvContent =
+        "data:text/csv;charset=utf-8," +
+        "name,phone,email,company_name,job_title,source,lifecycle_stage\n" +
+        "Ramesh Chandran,+91 98401 12345,ramesh@techcorp.com,TechCorp India,Director,Meta Ads,New\n" +
+        "Sunita Sharma,+91 98123 77889,sunita@nexus.co,Nexus Solutions,VP Sales,Google Ads,Contacted\n" +
+        "Vijay Raman,+91 97654 11223,vijay@apex.in,Apex Tech,Product Manager,Website Form,Qualified\n" +
+        "Kavita Krishnan,+91 99887 44556,kavita@krishnan.org,Krishnan & Co,Founder,WhatsApp,Customer\n";
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", "zigmaa_contacts_template.csv");
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
   };
 
   const handleConfirmUpload = async () => {
@@ -90,7 +169,8 @@ export default function BulkUploadContactsModal({
 
     try {
       const res = await api.bulkUploadContacts(parsedRows);
-      toast.success("Bulk Upload Complete", `Successfully imported ${res.total_ingested} contacts into Zigmaa CRM.`);
+      const skipMsg = res.duplicates_skipped > 0 ? ` (${res.duplicates_skipped} duplicates skipped)` : "";
+      toast.success("Bulk Upload Complete", `Successfully imported ${res.total_ingested} contacts into Zigmaa CRM${skipMsg}.`);
       onSuccess();
       onClose();
     } catch (err: any) {

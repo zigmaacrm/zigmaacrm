@@ -38,6 +38,7 @@ import SendEmailModal from "@/components/contacts/SendEmailModal";
 import CallDialerModal from "@/components/common/CallDialerModal";
 import LeadSourceSelect from "@/components/common/LeadSourceSelect";
 import { SourceBadge } from "@/components/common/SourceBadge";
+import WhatsAppIcon from "@/components/common/WhatsAppIcon";
 
 interface ContactSlideDrawerProps {
   contact: Contact | null;
@@ -302,20 +303,51 @@ export default function ContactSlideDrawer({
         title: dealTitle.trim(),
         company_name: currentContact.company_name || currentContact.name,
         contact_name: currentContact.name,
+        contact_phone: currentContact.phone,
+        contact_email: currentContact.email,
         contact_id: currentContact.id,
         value: Number(dealValue) || 0,
+        deal_value: Number(dealValue) || 0,
         stage: dealStage,
-        probability: 50,
+        probability: dealStage === "Won" ? 100 : 50,
         close_date: new Date(Date.now() + 14 * 86400000).toISOString().split("T")[0]
       });
 
-      setDetail((prev: any) => ({
-        ...prev,
-        total_deals: (prev?.total_deals || 0) + 1,
-        deals: [createdDeal, ...(prev?.deals || [])]
-      }));
+      // Advance contact lifecycle stage to reflect the deal
+      let targetLifecycle = currentStage;
+      if (dealStage === "Won") targetLifecycle = "Customer";
+      else if (dealStage === "Proposal Sent" || dealStage === "Negotiation") targetLifecycle = "Qualified";
+      else if (dealStage === "Discovery") targetLifecycle = "Interested";
 
-      toast.success("Deal Created", `Created "${dealTitle}" attached to this contact.`);
+      if (targetLifecycle !== currentStage) {
+        await api.updateContact(currentContact.id, {
+          lifecycle_stage: targetLifecycle,
+          status: targetLifecycle
+        }).catch(() => {});
+      }
+
+      setDetail((prev: any) => {
+        const existingDeals = prev?.deals || [];
+        const existingIdx = existingDeals.findIndex(
+          (d: any) => String(d.id) === String(createdDeal.id) || (d.contact_id && String(d.contact_id) === String(currentContact.id))
+        );
+        const updatedDeals = existingIdx >= 0
+          ? existingDeals.map((d: any, idx: number) => (idx === existingIdx ? createdDeal : d))
+          : [createdDeal, ...existingDeals];
+
+        return {
+          ...prev,
+          lifecycle_stage: targetLifecycle,
+          status: targetLifecycle,
+          total_deals: updatedDeals.length,
+          deals: updatedDeals
+        };
+      });
+
+      toast.success(
+        "Deal Created & Converted",
+        `Created "${dealTitle}" directly in "${dealStage}" stage in Pipeline Deals.`
+      );
       setShowQuickDeal(false);
       if (onUpdated) onUpdated();
     } catch (err: any) {
@@ -394,7 +426,7 @@ export default function ContactSlideDrawer({
                 rel="noreferrer"
                 className="px-3.5 py-1.5 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 text-emerald-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-2xs"
               >
-                <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
+                <WhatsAppIcon className="w-3.5 h-3.5 fill-current text-emerald-600" />
                 <span>WhatsApp</span>
               </a>
             )}
@@ -415,7 +447,7 @@ export default function ContactSlideDrawer({
               className="px-3.5 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-xs ml-auto cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>+ Deal</span>
+              <span>Deal</span>
             </button>
           </div>
         </div>

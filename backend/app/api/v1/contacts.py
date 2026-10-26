@@ -316,6 +316,34 @@ async def create_contact(
         org = res.scalars().first()
         target_org_id = org.id if org else None
 
+    # 1. Validation: Prevent duplicate contacts by phone number
+    raw_phone = contact_in.phone or ""
+    clean_phone = "".join(c for c in raw_phone if c.isdigit())
+    if clean_phone and len(clean_phone) >= 7:
+        phone_suffix = clean_phone[-10:] if len(clean_phone) >= 10 else clean_phone
+        dup_phone_res = await db.execute(
+            select(Contact).where(Contact.phone.ilike(f"%{phone_suffix}%"))
+        )
+        dup_phone = dup_phone_res.scalars().first()
+        if dup_phone:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"A contact with mobile number '{contact_in.phone}' already exists: '{dup_phone.full_name}'. Duplicate contacts are not allowed."
+            )
+
+    # 2. Validation: Prevent duplicate contacts by email
+    clean_email = (contact_in.email or "").strip().lower()
+    if clean_email:
+        dup_email_res = await db.execute(
+            select(Contact).where(func.lower(Contact.email) == clean_email)
+        )
+        dup_email = dup_email_res.scalars().first()
+        if dup_email:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"A contact with email '{contact_in.email}' already exists: '{dup_email.full_name}'. Duplicate contacts are not allowed."
+            )
+
     designation = contact_in.designation or contact_in.job_title
     assigned_name = contact_in.assigned_user_name or (current_user.full_name if current_user else "Mohamed Thoufiq")
     owner_id = current_user.id if current_user else None
@@ -383,6 +411,34 @@ async def update_contact(
     contact = res.scalar_one_or_none()
     if not contact:
         raise HTTPException(status_code=404, detail="Contact not found")
+
+    if "phone" in contact_in and contact_in["phone"]:
+        raw_phone = str(contact_in["phone"])
+        clean_phone = "".join(c for c in raw_phone if c.isdigit())
+        if clean_phone and len(clean_phone) >= 7:
+            phone_suffix = clean_phone[-10:] if len(clean_phone) >= 10 else clean_phone
+            dup_phone_res = await db.execute(
+                select(Contact).where(Contact.id != contact_id, Contact.phone.ilike(f"%{phone_suffix}%"))
+            )
+            dup_phone = dup_phone_res.scalars().first()
+            if dup_phone:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Another contact already exists with mobile number '{contact_in['phone']}' ({dup_phone.full_name})."
+                )
+
+    if "email" in contact_in and contact_in["email"]:
+        clean_email = str(contact_in["email"]).strip().lower()
+        if clean_email:
+            dup_email_res = await db.execute(
+                select(Contact).where(Contact.id != contact_id, func.lower(Contact.email) == clean_email)
+            )
+            dup_email = dup_email_res.scalars().first()
+            if dup_email:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Another contact already exists with email '{contact_in['email']}' ({dup_email.full_name})."
+                )
 
     if "custom_properties" in contact_in:
         contact.custom_properties = contact_in["custom_properties"]

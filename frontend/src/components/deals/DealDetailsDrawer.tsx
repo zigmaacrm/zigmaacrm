@@ -19,8 +19,10 @@ import {
   Download,
   Printer,
   Share2,
-  Mail
+  Mail,
+  Phone
 } from "lucide-react";
+import WhatsAppIcon from "@/components/common/WhatsAppIcon";
 import { Deal, Invoice } from "@/lib/mockData";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { useToast } from "@/components/common/ToastProvider";
@@ -205,6 +207,65 @@ export default function DealDetailsDrawer({
                 <span className="font-semibold text-slate-800">
                   {deal.contact_name || "—"}
                 </span>
+              </div>
+
+              {/* Direct Communication Quick Bar */}
+              <div className="pt-2 flex items-center justify-between bg-slate-50 p-2.5 rounded-xl border border-slate-200/60">
+                <span className="text-slate-500 font-medium text-[11px]">Quick Reach Out</span>
+                <div className="flex items-center gap-2">
+                  <a
+                    href={
+                      (deal.contact_phone || (deal.custom_data && (deal.custom_data.contact_phone || deal.custom_data.phone)))
+                        ? `https://wa.me/${(deal.contact_phone || (deal.custom_data && (deal.custom_data.contact_phone || deal.custom_data.phone)) || "").replace(/[^0-9]/g, "")}?text=${encodeURIComponent(`Hello ${deal.contact_name || "there"}, following up regarding "${deal.title}" with Zigmaa CRM...`)}`
+                        : undefined
+                    }
+                    target="_blank"
+                    rel="noreferrer"
+                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                      (deal.contact_phone || (deal.custom_data && (deal.custom_data.contact_phone || deal.custom_data.phone)))
+                        ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-600 hover:text-white border border-emerald-200 cursor-pointer"
+                        : "bg-slate-100 text-slate-400 pointer-events-none opacity-50"
+                    }`}
+                    title="Open WhatsApp"
+                  >
+                    <WhatsAppIcon className="w-3.5 h-3.5 fill-current" />
+                    <span>WhatsApp</span>
+                  </a>
+
+                  <a
+                    href={
+                      (deal.contact_phone || (deal.custom_data && (deal.custom_data.contact_phone || deal.custom_data.phone)))
+                        ? `tel:${deal.contact_phone || (deal.custom_data && (deal.custom_data.contact_phone || deal.custom_data.phone))}`
+                        : undefined
+                    }
+                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                      (deal.contact_phone || (deal.custom_data && (deal.custom_data.contact_phone || deal.custom_data.phone)))
+                        ? "bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white border border-blue-200 cursor-pointer"
+                        : "bg-slate-100 text-slate-400 pointer-events-none opacity-50"
+                    }`}
+                    title="Call Contact"
+                  >
+                    <Phone className="w-3 h-3" />
+                    <span>Call</span>
+                  </a>
+
+                  <a
+                    href={
+                      (deal.contact_email || (deal.custom_data && (deal.custom_data.contact_email || deal.custom_data.email)))
+                        ? `mailto:${deal.contact_email || (deal.custom_data && (deal.custom_data.contact_email || deal.custom_data.email))}?subject=${encodeURIComponent(`Regarding ${deal.title}`)}`
+                        : undefined
+                    }
+                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                      (deal.contact_email || (deal.custom_data && (deal.custom_data.contact_email || deal.custom_data.email)))
+                        ? "bg-rose-50 text-rose-700 hover:bg-rose-600 hover:text-white border border-rose-200 cursor-pointer"
+                        : "bg-slate-100 text-slate-400 pointer-events-none opacity-50"
+                    }`}
+                    title="Send Email"
+                  >
+                    <Mail className="w-3 h-3" />
+                    <span>Email</span>
+                  </a>
+                </div>
               </div>
 
               <div className="flex items-center justify-between pt-2">

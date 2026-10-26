@@ -148,10 +148,18 @@ export default function NewDealDrawer({
         company_name: companyName.trim() || (contactName ? `${contactName}'s Account` : "Enterprise Client"),
         contact_name: contactName.trim(),
         contact_id: selectedContactId || undefined,
+        contact_phone: contacts.find((c) => String(c.id) === String(selectedContactId))?.phone || undefined,
+        contact_email: contacts.find((c) => String(c.id) === String(selectedContactId))?.email || undefined,
         probability: Number(probability) || 50,
         close_date: closeDate || new Date().toISOString().split("T")[0],
         expected_close_date: closeDate || new Date().toISOString().split("T")[0],
-        custom_data: customData,
+        custom_data: {
+          ...customData,
+          company_name: companyName.trim() || (contactName ? `${contactName}'s Account` : "Enterprise Client"),
+          contact_name: contactName.trim(),
+          contact_phone: contacts.find((c) => String(c.id) === String(selectedContactId))?.phone || undefined,
+          contact_email: contacts.find((c) => String(c.id) === String(selectedContactId))?.email || undefined
+        },
         custom_properties: customData
       } as any);
 

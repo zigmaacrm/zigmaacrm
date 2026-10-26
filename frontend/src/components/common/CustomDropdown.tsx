@@ -80,7 +80,7 @@ export default function CustomDropdown({
   value,
   options,
   onChange,
-  placeholder = "Select...",
+  placeholder = "Select",
   variant = "input",
   size = "md",
   className = "",

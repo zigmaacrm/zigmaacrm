@@ -151,7 +151,7 @@ export default function QuotesPage() {
                 className="flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-semibold shadow-sm transition-all cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
-                <span>+ Create Quote</span>
+                <span>Create Quote</span>
               </button>
 
               <button

@@ -45,6 +45,7 @@ import { useToast } from "@/components/common/ToastProvider";
 import ColumnCustomizerPopover, { ColumnDefinition, useColumnVisibility } from "@/components/common/ColumnCustomizerPopover";
 import { SourceBadge } from "@/components/common/SourceBadge";
 import CustomDropdown from "@/components/common/CustomDropdown";
+import WhatsAppIcon from "@/components/common/WhatsAppIcon";
 
 const CONTACT_COLUMNS: ColumnDefinition[] = [
   { id: "name", label: "Contact Name", locked: true },
@@ -206,6 +207,37 @@ export default function ContactsPage() {
   }, []);
 
   const handleCreateContact = async (contactData: Partial<Contact>) => {
+    // 1. Duplicate check on mobile number
+    const rawInputPhone = contactData.phone || "";
+    const cleanInputDigits = rawInputPhone.replace(/\D/g, "");
+    if (cleanInputDigits.length >= 7) {
+      const suffix = cleanInputDigits.slice(-10);
+      const dup = contacts.find((c) => {
+        const p = (c.phone || "").replace(/\D/g, "");
+        return p.endsWith(suffix) || suffix.endsWith(p.slice(-10));
+      });
+      if (dup) {
+        toast.warning(
+          "Duplicate Mobile Number",
+          `A contact with mobile number "${contactData.phone}" already exists: "${dup.name || (dup as any).full_name}".`
+        );
+        throw new Error(`A contact with mobile number "${contactData.phone}" already exists: "${dup.name || (dup as any).full_name}".`);
+      }
+    }
+
+    // 2. Duplicate check on email
+    const cleanInputEmail = (contactData.email || "").trim().toLowerCase();
+    if (cleanInputEmail) {
+      const dup = contacts.find((c) => (c.email || "").trim().toLowerCase() === cleanInputEmail);
+      if (dup) {
+        toast.warning(
+          "Duplicate Email",
+          `A contact with email "${contactData.email}" already exists: "${dup.name || (dup as any).full_name}".`
+        );
+        throw new Error(`A contact with email "${contactData.email}" already exists: "${dup.name || (dup as any).full_name}".`);
+      }
+    }
+
     const tempId = `temp-${Date.now()}`;
     const optimisticContact: Contact = {
       id: tempId,
@@ -347,16 +379,35 @@ export default function ContactsPage() {
         title: dealTitle.trim(),
         company_name: dealModalContact.company_name || dealModalContact.name,
         contact_name: dealModalContact.name,
+        contact_phone: dealModalContact.phone,
+        contact_email: dealModalContact.email,
         contact_id: dealModalContact.id,
         value: Number(dealValue) || 0,
+        deal_value: Number(dealValue) || 0,
         stage: dealStage,
-        probability: 50,
+        probability: dealStage === "Won" ? 100 : 50,
         close_date: new Date(Date.now() + 14 * 86400000).toISOString().split("T")[0]
       });
 
-      toast.success("Deal Created", `New deal attached to ${dealModalContact.name}.`);
+      // Automatically advance contact's lifecycle stage to reflect the deal
+      let targetLifecycle = dealModalContact.lifecycle_stage || dealModalContact.status || "New";
+      if (dealStage === "Won") targetLifecycle = "Customer";
+      else if (dealStage === "Proposal Sent" || dealStage === "Negotiation") targetLifecycle = "Qualified";
+      else if (dealStage === "Discovery") targetLifecycle = "Interested";
+
+      if (targetLifecycle !== (dealModalContact.lifecycle_stage || dealModalContact.status)) {
+        await api.updateContact(dealModalContact.id, {
+          lifecycle_stage: targetLifecycle,
+          status: targetLifecycle
+        }).catch(() => {});
+      }
+
+      toast.success(
+        "Deal Created & Converted",
+        `"${dealTitle}" added directly to "${dealStage}" stage in Pipeline Deals.`
+      );
       setDealModalContact(null);
-      loadContacts();
+      await loadContacts();
     } catch (err: any) {
       toast.error("Error", err.message || "Failed to create deal.");
     } finally {
@@ -1374,8 +1425,8 @@ export default function ContactsPage() {
                                 ) : (
                                   <span className="font-mono tracking-tight text-slate-400 select-text">—</span>
                                 )}
-                                {contact.phone && (
-                                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <div className="flex items-center gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
+                                  {contact.phone && (
                                     <a
                                       href={`tel:${contact.phone}`}
                                       onClick={(e) => {
@@ -1388,21 +1439,41 @@ export default function ContactsPage() {
                                         }).catch(() => {});
                                       }}
                                       className="p-1 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
-                                      title="Call Contact"
+                                      title={`Call ${contact.phone}`}
                                     >
-                                      <Phone className="w-3 h-3" />
+                                      <Phone className="w-3.5 h-3.5" />
                                     </a>
+                                  )}
+                                  {contact.phone && (
                                     <a
                                       href={`https://wa.me/${contact.phone.replace(/[^0-9]/g, "")}`}
                                       target="_blank"
                                       rel="noreferrer"
-                                      className="p-1 rounded text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors"
-                                      title="WhatsApp"
+                                      className="p-1 rounded text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors cursor-pointer"
+                                      title="Chat on WhatsApp"
                                     >
-                                      <MessageSquare className="w-3 h-3" />
+                                      <WhatsAppIcon className="w-3.5 h-3.5 fill-current text-slate-400 hover:text-emerald-600" />
                                     </a>
-                                  </div>
-                                )}
+                                  )}
+                                  {contact.email && (
+                                    <a
+                                      href={`mailto:${contact.email}`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        api.createActivity({
+                                          contact_id: String(contact.id),
+                                          type: "EMAIL",
+                                          notes: `Email Clicked: Compose email to ${contact.email}`,
+                                          status: "COMPLETED"
+                                        }).catch(() => {});
+                                      }}
+                                      className="p-1 rounded text-slate-400 hover:text-purple-600 hover:bg-purple-50 transition-colors cursor-pointer"
+                                      title={`Email ${contact.email}`}
+                                    >
+                                      <Mail className="w-3.5 h-3.5" />
+                                    </a>
+                                  )}
+                                </div>
                               </div>
                             </td>
                           )}

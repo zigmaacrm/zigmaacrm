@@ -1175,6 +1175,8 @@ export const zigmaaApi = {
               title: d.title,
               company_name: (d.custom_data && d.custom_data.company_name) || d.company_name || "Enterprise Account",
               contact_name: (d.custom_data && d.custom_data.contact_name) || d.contact_name || "",
+              contact_phone: (d.custom_data && (d.custom_data.contact_phone || d.custom_data.phone)) || d.contact_phone || d.phone || "",
+              contact_email: (d.custom_data && (d.custom_data.contact_email || d.custom_data.email)) || d.contact_email || d.email || "",
               value: Number(d.deal_value || d.value) || 0,
               deal_value: Number(d.deal_value || d.value) || 0,
               currency: d.currency || "INR",
@@ -1230,6 +1232,8 @@ export const zigmaaApi = {
               title: d.title,
               company_name: (d.custom_data && d.custom_data.company_name) || d.company_name || "Enterprise Account",
               contact_name: (d.custom_data && d.custom_data.contact_name) || d.contact_name || "",
+              contact_phone: (d.custom_data && (d.custom_data.contact_phone || d.custom_data.phone)) || d.contact_phone || d.phone || "",
+              contact_email: (d.custom_data && (d.custom_data.contact_email || d.custom_data.email)) || d.contact_email || d.email || "",
               value: Number(d.deal_value || d.value) || 0,
               deal_value: Number(d.deal_value || d.value) || 0,
               currency: d.currency || "INR",
@@ -1322,12 +1326,14 @@ export const zigmaaApi = {
   },
 
   async createDeal(dealData: Partial<Deal>): Promise<Deal> {
+    const targetStage = dealData.stage || dealData.stage_id || "New Deal";
     try {
       const payload = {
         title: dealData.title || "New Deal",
         deal_value: Number(dealData.value || dealData.deal_value) || 0,
         currency: dealData.currency || "INR",
-        stage_id: dealData.stage_id || dealData.stage || "New Deal",
+        stage_id: dealData.stage_id || targetStage,
+        stage: targetStage,
         lead_id: dealData.lead_id ? String(dealData.lead_id) : null,
         contact_id: dealData.contact_id ? String(dealData.contact_id) : null,
         expected_close_date: dealData.close_date || dealData.expected_close_date,
@@ -1335,6 +1341,9 @@ export const zigmaaApi = {
         custom_data: {
           company_name: dealData.company_name,
           contact_name: dealData.contact_name,
+          contact_phone: dealData.contact_phone,
+          contact_email: dealData.contact_email,
+          stage: targetStage,
           ...(dealData.custom_data || {})
         }
       };
@@ -1348,20 +1357,35 @@ export const zigmaaApi = {
       });
       if (res.ok) {
         const d = await res.json();
-        return {
+        const finalStage = d.stage || targetStage;
+        const newDealItem: Deal = {
           id: d.id,
           title: d.title,
-          company_name: dealData.company_name || "Enterprise Account",
-          contact_name: dealData.contact_name || "",
-          value: Number(d.deal_value) || 0,
-          deal_value: Number(d.deal_value) || 0,
+          company_name: dealData.company_name || d.company_name || "Enterprise Account",
+          contact_name: dealData.contact_name || d.contact_name || "",
+          contact_phone: dealData.contact_phone || d.contact_phone || "",
+          contact_email: dealData.contact_email || d.contact_email || "",
+          value: Number(d.deal_value || d.value) || 0,
+          deal_value: Number(d.deal_value || d.value) || 0,
           currency: d.currency || "INR",
-          stage: dealData.stage || "New Deal",
-          probability: Number(dealData.probability) || 50,
-          close_date: d.expected_close_date || new Date().toISOString().split("T")[0],
-          custom_data: d.custom_data || {},
-          created_at: d.created_at
+          stage: finalStage,
+          stage_id: d.stage_id || finalStage,
+          probability: Number(dealData.probability) || (finalStage === "Won" ? 100 : 50),
+          close_date: d.expected_close_date || dealData.close_date || new Date().toISOString().split("T")[0],
+          expected_close_date: d.expected_close_date || dealData.close_date || new Date().toISOString().split("T")[0],
+          custom_data: { ...(d.custom_data || {}), stage: finalStage },
+          created_at: d.created_at || new Date().toISOString()
         };
+
+        // Instant Cache Invalidation & Local Storage Synchronization:
+        clientMemoryCache.delete("deals:all");
+        clientMemoryCache.delete("deals:board");
+        const existingDeals = getStorage<Deal[]>("zigmaa_deals", []);
+        const filtered = existingDeals.filter((ed) => String(ed.id) !== String(newDealItem.id));
+        setStorage("zigmaa_deals", [newDealItem, ...filtered]);
+
+        this.revalidateDeals();
+        return newDealItem;
       }
     } catch {}
 
@@ -1369,17 +1393,31 @@ export const zigmaaApi = {
     const newDeal: Deal = {
       id: Date.now(),
       title: dealData.title || "New Deal",
-      company_name: dealData.company_name || "",
+      company_name: dealData.company_name || "Enterprise Account",
       contact_name: dealData.contact_name || "",
-      value: Number(dealData.value) || 0,
-      stage: dealData.stage || "New Deal",
-      probability: Number(dealData.probability) || 20,
-      close_date: dealData.close_date || new Date(Date.now() + 14 * 86400000).toISOString().split("T")[0],
-      created_at: new Date().toISOString(),
-      custom_data: dealData.custom_data || {}
+      contact_phone: dealData.contact_phone || "",
+      contact_email: dealData.contact_email || "",
+      value: Number(dealData.value || dealData.deal_value) || 0,
+      deal_value: Number(dealData.value || dealData.deal_value) || 0,
+      currency: dealData.currency || "INR",
+      stage: targetStage,
+      stage_id: targetStage,
+      probability: Number(dealData.probability) || (targetStage === "Won" ? 100 : 50),
+      close_date: dealData.close_date || new Date().toISOString().split("T")[0],
+      custom_data: {
+        stage: targetStage,
+        company_name: dealData.company_name,
+        contact_name: dealData.contact_name,
+        contact_phone: dealData.contact_phone,
+        contact_email: dealData.contact_email,
+        ...(dealData.custom_data || {})
+      },
+      created_at: new Date().toISOString()
     };
     deals.unshift(newDeal);
     setStorage("zigmaa_deals", deals);
+    clientMemoryCache.delete("deals:all");
+    clientMemoryCache.delete("deals:board");
     return newDeal;
   },
 
@@ -1638,9 +1676,12 @@ export const zigmaaApi = {
     throw new Error(`Failed to create contact: ${errText || res.statusText}`);
   },
 
-  async bulkUploadContacts(rows: any[]): Promise<{ total_ingested: number; records: Contact[] }> {
+  async bulkUploadContacts(rows: any[]): Promise<{ total_ingested: number; duplicates_skipped: number; records: Contact[] }> {
     const createdList: Contact[] = [];
+    let duplicatesSkipped = 0;
     let lastError: string | null = null;
+    const seenBatchPhones = new Set<string>();
+    const seenBatchEmails = new Set<string>();
 
     for (let idx = 0; idx < rows.length; idx++) {
       const r = rows[idx];
@@ -1667,6 +1708,18 @@ export const zigmaaApi = {
       const source = getField("source", "ad_source", "Source") || "Excel/CSV Import";
       const stage = getField("stage", "lifecycle_stage", "status", "Lifecycle Stage", "Stage") || "New";
 
+      // Intra-batch duplicate check
+      const phoneDigits = phone.replace(/\D/g, "");
+      const emailLower = email.trim().toLowerCase();
+      if (phoneDigits.length >= 7 && seenBatchPhones.has(phoneDigits.slice(-10))) {
+        duplicatesSkipped++;
+        continue;
+      }
+      if (emailLower && seenBatchEmails.has(emailLower)) {
+        duplicatesSkipped++;
+        continue;
+      }
+
       try {
         const created = await this.createContact({
           name: contactName,
@@ -1678,19 +1731,27 @@ export const zigmaaApi = {
           status: stage as any,
           lifecycle_stage: stage as any
         });
+        if (phoneDigits.length >= 7) seenBatchPhones.add(phoneDigits.slice(-10));
+        if (emailLower) seenBatchEmails.add(emailLower);
         createdList.push(created);
       } catch (e: any) {
-        console.error("Bulk contact item insert error:", e);
-        lastError = e?.message || String(e);
+        const msg = e?.message || String(e);
+        if (msg.includes("already exists") || msg.includes("409") || msg.includes("Duplicate") || msg.includes("duplicate")) {
+          duplicatesSkipped++;
+        } else {
+          console.error("Bulk contact item insert error:", e);
+          lastError = msg;
+        }
       }
     }
 
-    if (createdList.length === 0 && rows.length > 0) {
+    if (createdList.length === 0 && duplicatesSkipped === 0 && rows.length > 0) {
       throw new Error(lastError || "Could not import contacts. Please verify your file format.");
     }
 
     return {
       total_ingested: createdList.length,
+      duplicates_skipped: duplicatesSkipped,
       records: createdList
     };
   },

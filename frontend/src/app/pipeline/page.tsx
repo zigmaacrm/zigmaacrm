@@ -18,8 +18,12 @@ import {
   DollarSign,
   Calendar,
   Sparkles,
-  GripVertical
+  GripVertical,
+  MessageSquare,
+  Phone,
+  Mail
 } from "lucide-react";
+import WhatsAppIcon from "@/components/common/WhatsAppIcon";
 import Sidebar from "@/components/layout/Sidebar";
 import Header from "@/components/layout/Header";
 import FilterSelect from "@/components/common/FilterSelect";
@@ -97,10 +101,90 @@ export default function PipelineDealsPage() {
     } catch {}
   };
 
+  const [contactsList, setContactsList] = useState<any[]>([]);
+  const [leadsList, setLeadsList] = useState<any[]>([]);
+
   useEffect(() => {
     loadDeals();
     loadCustomFields();
+    api.getContacts().then((c) => setContactsList(c || [])).catch(() => {});
+    api.getLeads().then((l) => setLeadsList(l || [])).catch(() => {});
   }, []);
+
+  const getDealContactDetails = (deal: Deal) => {
+    let phone = deal.contact_phone || (deal.custom_data && (deal.custom_data.contact_phone || deal.custom_data.phone)) || "";
+    let email = deal.contact_email || (deal.custom_data && (deal.custom_data.contact_email || deal.custom_data.email)) || "";
+    let name = deal.contact_name || (deal.custom_data && deal.custom_data.contact_name) || "";
+
+    if (!phone || !email || !name) {
+      // 1. Try matching with contacts
+      const matchedContact = contactsList.find((c) =>
+        (deal.contact_id && String(c.id) === String(deal.contact_id)) ||
+        (deal.contact_name && c.name && c.name.toLowerCase() === deal.contact_name.toLowerCase()) ||
+        (deal.company_name && c.company_name && c.company_name.toLowerCase() === deal.company_name.toLowerCase()) ||
+        (deal.title && c.company_name && deal.title.toLowerCase().includes(c.company_name.toLowerCase()))
+      );
+      if (matchedContact) {
+        if (!phone) phone = matchedContact.phone || "";
+        if (!email) email = matchedContact.email || "";
+        if (!name) name = matchedContact.name || "";
+      }
+
+      // 2. Try matching with leads
+      if (!phone || !email) {
+        const matchedLead = leadsList.find((l) =>
+          (deal.lead_id && String(l.id) === String(deal.lead_id)) ||
+          (deal.contact_name && (l.full_name || l.name) && (l.full_name || l.name).toLowerCase() === deal.contact_name.toLowerCase()) ||
+          (deal.company_name && l.company_name && l.company_name.toLowerCase() === deal.company_name.toLowerCase()) ||
+          (deal.title && l.company_name && deal.title.toLowerCase().includes(l.company_name.toLowerCase()))
+        );
+        if (matchedLead) {
+          if (!phone) phone = matchedLead.phone || "";
+          if (!email) email = matchedLead.email || "";
+          if (!name) name = matchedLead.full_name || matchedLead.name || "";
+        }
+      }
+    }
+
+    return { phone, email, name };
+  };
+
+  const handleDealWhatsApp = (e: React.MouseEvent, deal: Deal) => {
+    e.stopPropagation();
+    const { phone, name } = getDealContactDetails(deal);
+    if (!phone) {
+      toast.warning("WhatsApp", `No phone number linked for ${deal.title}.`);
+      return;
+    }
+    const cleanPhone = phone.replace(/[^0-9]/g, "");
+    const waPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+    const msg = encodeURIComponent(`Hello ${name || deal.company_name || "there"},\n\nFollowing up regarding your deal "${deal.title}" with Zigmaa CRM.`);
+    window.open(`https://wa.me/${waPhone}?text=${msg}`, "_blank", "noopener,noreferrer");
+  };
+
+  const handleDealCall = (e: React.MouseEvent, deal: Deal) => {
+    e.stopPropagation();
+    const { phone } = getDealContactDetails(deal);
+    if (!phone) {
+      toast.warning("Phone Call", `No phone number linked for ${deal.title}.`);
+      return;
+    }
+    window.location.href = `tel:${phone}`;
+  };
+
+  const handleDealEmail = (e: React.MouseEvent, deal: Deal) => {
+    e.stopPropagation();
+    const { email, name } = getDealContactDetails(deal);
+    if (!email) {
+      toast.warning("Email", `No email address linked for ${deal.title}.`);
+      return;
+    }
+    const subject = encodeURIComponent(`Regarding ${deal.title}`);
+    const body = encodeURIComponent(
+      `Hi ${name || deal.company_name || "Team"},\n\nI am writing to follow up on our deal discussion for "${deal.title}".\n\nPlease let us know when you would like to connect.\n\nBest regards,\nSales Team`
+    );
+    window.location.href = `mailto:${email}?subject=${subject}&body=${body}`;
+  };
 
   // Publish real-time UI context for Zigmaa AI Copilot screen sight
   useEffect(() => {
@@ -219,9 +303,9 @@ export default function PipelineDealsPage() {
     toast.success("Export Complete", `Exported ${deals.length} deals.`);
   };
 
-  // Filtered Deals
+  // Filtered Deals with Lead/Contact single-deal deduplication
   const filteredDeals = useMemo(() => {
-    return deals.filter((d) => {
+    const rawFiltered = deals.filter((d) => {
       // Tab filter
       if (activeTab === "Open Deals" && (d.stage === "Closed Won" || d.stage === "Won" || d.stage === "Lost" || d.stage === "Closed Lost")) return false;
       if (activeTab === "Won Deals" && d.stage !== "Closed Won" && d.stage !== "Won") return false;
@@ -249,6 +333,23 @@ export default function PipelineDealsPage() {
       }
       return true;
     });
+
+    // Enforce that each contact or lead has only ONE deal present across pipeline stages
+    const seen = new Set<string>();
+    const uniqueDeals: Deal[] = [];
+    for (const d of rawFiltered) {
+      const contactKey = d.contact_id
+        ? `contact_${d.contact_id}`
+        : d.lead_id
+        ? `lead_${d.lead_id}`
+        : `deal_${d.id}`;
+
+      if (seen.has(contactKey)) continue;
+      seen.add(contactKey);
+      uniqueDeals.push(d);
+    }
+
+    return uniqueDeals;
   }, [deals, activeTab, selectedStage, searchQuery]);
 
   // Stage options for the filter dropdown
@@ -416,84 +517,145 @@ export default function PipelineDealsPage() {
                           Drop deal here
                         </div>
                       ) : (
-                        stageDeals.map((deal) => (
-                          <div
-                            key={deal.id}
-                            draggable
-                            onDragStart={(e) => e.dataTransfer.setData("dealId", String(deal.id))}
-                            onClick={() => setSelectedDealForDetails(deal)}
-                            className="border border-slate-200/80 rounded-xl shadow-xs hover:shadow-md transition-shadow p-3.5 bg-white cursor-grab active:cursor-grabbing space-y-2.5 group shrink-0"
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
-                                <h4 className="font-medium text-slate-800 text-sm group-hover:text-red-600 transition-colors leading-snug truncate">
-                                  {deal.title}
-                                </h4>
-                                <p className="text-xs text-slate-500 truncate mt-0.5">
-                                  {deal.company_name || "Enterprise Account"}
-                                  {deal.contact_name ? ` • ${deal.contact_name}` : ""}
-                                </p>
-                              </div>
-                              <span className="text-[10px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full shrink-0">
-                                {deal.probability || st.probability || 50}%
-                              </span>
-                            </div>
+                        stageDeals.map((deal) => {
+                          const contactInfo = getDealContactDetails(deal);
+                          const displayContactName = contactInfo.name || deal.contact_name;
+                          const displayCompanyName =
+                            deal.company_name && deal.company_name !== "Enterprise Account"
+                              ? deal.company_name
+                              : contactInfo.name
+                              ? `${contactInfo.name}'s Account`
+                              : deal.company_name || "Enterprise Account";
 
-                            <div className="flex items-center justify-between text-xs pt-1">
-                              <span className="text-slate-900 font-semibold text-sm">
-                                {formatCurrency(deal.value || deal.deal_value || 0)}
-                              </span>
-                              <span className="text-[11px] text-slate-500 font-medium">
-                                Due: {deal.close_date || deal.expected_close_date || "Open"}
-                              </span>
-                            </div>
-
-                            {/* Owner & Stage Progress */}
-                            <div className="flex items-center justify-between text-[11px] text-slate-500 pt-0.5">
-                              <span className="flex items-center gap-1.5 truncate">
-                                <span className="w-5 h-5 rounded-full bg-red-100 text-red-700 text-[10px] font-bold flex items-center justify-center shrink-0">
-                                  {(deal.contact_name || deal.company_name || "A").substring(0, 1).toUpperCase()}
+                          return (
+                            <div
+                              key={deal.id}
+                              draggable
+                              onDragStart={(e) => e.dataTransfer.setData("dealId", String(deal.id))}
+                              onClick={() => setSelectedDealForDetails(deal)}
+                              className="border border-slate-200/80 rounded-xl shadow-xs hover:shadow-md transition-shadow p-3.5 bg-white cursor-grab active:cursor-grabbing space-y-2.5 group shrink-0"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <h4 className="font-medium text-slate-800 text-sm group-hover:text-red-600 transition-colors leading-snug truncate">
+                                    {deal.title}
+                                  </h4>
+                                  <p className="text-xs text-slate-500 truncate mt-0.5">
+                                    {displayCompanyName}
+                                    {displayContactName ? ` • ${displayContactName}` : ""}
+                                  </p>
+                                </div>
+                                <span className="text-[10px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full shrink-0">
+                                  {deal.probability || st.probability || 50}%
                                 </span>
-                                <span className="truncate">{deal.contact_name || "Assigned Agent"}</span>
-                              </span>
-                              <span className="text-[10px] font-semibold text-slate-400">
-                                {deal.probability || st.probability || 30}%
-                              </span>
-                            </div>
+                              </div>
 
-                            <div className="w-full bg-slate-100 rounded-full h-1 overflow-hidden">
+                              <div className="flex items-center justify-between text-xs pt-1">
+                                <span className="text-slate-900 font-semibold text-sm">
+                                  {formatCurrency(deal.value || deal.deal_value || 0)}
+                                </span>
+                                <span className="text-[11px] text-slate-500 font-medium">
+                                  Due: {deal.close_date || deal.expected_close_date || "Open"}
+                                </span>
+                              </div>
+
+                              {/* Owner & Stage Progress */}
+                              <div className="flex items-center justify-between text-[11px] text-slate-500 pt-0.5">
+                                <span className="flex items-center gap-1.5 truncate">
+                                  <span className="w-5 h-5 rounded-full bg-red-100 text-red-700 text-[10px] font-bold flex items-center justify-center shrink-0">
+                                    {(displayContactName || displayCompanyName || "A").substring(0, 1).toUpperCase()}
+                                  </span>
+                                  <span className="truncate">{displayContactName || "Assigned Agent"}</span>
+                                </span>
+                                <span className="text-[10px] font-semibold text-slate-400">
+                                  {deal.probability || st.probability || 30}%
+                                </span>
+                              </div>
+
+                              <div className="w-full bg-slate-100 rounded-full h-1 overflow-hidden">
+                                <div
+                                  className="bg-red-600 h-1 rounded-full"
+                                  style={{ width: `${deal.probability || st.probability || 30}%` }}
+                                />
+                              </div>
+
+                              {/* Card Footer: One-Click Communication (WhatsApp, Call, Email) + Stage Navigation */}
                               <div
-                                className="bg-red-600 h-1 rounded-full"
-                                style={{ width: `${deal.probability || st.probability || 30}%` }}
-                              />
-                            </div>
+                                className="flex items-center justify-between pt-2.5 border-t border-slate-100 text-xs"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {/* One-Click Action Buttons */}
+                                <div className="flex items-center gap-1.5">
+                                  {/* 1. WhatsApp Button */}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleDealWhatsApp(e, deal)}
+                                    className="inline-flex items-center justify-center w-7 h-7 rounded-lg text-emerald-600 bg-emerald-50 hover:bg-emerald-600 hover:text-white active:scale-95 transition-all shadow-2xs cursor-pointer border border-emerald-200/60"
+                                    title={
+                                      contactInfo.phone
+                                        ? `WhatsApp ${displayContactName || displayCompanyName} (${contactInfo.phone})`
+                                        : "WhatsApp (No phone number)"
+                                    }
+                                  >
+                                    <WhatsAppIcon className="w-3.5 h-3.5 fill-current" />
+                                  </button>
 
-                            <div className="flex items-center justify-end pt-2 border-t border-slate-100 text-xs" onClick={(e) => e.stopPropagation()}>
-                              <div className="flex items-center gap-1">
-                                {colIndex > 0 && (
+                                  {/* 2. Direct Call Button */}
                                   <button
                                     type="button"
-                                    onClick={() => handleStageChange(deal.id, pipelineStages[colIndex - 1].label)}
-                                    className="p-1 text-slate-400 hover:text-slate-700 rounded cursor-pointer"
-                                    title={`Move back to ${pipelineStages[colIndex - 1].label}`}
+                                    onClick={(e) => handleDealCall(e, deal)}
+                                    className="inline-flex items-center justify-center w-7 h-7 rounded-lg text-blue-600 bg-blue-50 hover:bg-blue-600 hover:text-white active:scale-95 transition-all shadow-2xs cursor-pointer border border-blue-200/60"
+                                    title={
+                                      contactInfo.phone
+                                        ? `Call ${displayContactName || displayCompanyName} (${contactInfo.phone})`
+                                        : "Call (No phone number)"
+                                    }
                                   >
-                                    <ArrowLeft className="w-3 h-3" />
+                                    <Phone className="w-3.5 h-3.5" />
                                   </button>
-                                )}
-                                {colIndex < pipelineStages.length - 1 && (
+
+                                  {/* 3. Email Button */}
                                   <button
                                     type="button"
-                                    onClick={() => handleStageChange(deal.id, pipelineStages[colIndex + 1].label)}
-                                    className="p-1 text-red-600 hover:bg-red-50 rounded cursor-pointer"
-                                    title={`Advance to ${pipelineStages[colIndex + 1].label}`}
+                                    onClick={(e) => handleDealEmail(e, deal)}
+                                    className="inline-flex items-center justify-center w-7 h-7 rounded-lg text-rose-600 bg-rose-50 hover:bg-rose-600 hover:text-white active:scale-95 transition-all shadow-2xs cursor-pointer border border-rose-200/60"
+                                    title={
+                                      contactInfo.email
+                                        ? `Email ${displayContactName || displayCompanyName} (${contactInfo.email})`
+                                        : "Email (No email address)"
+                                    }
                                   >
-                                    <ArrowRight className="w-3 h-3" />
+                                    <Mail className="w-3.5 h-3.5" />
                                   </button>
-                                )}
+                                </div>
+
+                                {/* Stage Move Arrows */}
+                                <div className="flex items-center gap-1">
+                                  {colIndex > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleStageChange(deal.id, pipelineStages[colIndex - 1].label)}
+                                      className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md transition-colors cursor-pointer"
+                                      title={`Move back to ${pipelineStages[colIndex - 1].label}`}
+                                    >
+                                      <ArrowLeft className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                  {colIndex < pipelineStages.length - 1 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleStageChange(deal.id, pipelineStages[colIndex + 1].label)}
+                                      className="p-1 text-red-600 hover:bg-red-50 rounded-md transition-colors cursor-pointer"
+                                      title={`Advance to ${pipelineStages[colIndex + 1].label}`}
+                                    >
+                                      <ArrowRight className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        ))
+                          );
+                        })
                       )}
                     </div>
                   </div>
