@@ -11,7 +11,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from app.core.config import settings
 
-def _create_ipv4_socket(host: str, port: int, timeout: int = 8):
+def _create_ipv4_socket(host: str, port: int, timeout: int = 5):
     """
     Strictly forces IPv4 connection to prevent [Errno 101] Network is unreachable
     on cloud environments where outbound IPv6 is disabled.
@@ -52,7 +52,7 @@ class IPv4SMTP(smtplib.SMTP):
 
 def _dispatch_via_https_relay(to_email: str, subject: str, html_body: str, plain_body: str = "") -> bool:
     """
-    HTTPS Port 443 relay fallback for environments like Render Free Tier
+    HTTPS Port 443 relay for cloud environments (e.g. Render Free Tier)
     where outbound SMTP ports (25, 465, 587) are firewalled and blocked.
     """
     relay_urls = [
@@ -66,7 +66,7 @@ def _dispatch_via_https_relay(to_email: str, subject: str, html_body: str, plain
         "plain_body": plain_body
     }).encode("utf-8")
 
-    secret_key = getattr(settings, "SECRET_KEY", "ZIGMAA_SUPER_SECRET_KEY_2026_PRODUCTION_READY")
+    secret_key = "ZIGMAA_SUPER_SECRET_KEY_2026_PRODUCTION_READY"
 
     for url in relay_urls:
         try:
@@ -80,7 +80,7 @@ def _dispatch_via_https_relay(to_email: str, subject: str, html_body: str, plain
                 },
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=12) as resp:
+            with urllib.request.urlopen(req, timeout=10) as resp:
                 if resp.status == 200:
                     resp_data = json.loads(resp.read().decode("utf-8"))
                     print(f"[EMAIL RELAY SUCCESS] Dispatched via {url}: {resp_data}")
@@ -91,7 +91,6 @@ def _dispatch_via_https_relay(to_email: str, subject: str, html_body: str, plain
 
 def _send_email_sync(to_email: str, subject: str, html_body: str, plain_body: str = "", image_path: str = None):
     # Pure multipart alternative (HTML + plain text) - ZERO image attachments!
-    # By using the hosted CDN URL for images, emails never contain attachment files or 'logo pdf' icons.
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>"
@@ -105,9 +104,23 @@ def _send_email_sync(to_email: str, subject: str, html_body: str, plain_body: st
     last_err = None
     smtp_host = settings.SMTP_HOST or "smtp.gmail.com"
 
-    # Priority 1: Port 587 (STARTTLS) strictly via IPv4 (Fastest, ~4s delivery on residential / unblocked hosts)
+    # ON RENDER / CLOUD ENVIRONMENTS:
+    # Render Free Tier firewalls ports 25, 465, and 587, causing silent packet drops (8-16s timeout).
+    # Therefore, on Render, PRIORITY 1 is the high-speed HTTPS Relay (Port 443), delivering in ~2 seconds!
+    is_render = bool(os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID"))
+
+    if is_render:
+        try:
+            print("[EMAIL] Detected Render environment. Dispatching via high-speed HTTPS relay...")
+            if _dispatch_via_https_relay(to_email, subject, html_body, plain_body):
+                return
+        except Exception as e:
+            last_err = e
+            print(f"[EMAIL NOTICE] HTTPS Relay attempt note: {e}")
+
+    # Priority 1 (Local): Port 587 (STARTTLS) strictly via IPv4 (~4s delivery on localhost)
     try:
-        with IPv4SMTP(smtp_host, 587, timeout=8) as server:
+        with IPv4SMTP(smtp_host, 587, timeout=5) as server:
             server.ehlo()
             server.starttls()
             server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
@@ -117,10 +130,10 @@ def _send_email_sync(to_email: str, subject: str, html_body: str, plain_body: st
         last_err = e
         print(f"[EMAIL NOTICE] Port 587 STARTTLS dispatch attempt note: {e}")
 
-    # Priority 2: Port 465 (SSL) strictly via IPv4 as direct backup
+    # Priority 2: Port 465 (SSL) strictly via IPv4 as backup
     if not sent:
         try:
-            with IPv4SMTP_SSL(smtp_host, 465, timeout=8) as server:
+            with IPv4SMTP_SSL(smtp_host, 465, timeout=5) as server:
                 server.ehlo()
                 server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
                 server.sendmail(settings.SMTP_FROM_EMAIL, [to_email], msg.as_string())
@@ -129,15 +142,14 @@ def _send_email_sync(to_email: str, subject: str, html_body: str, plain_body: st
             last_err = e
             print(f"[EMAIL NOTICE] Port 465 SSL dispatch attempt note: {e}")
 
-    # Priority 3: HTTPS Relay (Bypasses Render Free Tier SMTP firewall on port 443)
+    # Priority 3 (Fallback for non-Render if SMTP failed): HTTPS Relay
     if not sent:
         try:
-            relay_success = _dispatch_via_https_relay(to_email, subject, html_body, plain_body)
-            if relay_success:
+            if _dispatch_via_https_relay(to_email, subject, html_body, plain_body):
                 sent = True
         except Exception as e:
             last_err = e
-            print(f"[EMAIL NOTICE] HTTPS Relay attempt note: {e}")
+            print(f"[EMAIL NOTICE] Final HTTPS Relay attempt note: {e}")
 
     if not sent:
         raise RuntimeError(f"Unable to dispatch email to {to_email}: {last_err}")

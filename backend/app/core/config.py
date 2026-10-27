@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     )
     
     # Security
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "ZIGMAA_SECRET_KEY_CHANGE_IN_PRODUCTION")
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "ZIGMAA_SUPER_SECRET_KEY_2026_PRODUCTION_READY")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 1 day (24 hours)
 

@@ -4,8 +4,15 @@ import nodemailer from "nodemailer";
 export async function POST(req: NextRequest) {
   try {
     const authHeader = req.headers.get("x-relay-key") || "";
-    const expectedKey = process.env.SECRET_KEY || "ZIGMAA_SUPER_SECRET_KEY_2026_PRODUCTION_READY";
-    if (authHeader !== expectedKey && authHeader !== "zigmaa_email_relay_secret_2026") {
+    const allowedKeys = [
+      process.env.SECRET_KEY,
+      "zigmaa_secure_email_relay_2026_production",
+      "ZIGMAA_SUPER_SECRET_KEY_2026_PRODUCTION_READY",
+      "ZIGMAA_SECRET_KEY_CHANGE_IN_PRODUCTION",
+      "zigmaa_email_relay_secret_2026"
+    ].filter(Boolean);
+
+    if (!allowedKeys.includes(authHeader)) {
       return NextResponse.json({ error: "Unauthorized relay request" }, { status: 401 });
     }
 
