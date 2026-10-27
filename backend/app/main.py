@@ -22,6 +22,7 @@ app.add_middleware(
 # Router includes
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["Auth"])
 app.include_router(auth.router, prefix=settings.API_V1_STR, tags=["Auth-Direct"])
+app.include_router(auth.router, prefix="/auth", tags=["Auth-Root"])
 app.include_router(organizations.router, prefix=settings.API_V1_STR, tags=["Organizations"])
 
 app.include_router(dashboard.router, prefix=f"{settings.API_V1_STR}/dashboard", tags=["Dashboard"])

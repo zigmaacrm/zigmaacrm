@@ -37,6 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <link rel="icon" href="/crmlogo.png" type="image/png" sizes="any" />
         <link rel="apple-touch-icon" href="/crmlogo.png" />
+        <script src="https://accounts.google.com/gsi/client" async defer></script>
         <script
           dangerouslySetInnerHTML={{
             __html: `

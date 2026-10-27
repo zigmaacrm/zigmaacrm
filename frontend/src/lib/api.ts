@@ -23,7 +23,15 @@ import {
   downloadIcsFile
 } from "./mockData";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+function resolveApiBase(): string {
+  let raw = (process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1").trim().replace(/\/+$/, "");
+  if (!raw.endsWith("/api/v1")) {
+    raw = `${raw}/api/v1`;
+  }
+  return raw;
+}
+
+const API_BASE = resolveApiBase();
 
 function getStorage<T>(key: string, defaultValue: T): T {
   if (typeof window === "undefined") return defaultValue;
