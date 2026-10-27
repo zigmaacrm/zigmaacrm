@@ -42,6 +42,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             __html: `
               (function() {
                 try {
+                  var isAuth = window.location.pathname === '/login' || window.location.pathname === '/signup';
+                  if (isAuth) {
+                    document.documentElement.classList.remove('dark');
+                    document.documentElement.style.colorScheme = 'light';
+                    return;
+                  }
                   var saved = localStorage.getItem('zigmaa_theme');
                   var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
                   if (saved === 'dark' || (!saved && prefersDark)) {

@@ -426,3 +426,20 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   background-color: rgba(239, 68, 68, 0.12);
 }
 
+/* Guarantee light mode strictly for login / signup auth pages */
+.login-light-scope,
+.login-light-scope * {
+  color-scheme: light !important;
+}
+
+.login-light-scope {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+}
+
+.login-light-scope input {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+  border-color: #e5e7eb !important;
+}
+

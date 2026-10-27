@@ -449,7 +449,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="relative h-screen max-h-screen w-screen overflow-hidden bg-white text-slate-900 font-sans select-none flex">
+    <div style={{ backgroundColor: "#ffffff" }} className="login-light-scope relative h-screen max-h-screen w-screen overflow-hidden bg-white text-slate-900 font-sans select-none flex">
       {/* ================= FLOATING OTP SUCCESS TOAST (Theme Red Animated Countdown) ================= */}
       {toastMessage && (
         <div className="fixed top-5 right-5 z-50 animate-in fade-in slide-in-from-top-4 duration-300 pointer-events-auto">
@@ -502,7 +502,7 @@ export default function LoginPage() {
       </div>
 
       {/* ================= RIGHT SIDE: INTERACTIVE FORM PANEL ================= */}
-      <div className="w-full lg:w-[420px] xl:w-[460px] 2xl:w-[480px] shrink-0 h-full flex flex-col items-center justify-center px-6 sm:px-10 lg:px-8 xl:px-12 py-8 bg-white overflow-y-auto">
+      <div style={{ backgroundColor: "#ffffff", color: "#111827" }} className="login-light-scope w-full lg:w-[420px] xl:w-[460px] 2xl:w-[480px] shrink-0 h-full flex flex-col items-center justify-center px-6 sm:px-10 lg:px-8 xl:px-12 py-8 bg-white overflow-y-auto">
         {/* Mobile Header Branding */}
         <div className="lg:hidden flex items-center gap-2.5 mb-6">
           <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-rose-600 to-red-500 p-0.5 shadow-md flex items-center justify-center">
