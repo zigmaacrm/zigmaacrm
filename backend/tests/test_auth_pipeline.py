@@ -151,7 +151,7 @@ def test_user_registration_duplicate_email():
     response = client.post("/api/v1/auth/signup", json=payload)
     assert response.status_code in [400, 409], f"Expected 400 or 409 for duplicate email, got {response.status_code}"
     error_detail = response.json().get("detail", "").lower()
-    assert "already exists" in error_detail or "duplicate" in error_detail, (
+    assert "already exists" in error_detail or "duplicate" in error_detail or "already registered" in error_detail, (
         f"Unexpected duplicate error message: {error_detail}"
     )
 

@@ -23,7 +23,7 @@ import {
   downloadIcsFile
 } from "./mockData";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
 function getStorage<T>(key: string, defaultValue: T): T {
   if (typeof window === "undefined") return defaultValue;
