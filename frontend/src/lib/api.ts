@@ -1595,7 +1595,7 @@ export const zigmaaApi = {
     };
   },
 
-  async updateContact(id: number | string, data: Partial<Contact>): Promise<any> {
+  async updateContact(id: number | string, data: Partial<Contact> & Record<string, any>): Promise<any> {
     const payload: any = { ...data };
     if (data.name && !payload.full_name) {
       payload.full_name = data.name;
@@ -1843,38 +1843,6 @@ export const zigmaaApi = {
       duplicates_skipped: duplicatesSkipped,
       records: createdList
     };
-  },
-
-  async deleteContact(id: number | string): Promise<boolean> {
-    try {
-      const res = await fetch(`${API_BASE}/contacts/${id}`, { method: "DELETE" });
-      if (res.ok) {
-        invalidateClientCache("contacts");
-        return true;
-      }
-    } catch {}
-
-    const contacts = getStorage<Contact[]>("zigmaa_contacts", INITIAL_CONTACTS);
-    const filtered = contacts.filter(c => String(c.id) !== String(id));
-    setStorage("zigmaa_contacts", filtered);
-    return true;
-  },
-
-  async bulkDeleteContacts(ids: (number | string)[]): Promise<boolean> {
-    try {
-      const res = await fetch(`${API_BASE}/contacts/bulk-delete`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contact_ids: ids.map(String) })
-      });
-      if (res.ok) return true;
-    } catch {}
-
-    const contacts = getStorage<Contact[]>("zigmaa_contacts", INITIAL_CONTACTS);
-    const idSet = new Set(ids.map(String));
-    const filtered = contacts.filter(c => !idSet.has(String(c.id)));
-    setStorage("zigmaa_contacts", filtered);
-    return true;
   },
 
   // ===== CUSTOM FIELDS ENGINE =====

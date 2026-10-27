@@ -357,44 +357,6 @@ export default function ContactsPage() {
       }
       toast.error("Update Failed", "Could not update status. Reverted.");
     }
-  const handleDelete = async (contactId: string | number) => {
-    if (!window.confirm("Are you sure you want to delete this contact? This action cannot be undone.")) {
-      return;
-    }
-    try {
-      await api.deleteContact(contactId);
-      setContacts((prev) => prev.filter((c) => String(c.id) !== String(contactId)));
-      setSelectedIds((prev) => {
-        const next = new Set(prev);
-        next.delete(contactId);
-        return next;
-      });
-      if (selectedContact && String(selectedContact.id) === String(contactId)) {
-        setSelectedContact(null);
-      }
-      toast.success("Contact Deleted", "The contact has been removed successfully.");
-    } catch (err: any) {
-      toast.error("Delete Failed", err.message || "Failed to delete contact.");
-    }
-  };
-
-  const handleBulkDelete = async () => {
-    if (selectedIds.size === 0) return;
-    if (!window.confirm(`Are you sure you want to delete ${selectedIds.size} selected contact(s)?`)) {
-      return;
-    }
-    const idsToDelete = Array.from(selectedIds);
-    try {
-      await api.bulkDeleteContacts(idsToDelete);
-      setContacts((prev) => prev.filter((c) => !selectedIds.has(c.id)));
-      setSelectedIds(new Set());
-      if (selectedContact && selectedIds.has(selectedContact.id)) {
-        setSelectedContact(null);
-      }
-      toast.success("Contacts Deleted", `${idsToDelete.length} contacts deleted successfully.`);
-    } catch (err: any) {
-      toast.error("Bulk Delete Failed", err.message || "Failed to delete contacts.");
-    }
   };
 
   const handleOpenDealModal = (contact: Contact) => {

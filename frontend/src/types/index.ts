@@ -57,6 +57,7 @@ export interface Contact {
   email: string;
   phone: string;
   company_name: string;
+  company?: string;
   job_title?: string;
   designation?: string;
   status?: "New" | "Contacted" | "Interested" | "Qualified" | "Customer" | "Active" | "Lead" | string;
