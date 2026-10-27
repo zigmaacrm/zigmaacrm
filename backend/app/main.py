@@ -49,20 +49,23 @@ app.include_router(telephony.router, prefix=f"{settings.API_V1_STR}/telephony", 
 
 @app.on_event("startup")
 async def on_startup():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        try:
-            from sqlalchemy import text
-            await conn.execute(text("ALTER TABLE custom_fields ADD COLUMN IF NOT EXISTS module VARCHAR(50);"))
-            await conn.execute(text("ALTER TABLE custom_fields ADD COLUMN IF NOT EXISTS key VARCHAR(100);"))
-            await conn.execute(text("ALTER TABLE custom_fields ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
-            await conn.execute(text("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS custom_properties JSONB DEFAULT '{}'::jsonb;"))
-            await conn.execute(text("ALTER TABLE deals ADD COLUMN IF NOT EXISTS custom_properties JSONB DEFAULT '{}'::jsonb;"))
-            await conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS max_users INTEGER DEFAULT 15;"))
-            await conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS max_whatsapp INTEGER DEFAULT 1500;"))
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50);"))
-        except Exception as e:
-            print(f"[STARTUP MIGRATION] Schema check note: {e}")
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+            try:
+                from sqlalchemy import text
+                await conn.execute(text("ALTER TABLE custom_fields ADD COLUMN IF NOT EXISTS module VARCHAR(50);"))
+                await conn.execute(text("ALTER TABLE custom_fields ADD COLUMN IF NOT EXISTS key VARCHAR(100);"))
+                await conn.execute(text("ALTER TABLE custom_fields ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
+                await conn.execute(text("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS custom_properties JSONB DEFAULT '{}'::jsonb;"))
+                await conn.execute(text("ALTER TABLE deals ADD COLUMN IF NOT EXISTS custom_properties JSONB DEFAULT '{}'::jsonb;"))
+                await conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS max_users INTEGER DEFAULT 15;"))
+                await conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS max_whatsapp INTEGER DEFAULT 1500;"))
+                await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50);"))
+            except Exception as e:
+                print(f"[STARTUP MIGRATION] Schema check note: {e}")
+    except Exception as e:
+        print(f"[STARTUP DB INIT NOTE] Initial schema sync deferred or failed: {e}")
     try:
         from app.core.database import AsyncSessionLocal
         from app.api.v1.webhooks.whatsapp import backfill_whatsapp_contacts

@@ -11,6 +11,10 @@ db_url = os.getenv("DATABASE_URL", settings.DATABASE_URL)
 if db_url.startswith("postgresql://"):
     db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
+# Asyncpg requires 'ssl=' instead of 'sslmode='
+if "sslmode=" in db_url:
+    db_url = db_url.replace("sslmode=", "ssl=")
+
 connect_args = {}
 engine_kwargs = {
     "connect_args": connect_args,
