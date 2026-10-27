@@ -627,11 +627,10 @@ export default function ContactsPage() {
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <Header />
         <main className="flex-1 flex flex-col min-h-0 bg-[#F8FAFC] dark:bg-[#0b0f19] overflow-hidden p-4 lg:p-6 pb-2">
-          {/* Controls: Responsive Navigation Tabs & Actions Toolbar */}
-          <div className="w-full pb-3 shrink-0 overflow-x-auto custom-scrollbar">
-            <div className="flex items-center justify-between gap-3 min-w-max">
+          {/* Controls: ONE Clean Row Above Table (Matches original clean fit: Tabs on Left | Actions on Right) */}
+          <div className="flex items-center justify-between gap-2 sm:gap-3 pb-3 shrink-0">
             {/* Left: Navigation Tabs + More Views (···) */}
-            <div className="flex items-center gap-1.5 text-sm shrink-0">
+            <div className="flex items-center gap-1 sm:gap-1.5 text-sm shrink-0">
               {(
                 [
                   "All Contacts",
@@ -648,7 +647,7 @@ export default function ContactsPage() {
                     setCurrentPage(1);
                     e.currentTarget.blur();
                   }}
-                  className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap text-xs sm:text-sm outline-none! focus:outline-none! focus-visible:outline-none! ring-0! focus:ring-0! focus-visible:ring-0! border select-none ${
+                  className={`px-2.5 sm:px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap text-xs sm:text-sm outline-none! focus:outline-none! focus-visible:outline-none! ring-0! focus:ring-0! focus-visible:ring-0! border select-none ${
                     activeTab === tab
                       ? "bg-red-50 text-red-600 font-bold border-red-200/80 shadow-2xs"
                       : "border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100"
@@ -670,7 +669,7 @@ export default function ContactsPage() {
               />
             </div>
 
-            {/* Right Actions: [Search] [Source ▾] [+ Add Contact] [Export] [Fields Icon] in one row */}
+            {/* Right Actions: [Search] [Source ▾] [+ Add Contact] [Export] [Columns Popover] in one row */}
             <div className="flex items-center gap-2 shrink-0">
               {/* Search Box */}
               <div className="relative">
@@ -683,7 +682,7 @@ export default function ContactsPage() {
                     setSearchQuery(e.target.value);
                     setCurrentPage(1);
                   }}
-                  className="pl-8.5 pr-3 h-9 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-red-500 w-32 md:w-36 lg:w-40 shadow-2xs transition-all"
+                  className="pl-8.5 pr-3 h-9 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-red-500 w-28 sm:w-32 md:w-36 lg:w-40 shadow-2xs transition-all"
                 />
               </div>
 
@@ -696,7 +695,7 @@ export default function ContactsPage() {
                   setSelectedSource(val === "ALL" ? "All Sources" : val);
                   setCurrentPage(1);
                 }}
-                className="shrink-0 [&>button]:h-9 [&>button]:py-0 [&>button]:px-3 [&>button]:text-xs sm:[&>button]:text-sm"
+                className="shrink-0 [&>button]:h-9 [&>button]:py-0 [&>button]:px-2.5 sm:[&>button]:px-3 [&>button]:text-xs sm:[&>button]:text-sm"
               />
 
               {/* Add Contact with Split Dropdown */}
@@ -761,17 +760,6 @@ export default function ContactsPage() {
                 )}
               </div>
 
-              {/* Dedicated Custom Fields Button */}
-              <button
-                type="button"
-                onClick={() => setShowCustomFields(true)}
-                className="h-9 px-3 bg-white border border-slate-200 text-slate-700 hover:text-red-600 hover:border-red-300 hover:bg-red-50/50 rounded-xl text-xs sm:text-sm font-semibold shadow-2xs transition-colors cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap"
-                title="Manage Custom Fields"
-              >
-                <Sliders className="w-3.5 h-3.5 text-slate-400" />
-                <span>Custom Fields</span>
-              </button>
-
               {/* Export Button */}
               <button
                 type="button"
@@ -794,7 +782,6 @@ export default function ContactsPage() {
               />
             </div>
           </div>
-        </div>
 
           {/* TABLE CONTAINER: Stretches full remaining height so footer is strictly anchored at the bottom */}
           <div className="bg-white border border-slate-200/80 rounded-xl shadow-xs flex-1 flex flex-col min-h-0 overflow-hidden">
