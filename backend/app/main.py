@@ -88,3 +88,38 @@ async def root():
 async def health_check():
     return {"status": "ok", "app": "Zigmaa CRM", "timestamp": "healthy"}
 
+@app.get("/api/v1/debug-db")
+async def debug_db():
+    from app.core.database import AsyncSessionLocal, db_url
+    from sqlalchemy import text
+    import urllib.parse
+    masked_url = db_url
+    if "@" in masked_url:
+        parts = masked_url.split("@")
+        masked_url = f"{parts[0][:15]}...@{parts[-1]}"
+    try:
+        async with AsyncSessionLocal() as session:
+            res = await session.execute(text("SELECT count(*) FROM users;"))
+            count = res.scalar()
+            return {"status": "connected", "database_url_target": masked_url, "user_count": count}
+    except Exception as e:
+        import traceback
+        return {"status": "error", "database_url_target": masked_url, "error": str(e), "trace": traceback.format_exc()}
+
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    import traceback
+    traceback.print_exc()
+    response = JSONResponse(
+        status_code=500,
+        content={"detail": str(exc)}
+    )
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
+
