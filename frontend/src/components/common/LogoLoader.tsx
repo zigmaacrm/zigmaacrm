@@ -50,6 +50,11 @@ export default function LogoLoader({
     }
   }[size];
 
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => {
+    setMounted(true);
+  }, []);
+
   const content = (
     <div className={cn("flex flex-col items-center justify-center gap-6 select-none relative", className)}>
       {/* Logo Hero Area */}
@@ -73,17 +78,21 @@ export default function LogoLoader({
 
         {/* The Pure Floating Logo */}
         <div className="relative z-10 flex items-center justify-center">
-          <img
-            src="/loadinglogo.png"
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).src = "/crmlogo.png";
-            }}
-            alt="Zigmaa CRM"
-            className={cn(
-              "object-contain animate-logo-breathe select-none pointer-events-none drop-shadow-[0_0_24px_rgba(239,68,68,0.45)]",
-              sizeMap.logo
-            )}
-          />
+          {mounted ? (
+            <img
+              src="/loadinglogo.png"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).src = "/crmlogo.png";
+              }}
+              alt="Zigmaa CRM"
+              className={cn(
+                "object-contain animate-logo-breathe select-none pointer-events-none drop-shadow-[0_0_24px_rgba(239,68,68,0.45)]",
+                sizeMap.logo
+              )}
+            />
+          ) : (
+            <div className={cn("rounded-full bg-red-500/10", sizeMap.logo)} />
+          )}
         </div>
       </div>
 
