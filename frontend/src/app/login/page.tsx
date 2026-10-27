@@ -504,7 +504,7 @@ export default function LoginPage() {
       </div>
 
       {/* ================= RIGHT SIDE: INTERACTIVE FORM PANEL ================= */}
-      <div style={{ backgroundColor: "#ffffff", color: "#111827" }} className="login-light-scope w-full lg:w-[420px] xl:w-[460px] 2xl:w-[480px] shrink-0 h-full flex flex-col items-center justify-center px-6 sm:px-10 lg:px-8 xl:px-12 py-8 bg-white overflow-y-auto">
+      <div style={{ backgroundColor: "#ffffff", color: "#111827" }} className="login-light-scope w-full lg:w-[420px] xl:w-[460px] 2xl:w-[480px] shrink-0 h-full flex flex-col items-center px-6 sm:px-8 lg:px-8 xl:px-10 py-6 bg-white overflow-y-auto custom-scrollbar">
         {/* Mobile Header Branding */}
         <div className="lg:hidden flex items-center gap-2.5 mb-6">
           <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-rose-600 to-red-500 p-0.5 shadow-md flex items-center justify-center">
@@ -519,7 +519,7 @@ export default function LoginPage() {
         </div>
         {/* SIGN UP VIEW */}
         {isSignUp ? (
-          <div className="w-full max-w-[420px] space-y-4">
+          <div className="w-full max-w-[420px] my-auto py-3 space-y-3.5">
             {/* Header */}
             <div>
               <h2 className="text-[26px] font-bold text-[#111827] tracking-tight">
@@ -780,7 +780,7 @@ export default function LoginPage() {
           </div>
         ) : isResetPassword ? (
           /* RESET PASSWORD / FORGOT PASSWORD VIEW (Matches Image 3 & 4) */
-          <div className="w-full max-w-[400px] space-y-6">
+          <div className="w-full max-w-[400px] my-auto py-3 space-y-4">
             <div>
               <h2 className="text-[28px] sm:text-[32px] font-bold text-[#111827] tracking-tight">
                 Reset your password
@@ -988,7 +988,7 @@ export default function LoginPage() {
           </div>
         ) : (
           /* SIGN IN (LOGIN) VIEW (Matches Image 1 Text, Sizing, Inputs & Button without arrow) */
-          <div className="w-full max-w-[400px] space-y-5">
+          <div className="w-full max-w-[400px] my-auto py-3 space-y-4">
             {/* Header */}
             <div>
               <h2 className="text-[26px] sm:text-[28px] font-bold text-[#111827] tracking-tight">

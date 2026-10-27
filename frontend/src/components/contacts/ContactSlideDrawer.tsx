@@ -1099,14 +1099,6 @@ export default function ContactSlideDrawer({
                 {/* Additional Metadata Strip */}
                 <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 flex-wrap gap-2">
                   <div className="flex items-center gap-1.5">
-                    <UserCheck className="w-3.5 h-3.5 text-slate-400" />
-                    <span>Sales Owner: <strong className="text-slate-700 font-semibold">{currentContact.assigned_to || editForm.assigned_to || "Mohamed Thoufiq"}</strong></span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <Tag className="w-3.5 h-3.5 text-slate-400" />
-                    <span>Source: <strong className="text-slate-700 font-semibold">{currentContact.source || editForm.source || "Manual"}</strong></span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
                     <Calendar className="w-3.5 h-3.5 text-slate-400" />
                     <span>Created: <strong className="text-slate-700 font-semibold">{currentContact.created_at ? formatDate(currentContact.created_at) : "—"}</strong></span>
                   </div>

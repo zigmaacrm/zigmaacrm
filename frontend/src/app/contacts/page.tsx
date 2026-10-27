@@ -626,10 +626,10 @@ export default function ContactsPage() {
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <Header />
-
         <main className="flex-1 flex flex-col min-h-0 bg-[#F8FAFC] dark:bg-[#0b0f19] overflow-hidden p-4 lg:p-6 pb-2">
-          {/* Controls: ONE Clean Row Above Table (Matches second image: Tabs on Left | Actions on Right in a single row) */}
-          <div className="flex items-center justify-between gap-3 pb-3 shrink-0">
+          {/* Controls: Responsive Navigation Tabs & Actions Toolbar */}
+          <div className="w-full pb-3 shrink-0 overflow-x-auto custom-scrollbar">
+            <div className="flex items-center justify-between gap-3 min-w-max">
             {/* Left: Navigation Tabs + More Views (···) */}
             <div className="flex items-center gap-1.5 text-sm shrink-0">
               {(
@@ -761,6 +761,17 @@ export default function ContactsPage() {
                 )}
               </div>
 
+              {/* Dedicated Custom Fields Button */}
+              <button
+                type="button"
+                onClick={() => setShowCustomFields(true)}
+                className="h-9 px-3 bg-white border border-slate-200 text-slate-700 hover:text-red-600 hover:border-red-300 hover:bg-red-50/50 rounded-xl text-xs sm:text-sm font-semibold shadow-2xs transition-colors cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap"
+                title="Manage Custom Fields"
+              >
+                <Sliders className="w-3.5 h-3.5 text-slate-400" />
+                <span>Custom Fields</span>
+              </button>
+
               {/* Export Button */}
               <button
                 type="button"
@@ -783,6 +794,7 @@ export default function ContactsPage() {
               />
             </div>
           </div>
+        </div>
 
           {/* TABLE CONTAINER: Stretches full remaining height so footer is strictly anchored at the bottom */}
           <div className="bg-white border border-slate-200/80 rounded-xl shadow-xs flex-1 flex flex-col min-h-0 overflow-hidden">

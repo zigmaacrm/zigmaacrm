@@ -1,11 +1,52 @@
 import os
 import smtplib
+import socket
+import ssl
 import asyncio
 from pathlib import Path
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.image import MIMEImage
 from app.core.config import settings
+
+def _create_ipv4_socket(host: str, port: int, timeout: int = 15):
+    """
+    Strictly forces IPv4 connection to prevent [Errno 101] Network is unreachable
+    on cloud environments (e.g. Render, AWS) where outbound IPv6 is disabled.
+    """
+    last_err = None
+    try:
+        addrs = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+    except Exception as e:
+        addrs = []
+        last_err = e
+
+    for af, socktype, proto, canonname, sa in addrs:
+        sock = None
+        try:
+            sock = socket.socket(af, socktype, proto)
+            sock.settimeout(timeout)
+            sock.connect(sa)
+            return sock
+        except Exception as e:
+            last_err = e
+            if sock:
+                sock.close()
+
+    # Fallback to standard connection if AF_INET was empty
+    if not addrs:
+        return socket.create_connection((host, port), timeout)
+    raise last_err or OSError(f"Could not connect to {host}:{port} via IPv4")
+
+class IPv4SMTP_SSL(smtplib.SMTP_SSL):
+    def _get_socket(self, host, port, timeout):
+        sock = _create_ipv4_socket(host, port, timeout)
+        ctx = self.context if self.context is not None else ssl.create_default_context()
+        return ctx.wrap_socket(sock, server_hostname=self._host)
+
+class IPv4SMTP(smtplib.SMTP):
+    def _get_socket(self, host, port, timeout):
+        return _create_ipv4_socket(host, port, timeout)
 
 def _send_email_sync(to_email: str, subject: str, html_body: str, plain_body: str = "", image_path: str = None):
     # Use 'related' to embed inline image seamlessly with 'alternative' text & html
@@ -45,10 +86,11 @@ def _send_email_sync(to_email: str, subject: str, html_body: str, plain_body: st
 
     sent = False
     last_err = None
+    smtp_host = settings.SMTP_HOST or "smtp.gmail.com"
 
-    # Priority 1: Port 465 (SSL)
+    # Priority 1: Port 465 (SSL) strictly via IPv4
     try:
-        with smtplib.SMTP_SSL(settings.SMTP_HOST or "smtp.gmail.com", 465, timeout=15) as server:
+        with IPv4SMTP_SSL(smtp_host, 465, timeout=15) as server:
             server.ehlo()
             server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
             server.sendmail(settings.SMTP_FROM_EMAIL, [to_email], msg.as_string())
@@ -57,10 +99,10 @@ def _send_email_sync(to_email: str, subject: str, html_body: str, plain_body: st
         last_err = e
         print(f"[EMAIL NOTICE] Port 465 SSL dispatch attempt note: {e}")
 
-    # Priority 2: Port 587 (STARTTLS)
+    # Priority 2: Port 587 (STARTTLS) strictly via IPv4
     if not sent:
         try:
-            with smtplib.SMTP(settings.SMTP_HOST or "smtp.gmail.com", 587, timeout=15) as server:
+            with IPv4SMTP(smtp_host, 587, timeout=15) as server:
                 server.ehlo()
                 server.starttls()
                 server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)

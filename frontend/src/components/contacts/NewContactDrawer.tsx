@@ -318,10 +318,14 @@ export default function NewContactDrawer({
               {teamMembers.length > 0 ? (
                 <CustomDropdown
                   value={assignedOwner}
-                  options={teamMembers.map(m => ({
-                    value: m.full_name,
-                    label: `${m.full_name} (${m.role === "ADMIN" ? "Admin" : m.role === "MANAGER" ? "Manager" : "Sales Rep"})`
-                  }))}
+                  options={teamMembers.map(m => {
+                    const roleUpper = (m.role || "").toUpperCase();
+                    const roleLabel = roleUpper.includes("ADMIN") ? "Admin" : roleUpper.includes("MANAGER") ? "Manager" : "Sales Rep";
+                    return {
+                      value: m.full_name,
+                      label: `${m.full_name} (${roleLabel})`
+                    };
+                  })}
                   onChange={(val) => setAssignedOwner(val)}
                   variant="input"
                 />
