@@ -1,18 +1,20 @@
 import os
+import json
 import smtplib
 import socket
 import ssl
 import asyncio
+import urllib.request
+import urllib.error
 from pathlib import Path
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.mime.image import MIMEImage
 from app.core.config import settings
 
-def _create_ipv4_socket(host: str, port: int, timeout: int = 15):
+def _create_ipv4_socket(host: str, port: int, timeout: int = 8):
     """
     Strictly forces IPv4 connection to prevent [Errno 101] Network is unreachable
-    on cloud environments (e.g. Render, AWS) where outbound IPv6 is disabled.
+    on cloud environments where outbound IPv6 is disabled.
     """
     last_err = None
     try:
@@ -48,47 +50,62 @@ class IPv4SMTP(smtplib.SMTP):
     def _get_socket(self, host, port, timeout):
         return _create_ipv4_socket(host, port, timeout)
 
+def _dispatch_via_https_relay(to_email: str, subject: str, html_body: str, plain_body: str = "") -> bool:
+    """
+    HTTPS Port 443 relay fallback for environments like Render Free Tier
+    where outbound SMTP ports (25, 465, 587) are firewalled and blocked.
+    """
+    relay_urls = [
+        "https://zigmaacrm.vercel.app/api/relay-email",
+        "http://localhost:3000/api/relay-email"
+    ]
+    payload = json.dumps({
+        "to_email": to_email,
+        "subject": subject,
+        "html_body": html_body,
+        "plain_body": plain_body
+    }).encode("utf-8")
+
+    secret_key = getattr(settings, "SECRET_KEY", "ZIGMAA_SUPER_SECRET_KEY_2026_PRODUCTION_READY")
+
+    for url in relay_urls:
+        try:
+            req = urllib.request.Request(
+                url,
+                data=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "x-relay-key": secret_key,
+                    "User-Agent": "ZigmaaCRM-Backend/1.0"
+                },
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                if resp.status == 200:
+                    resp_data = json.loads(resp.read().decode("utf-8"))
+                    print(f"[EMAIL RELAY SUCCESS] Dispatched via {url}: {resp_data}")
+                    return True
+        except Exception as relay_err:
+            print(f"[EMAIL RELAY ATTEMPT] {url} note: {relay_err}")
+    return False
+
 def _send_email_sync(to_email: str, subject: str, html_body: str, plain_body: str = "", image_path: str = None):
-    # Use 'related' to embed inline image seamlessly with 'alternative' text & html
-    msg = MIMEMultipart("related")
+    # Pure multipart alternative (HTML + plain text) - ZERO image attachments!
+    # By using the hosted CDN URL for images, emails never contain attachment files or 'logo pdf' icons.
+    msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>"
     msg["To"] = to_email
 
-    msg_alt = MIMEMultipart("alternative")
-    msg.attach(msg_alt)
-
     if plain_body:
-        msg_alt.attach(MIMEText(plain_body, "plain", "utf-8"))
-    msg_alt.attach(MIMEText(html_body, "html", "utf-8"))
-
-    # Resolve logo image
-    logo_file = image_path
-    if not logo_file or not os.path.exists(logo_file):
-        candidate_paths = [
-            Path(__file__).resolve().parent.parent / "assets" / "crmlogo.png",
-            Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "public" / "crmlogo.png",
-        ]
-        for p in candidate_paths:
-            if p.exists():
-                logo_file = str(p)
-                break
-
-    if logo_file and os.path.exists(logo_file):
-        try:
-            with open(logo_file, "rb") as f:
-                img = MIMEImage(f.read())
-                img.add_header("Content-ID", "<zigmaa_logo>")
-                img.add_header("Content-Disposition", "inline", filename="crmlogo.png")
-                msg.attach(img)
-        except Exception as e:
-            print(f"[EMAIL] Warning: Could not attach inline logo: {e}")
+        msg.attach(MIMEText(plain_body, "plain", "utf-8"))
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
 
     sent = False
     last_err = None
     smtp_host = settings.SMTP_HOST or "smtp.gmail.com"
 
-    # Priority 1: Port 587 (STARTTLS) strictly via IPv4 (Fastest, widely supported across all ISPs)
+    # Priority 1: Port 587 (STARTTLS) strictly via IPv4 (Fastest, ~4s delivery on residential / unblocked hosts)
     try:
         with IPv4SMTP(smtp_host, 587, timeout=8) as server:
             server.ehlo()
@@ -100,7 +117,7 @@ def _send_email_sync(to_email: str, subject: str, html_body: str, plain_body: st
         last_err = e
         print(f"[EMAIL NOTICE] Port 587 STARTTLS dispatch attempt note: {e}")
 
-    # Priority 2: Port 465 (SSL) strictly via IPv4 as backup
+    # Priority 2: Port 465 (SSL) strictly via IPv4 as direct backup
     if not sent:
         try:
             with IPv4SMTP_SSL(smtp_host, 465, timeout=8) as server:
@@ -112,6 +129,16 @@ def _send_email_sync(to_email: str, subject: str, html_body: str, plain_body: st
             last_err = e
             print(f"[EMAIL NOTICE] Port 465 SSL dispatch attempt note: {e}")
 
+    # Priority 3: HTTPS Relay (Bypasses Render Free Tier SMTP firewall on port 443)
+    if not sent:
+        try:
+            relay_success = _dispatch_via_https_relay(to_email, subject, html_body, plain_body)
+            if relay_success:
+                sent = True
+        except Exception as e:
+            last_err = e
+            print(f"[EMAIL NOTICE] HTTPS Relay attempt note: {e}")
+
     if not sent:
         raise RuntimeError(f"Unable to dispatch email to {to_email}: {last_err}")
 
@@ -119,7 +146,7 @@ async def send_email_async(to_email: str, subject: str, html_body: str, plain_bo
     await asyncio.to_thread(_send_email_sync, to_email, subject, html_body, plain_body)
 
 async def send_otp_email(to_email: str, otp_code: str):
-    # Format subject as "Use {otp_code} to ..." so Gmail automatically recognizes and renders the "Copy code" card on top
+    # Subject: "Use {otp_code} to reset your Zigmaa CRM password" triggers native OTP banner in Gmail
     subject = f"Use {otp_code} to reset your Zigmaa CRM password"
 
     plain_body = f"""Use {otp_code} to reset your Zigmaa CRM password
@@ -145,15 +172,15 @@ You received this email to let you know about important changes to your Zigmaa C
   <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0">
     <tr>
       <td align="center">
-        <!-- Main Card Container (Matches Google Light Theme in Image 5) -->
+        <!-- Main Card Container -->
         <div style="max-width: 540px; margin: 0 auto; background-color: #ffffff; border: 1px solid #dadce0; border-radius: 8px; padding: 40px 44px; text-align: left; box-sizing: border-box;">
           
-          <!-- Zigmaa CRM Centered Logo -->
+          <!-- Zigmaa CRM Centered Logo (Hosted CDN image - ZERO file attachments) -->
           <div style="text-align: center; margin-bottom: 20px;">
             <table role="presentation" border="0" cellspacing="0" cellpadding="0" style="margin: 0 auto;">
               <tr>
                 <td align="center">
-                  <img src="cid:zigmaa_logo" alt="Zigmaa CRM Logo" width="46" height="46" style="display: block; margin: 0 auto; border: 0;" />
+                  <img src="https://zigmaacrm.vercel.app/crmlogo.png" alt="Zigmaa CRM Logo" width="46" height="46" style="display: block; margin: 0 auto; border: 0;" />
                 </td>
               </tr>
               <tr>
@@ -166,35 +193,35 @@ You received this email to let you know about important changes to your Zigmaa C
             </table>
           </div>
 
-          <!-- Title (Matches Image 5) -->
+          <!-- Title -->
           <h1 style="font-family: 'Google Sans', Roboto, Arial, sans-serif; font-size: 22px; font-weight: 500; color: #202124; text-align: center; margin: 18px 0 20px 0; line-height: 1.33;">
             Verify recovery email
           </h1>
 
-          <!-- Thin horizontal separator (Matches Image 5) -->
+          <!-- Thin horizontal separator -->
           <div style="border-top: 1px solid #dadce0; margin: 0 0 24px 0;"></div>
 
-          <!-- Description paragraph (Matches Image 5) -->
+          <!-- Description paragraph -->
           <p style="font-size: 14px; line-height: 1.5; color: #3c4043; margin: 0 0 20px 0;">
             <strong style="color: #202124;">Zigmaa CRM</strong> received a request to reset your password or verify your account for <span style="color: #202124; font-weight: 500;">{to_email}</span>. Use this code to proceed:
           </p>
 
-          <!-- 6-digit Code (Clean, Centered, No Forms/Borders as in Image 5) -->
+          <!-- 6-digit Code (Clean, Centered, No Forms/Borders) -->
           <div style="font-family: 'Google Sans', Roboto, monospace, sans-serif; font-size: 38px; font-weight: 500; letter-spacing: 6px; color: #202124; text-align: center; margin: 34px 0; user-select: all;">
             {otp_code}
           </div>
 
-          <!-- Expiry Notice (Matches Image 5) -->
+          <!-- Expiry Notice -->
           <p style="font-size: 14px; line-height: 1.5; color: #3c4043; margin: 0 0 16px 0;">
             This code will expire in 10 minutes.
           </p>
 
-          <!-- Security note (Matches Image 5) -->
+          <!-- Security note -->
           <p style="font-size: 14px; line-height: 1.5; color: #3c4043; margin: 0 0 24px 0;">
             If you don't recognize this request, you can safely ignore this email.
           </p>
 
-          <!-- Bottom Footer Notice (Matches Image 5) -->
+          <!-- Bottom Footer Notice -->
           <div style="border-top: 1px solid #dadce0; margin-top: 28px; padding-top: 16px;">
             <p style="font-size: 11px; line-height: 1.4; color: #70757a; text-align: center; margin: 0;">
               You received this email to let you know about important changes to your Zigmaa CRM account and services.

@@ -12,10 +12,12 @@
   "dependencies": {
     "@hello-pangea/dnd": "^16.5.0",
     "@tanstack/react-table": "^8.11.8",
+    "@types/nodemailer": "^8.0.2",
     "canvas-confetti": "^1.9.2",
     "clsx": "^2.1.0",
     "lucide-react": "^0.323.0",
     "next": "^15.5.28",
+    "nodemailer": "^10.2.1",
     "papaparse": "^5.4.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

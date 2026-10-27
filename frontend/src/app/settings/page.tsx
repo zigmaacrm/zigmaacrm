@@ -193,6 +193,11 @@ export default function SettingsPage() {
       const handleRoleChanged = () => setActiveRole(api.getActiveRole());
       window.addEventListener("zigmaa_role_changed", handleRoleChanged);
 
+      const cleanPhoneDigits = (val?: string) => {
+        if (!val) return "";
+        return val.replace(/^\+91\s*/, "").replace(/\D/g, "").slice(-10);
+      };
+
       let user = api.getCurrentUser();
       if (user) {
         setCurrentUser(user);
@@ -202,7 +207,7 @@ export default function SettingsPage() {
           setSignatoryName(user.full_name);
         }
         if (user.email) setEmail(user.email);
-        if (user.phone) setPhone(user.phone);
+        if (user.phone) setPhone(cleanPhoneDigits(user.phone));
         if (user.organization_name) setCompanyName(user.organization_name);
         if (user.picture || user.avatar_url) setUserPhoto(user.picture || user.avatar_url);
       }
@@ -217,7 +222,7 @@ export default function SettingsPage() {
             setSignatoryName(me.full_name);
           }
           if (me.email) setEmail(me.email);
-          if (me.phone) setPhone(me.phone);
+          if (me.phone) setPhone(cleanPhoneDigits(me.phone));
           if (me.organization_name) setCompanyName(me.organization_name);
           if (me.picture || me.avatar_url) setUserPhoto(me.picture || me.avatar_url);
         }
@@ -234,8 +239,7 @@ export default function SettingsPage() {
           // Do NOT overwrite user's personal email with org.email
           if (!user?.email && org.email) setEmail(org.email);
           if (org.phone && !user?.phone) {
-            const cleanPhone = org.phone.replace("+91", "").trim();
-            setPhone(cleanPhone);
+            setPhone(cleanPhoneDigits(org.phone));
           }
           if (org.address) setAddress(org.address);
           if (org.gstin) setGstin(org.gstin);
@@ -344,11 +348,14 @@ export default function SettingsPage() {
 
     setProfileSaving(true);
     try {
+      const cleanDigits = phone.replace(/\D/g, "").slice(-10);
+      const formattedPhone = cleanDigits ? `+91 ${cleanDigits}` : null;
+
       await api.updateProfile({
         email: currentUser?.email || email.trim(),
         full_name: fullName.trim(),
         new_email: email.trim(),
-        phone: phone.trim(),
+        phone: formattedPhone || undefined,
         organization_name: companyName.trim(),
         picture: userPhoto
       });
@@ -358,7 +365,7 @@ export default function SettingsPage() {
         company_name: companyName.trim(),
         logo_url: userPhoto || null,
         email: email.trim(),
-        phone: phone.startsWith("+") ? phone.trim() : `+91 ${phone.trim()}`,
+        phone: formattedPhone || "+91 98765 43210",
         address: address.trim(),
         gstin: gstin.trim(),
         signatory_name: signatoryName.trim(),
@@ -713,8 +720,21 @@ export default function SettingsPage() {
                         <input
                           type="tel"
                           inputMode="numeric"
+                          pattern="[0-9]*"
                           maxLength={10}
                           value={phone}
+                          onKeyDown={(e) => {
+                            if (
+                              ["Backspace", "Delete", "Tab", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Enter"].includes(e.key) ||
+                              e.ctrlKey ||
+                              e.metaKey
+                            ) {
+                              return;
+                            }
+                            if (!/^[0-9]$/.test(e.key)) {
+                              e.preventDefault();
+                            }
+                          }}
                           onChange={(e) => {
                             const digits = e.target.value.replace(/\D/g, "").slice(0, 10);
                             setPhone(digits);
