@@ -66,6 +66,12 @@ export default function LoginPage() {
   const [toastMessage, setToastMessage] = useState("");
 
   useEffect(() => {
+    // Keep login and sign-up pages permanently in pure light mode
+    document.documentElement.classList.remove("dark");
+    document.documentElement.style.colorScheme = "light";
+  }, []);
+
+  useEffect(() => {
     if (toastMessage) {
       const timer = setTimeout(() => setToastMessage(""), 4500);
       return () => clearTimeout(timer);
@@ -443,7 +449,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="relative h-screen max-h-screen w-screen overflow-hidden bg-white dark:bg-slate-950 text-slate-900 font-sans select-none flex">
+    <div className="relative h-screen max-h-screen w-screen overflow-hidden bg-white text-slate-900 font-sans select-none flex">
       {/* ================= FLOATING OTP SUCCESS TOAST (Theme Red Animated Countdown) ================= */}
       {toastMessage && (
         <div className="fixed top-5 right-5 z-50 animate-in fade-in slide-in-from-top-4 duration-300 pointer-events-auto">
@@ -453,19 +459,19 @@ export default function LoginPage() {
               100% { width: 0%; }
             }
           `}</style>
-          <div className="relative overflow-hidden bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 shadow-xl shadow-slate-200/60 dark:shadow-black/50 rounded-xl px-4 py-3 flex items-center justify-between gap-3 min-w-[300px] sm:min-w-[340px] max-w-[440px]">
+          <div className="relative overflow-hidden bg-white border border-slate-100 shadow-xl shadow-slate-200/60 rounded-xl px-4 py-3 flex items-center justify-between gap-3 min-w-[300px] sm:min-w-[340px] max-w-[440px]">
             <div className="flex items-center gap-2.5">
-              <div className="w-5 h-5 rounded-full bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800/60 flex items-center justify-center shrink-0">
-                <Check className="w-3 h-3 text-red-600 dark:text-red-500 stroke-[3]" />
+              <div className="w-5 h-5 rounded-full bg-red-50 border border-red-200 flex items-center justify-center shrink-0">
+                <Check className="w-3 h-3 text-red-600 stroke-[3]" />
               </div>
-              <span className="text-xs sm:text-[13px] font-semibold text-slate-800 dark:text-slate-100 tracking-tight">
+              <span className="text-xs sm:text-[13px] font-semibold text-slate-800 tracking-tight">
                 {toastMessage}
               </span>
             </div>
             <button
               type="button"
               onClick={() => setToastMessage("")}
-              className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-0.5 rounded cursor-pointer transition-colors"
+              className="text-slate-400 hover:text-slate-600 p-0.5 rounded cursor-pointer transition-colors"
               title="Close"
             >
               <X className="w-4 h-4" />
@@ -496,15 +502,15 @@ export default function LoginPage() {
       </div>
 
       {/* ================= RIGHT SIDE: INTERACTIVE FORM PANEL ================= */}
-      <div className="w-full lg:w-[420px] xl:w-[460px] 2xl:w-[480px] shrink-0 h-full flex flex-col items-center justify-center px-6 sm:px-10 lg:px-8 xl:px-12 py-8 bg-white dark:bg-slate-900 overflow-y-auto">
+      <div className="w-full lg:w-[420px] xl:w-[460px] 2xl:w-[480px] shrink-0 h-full flex flex-col items-center justify-center px-6 sm:px-10 lg:px-8 xl:px-12 py-8 bg-white overflow-y-auto">
         {/* Mobile Header Branding */}
         <div className="lg:hidden flex items-center gap-2.5 mb-6">
           <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-rose-600 to-red-500 p-0.5 shadow-md flex items-center justify-center">
             <img src="/crmlogo.png" alt="Zigmaa CRM" className="w-6 h-6 object-contain" />
           </div>
           <div>
-            <span className="font-extrabold text-lg text-slate-900 dark:text-white">Zigmaa CRM</span>
-            <span className="ml-2 text-[10px] font-bold text-rose-600 uppercase bg-rose-50 dark:bg-rose-950/50 px-1.5 py-0.5 rounded">
+            <span className="font-extrabold text-lg text-slate-900">Zigmaa CRM</span>
+            <span className="ml-2 text-[10px] font-bold text-rose-600 uppercase bg-rose-50 px-1.5 py-0.5 rounded">
               Enterprise
             </span>
           </div>
