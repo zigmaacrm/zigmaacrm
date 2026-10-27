@@ -176,14 +176,19 @@ async def run_seed():
         invoice = Invoice(
             organization_id=org.id,
             invoice_number="ZIG-INV-2026-001",
+            client_name="Aditi Rao",
+            client_company="Apex Global Logistics",
+            client_email="aditi@apexlogistics.in",
+            client_phone="+91 98765 43210",
+            type="INVOICE",
+            status="PAID",
             items=[
-                {"name": "Zigmaa CRM Enterprise Annual License", "qty": 1, "unit_price": 450000.0, "total": 450000.0},
-                {"name": "Omnichannel WhatsApp API Integration Module", "qty": 1, "unit_price": 50000.0, "total": 50000.0}
+                {"description": "Zigmaa CRM Enterprise Annual License", "qty": 1, "unit_price": 450000.0, "amount": 450000.0},
+                {"description": "Omnichannel WhatsApp API Integration Module", "qty": 1, "unit_price": 50000.0, "amount": 50000.0}
             ],
             subtotal=500000.0,
             tax_amount=25000.0,
-            total_amount=525000.0,
-            payment_status="PAID"
+            total_amount=525000.0
         )
         session.add(invoice)
 
