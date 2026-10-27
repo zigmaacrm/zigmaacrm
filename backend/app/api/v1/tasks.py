@@ -8,6 +8,8 @@ from datetime import datetime
 from app.core.database import get_db
 from app.models.task import Task
 from app.models.contact import Contact
+from app.models.organization_user import User
+from app.api.deps import get_optional_current_user
 
 router = APIRouter()
 
@@ -62,9 +64,12 @@ class TaskOut(BaseModel):
 @router.get("/", response_model=List[TaskOut])
 async def get_tasks(
     status: Optional[str] = Query(None),
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     query = select(Task).order_by(Task.created_at.desc())
+    if current_user and current_user.organization_id:
+        query = query.where(Task.organization_id == current_user.organization_id)
     if status and status != "ALL":
         query = query.where(Task.status.ilike(status))
     result = await db.execute(query)
@@ -74,6 +79,7 @@ async def get_tasks(
 @router.post("/", response_model=TaskOut, status_code=201)
 async def create_task(
     payload: TaskCreate,
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     # If contact_id is provided, auto-fill contact details if missing
@@ -90,13 +96,16 @@ async def create_task(
             c_company = c_company or contact.company_name
 
     task = Task(
+        organization_id=current_user.organization_id if current_user else None,
         title=payload.title,
         activity_type=payload.activity_type or "To-Do",
         due_date=payload.due_date,
         due_time=payload.due_time,
         priority=payload.priority or "Medium",
         status=payload.status or "PENDING",
-        assigned_to=payload.assigned_to or "Mohamed Thoufiq",
+        assigned_to=payload.assigned_to or (current_user.full_name if current_user else "Mohamed Thoufiq"),
+        owner_id=current_user.id if current_user else None,
+        owner_name=current_user.full_name if current_user else "Mohamed Thoufiq",
         description=payload.description,
         contact_id=payload.contact_id,
         contact_name=c_name,

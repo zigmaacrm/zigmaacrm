@@ -71,8 +71,9 @@ async def get_contacts(
                 Contact.assigned_user_id.is_(None)
             )
         )
-    if org_id:
-        query = query.where(Contact.organization_id == org_id)
+    target_org = org_id or current_user.organization_id
+    if target_org:
+        query = query.where(Contact.organization_id == target_org)
     if status:
         query = query.where(Contact.status == status)
     if source:
@@ -111,9 +112,11 @@ async def get_contacts(
             "id": c.id,
             "organization_id": c.organization_id,
             "full_name": c.full_name,
+            "name": c.full_name,
             "email": c.email,
             "phone": c.phone,
             "company_name": c.company_name,
+            "company": c.company_name,
             "designation": c.designation or c.job_title,
             "job_title": c.job_title or c.designation,
             "status": c.status or c.lifecycle_stage or "NEW",
@@ -122,6 +125,7 @@ async def get_contacts(
             "custom_data": c.custom_data or {},
             "custom_properties": c.custom_properties or c.custom_data or {},
             "assigned_user_name": c.assigned_user_name or "Mohamed Thoufiq",
+            "assigned_to": c.assigned_user_name or "Mohamed Thoufiq",
             "assigned_user_id": c.assigned_user_id,
             "created_at": c.created_at,
             "updated_at": c.updated_at,
@@ -310,7 +314,7 @@ async def create_contact(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    target_org_id = org_id
+    target_org_id = current_user.organization_id or org_id
     if not target_org_id:
         res = await db.execute(select(Organization))
         org = res.scalars().first()
@@ -345,18 +349,20 @@ async def create_contact(
             )
 
     designation = contact_in.designation or contact_in.job_title
-    assigned_name = contact_in.assigned_user_name or (current_user.full_name if current_user else "Mohamed Thoufiq")
+    assigned_name = contact_in.assigned_to or contact_in.assigned_user_name or (current_user.full_name if current_user else "Mohamed Thoufiq")
     owner_id = current_user.id if current_user else None
     owner_name = current_user.full_name if current_user else assigned_name
     custom_props = contact_in.custom_properties or contact_in.custom_data or {}
+    c_name = contact_in.name or contact_in.full_name or "Unnamed Contact"
+    c_company = contact_in.company or contact_in.company_name
 
     try:
         contact = Contact(
             organization_id=target_org_id,
-            full_name=contact_in.full_name or "Unnamed Contact",
+            full_name=c_name,
             email=contact_in.email,
             phone=contact_in.phone or "",
-            company_name=contact_in.company_name,
+            company_name=c_company,
             designation=designation,
             job_title=contact_in.job_title or designation,
             status=contact_in.status or contact_in.lifecycle_stage or "NEW",
@@ -383,9 +389,11 @@ async def create_contact(
         "id": contact.id,
         "organization_id": contact.organization_id,
         "full_name": contact.full_name,
+        "name": contact.full_name,
         "email": contact.email,
         "phone": contact.phone,
         "company_name": contact.company_name,
+        "company": contact.company_name,
         "designation": contact.designation,
         "job_title": contact.job_title,
         "status": contact.status,
@@ -394,6 +402,7 @@ async def create_contact(
         "custom_data": contact.custom_data or {},
         "custom_properties": contact.custom_properties or contact.custom_data or {},
         "assigned_user_name": contact.assigned_user_name,
+        "assigned_to": contact.assigned_user_name,
         "assigned_user_id": contact.assigned_user_id,
         "created_at": contact.created_at,
         "updated_at": contact.updated_at,
@@ -402,6 +411,7 @@ async def create_contact(
     }
 
 @router.patch("/contacts/{contact_id}")
+@router.put("/contacts/{contact_id}")
 async def update_contact(
     contact_id: str,
     contact_in: dict,
@@ -440,20 +450,94 @@ async def update_contact(
                     detail=f"Another contact already exists with email '{contact_in['email']}' ({dup_email.full_name})."
                 )
 
-    if "custom_properties" in contact_in:
-        contact.custom_properties = contact_in["custom_properties"]
-        contact.custom_data = contact_in["custom_properties"]
-    elif "custom_data" in contact_in:
-        contact.custom_data = contact_in["custom_data"]
-        contact.custom_properties = contact_in["custom_data"]
+    # 1. Map standard names
+    if "full_name" in contact_in and contact_in["full_name"]:
+        contact.full_name = str(contact_in["full_name"]).strip()
+    elif "name" in contact_in and contact_in["name"]:
+        contact.full_name = str(contact_in["name"]).strip()
 
-    for key, val in contact_in.items():
-        if key not in ["id", "created_at", "custom_properties", "custom_data"] and hasattr(contact, key):
-            setattr(contact, key, val)
+    if "company_name" in contact_in:
+        contact.company_name = contact_in["company_name"]
+    elif "company" in contact_in:
+        contact.company_name = contact_in["company"]
+
+    if "designation" in contact_in:
+        contact.designation = contact_in["designation"]
+        contact.job_title = contact_in["designation"]
+    elif "job_title" in contact_in:
+        contact.job_title = contact_in["job_title"]
+        contact.designation = contact_in["job_title"]
+
+    if "assigned_user_name" in contact_in:
+        contact.assigned_user_name = contact_in["assigned_user_name"]
+    elif "assigned_to" in contact_in:
+        contact.assigned_user_name = contact_in["assigned_to"]
+
+    if "lifecycle_stage" in contact_in:
+        contact.lifecycle_stage = contact_in["lifecycle_stage"]
+        contact.status = contact_in["lifecycle_stage"]
+    elif "status" in contact_in:
+        contact.status = contact_in["status"]
+        contact.lifecycle_stage = contact_in["status"]
+
+    if "phone" in contact_in:
+        contact.phone = contact_in["phone"]
+    if "email" in contact_in:
+        contact.email = contact_in["email"]
+    if "source" in contact_in:
+        contact.source = contact_in["source"]
+
+    # 2. Custom properties & custom data handling
+    if "custom_properties" in contact_in and isinstance(contact_in["custom_properties"], dict):
+        current_props = dict(contact.custom_properties or {})
+        current_props.update(contact_in["custom_properties"])
+        contact.custom_properties = current_props
+        contact.custom_data = current_props
+    elif "custom_data" in contact_in and isinstance(contact_in["custom_data"], dict):
+        current_data = dict(contact.custom_data or {})
+        current_data.update(contact_in["custom_data"])
+        contact.custom_data = current_data
+        contact.custom_properties = current_data
+
+    # Map any dynamic custom fields passed as top-level keys
+    known_cols = {
+        "id", "organization_id", "full_name", "name", "phone", "email",
+        "company", "company_name", "designation", "job_title", "source",
+        "status", "lifecycle_stage", "custom_data", "custom_properties",
+        "assigned_user_name", "assigned_to", "assigned_user_id", "owner_id",
+        "owner_name", "created_at", "updated_at", "total_deals", "lifetime_value"
+    }
+    extra_fields = {k: v for k, v in contact_in.items() if k not in known_cols}
+    if extra_fields:
+        curr_props = dict(contact.custom_properties or {})
+        curr_props.update(extra_fields)
+        contact.custom_properties = curr_props
+        contact.custom_data = curr_props
 
     await db.commit()
     await db.refresh(contact)
-    return contact
+
+    return {
+        "id": contact.id,
+        "organization_id": contact.organization_id,
+        "full_name": contact.full_name,
+        "name": contact.full_name,
+        "email": contact.email,
+        "phone": contact.phone,
+        "company_name": contact.company_name,
+        "company": contact.company_name,
+        "designation": contact.designation,
+        "job_title": contact.job_title,
+        "status": contact.status,
+        "lifecycle_stage": contact.lifecycle_stage,
+        "source": contact.source,
+        "custom_data": contact.custom_data or {},
+        "custom_properties": contact.custom_properties or {},
+        "assigned_user_name": contact.assigned_user_name,
+        "assigned_to": contact.assigned_user_name,
+        "created_at": contact.created_at,
+        "updated_at": contact.updated_at
+    }
 
 class BulkDeleteContactsRequest(BaseModel):
     contact_ids: List[str]

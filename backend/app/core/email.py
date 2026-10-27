@@ -43,11 +43,35 @@ def _send_email_sync(to_email: str, subject: str, html_body: str, plain_body: st
         except Exception as e:
             print(f"[EMAIL] Warning: Could not attach inline logo: {e}")
 
-    with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=20) as server:
-        server.ehlo()
-        server.starttls()
-        server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-        server.sendmail(settings.SMTP_FROM_EMAIL, [to_email], msg.as_string())
+    sent = False
+    last_err = None
+
+    # Priority 1: Port 465 (SSL)
+    try:
+        with smtplib.SMTP_SSL(settings.SMTP_HOST or "smtp.gmail.com", 465, timeout=15) as server:
+            server.ehlo()
+            server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+            server.sendmail(settings.SMTP_FROM_EMAIL, [to_email], msg.as_string())
+            sent = True
+    except Exception as e:
+        last_err = e
+        print(f"[EMAIL NOTICE] Port 465 SSL dispatch attempt note: {e}")
+
+    # Priority 2: Port 587 (STARTTLS)
+    if not sent:
+        try:
+            with smtplib.SMTP(settings.SMTP_HOST or "smtp.gmail.com", 587, timeout=15) as server:
+                server.ehlo()
+                server.starttls()
+                server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+                server.sendmail(settings.SMTP_FROM_EMAIL, [to_email], msg.as_string())
+                sent = True
+        except Exception as e:
+            last_err = e
+            print(f"[EMAIL NOTICE] Port 587 STARTTLS dispatch attempt note: {e}")
+
+    if not sent:
+        raise RuntimeError(f"Unable to dispatch email to {to_email}: {last_err}")
 
 async def send_email_async(to_email: str, subject: str, html_body: str, plain_body: str = ""):
     await asyncio.to_thread(_send_email_sync, to_email, subject, html_body, plain_body)

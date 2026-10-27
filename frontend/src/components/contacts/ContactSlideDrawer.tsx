@@ -202,8 +202,10 @@ export default function ContactSlideDrawer({
     const fullName = `${editForm.firstName.trim()} ${editForm.lastName.trim()}`.trim() || currentContact.name;
     const payload: any = {
       name: fullName,
+      full_name: fullName,
       email: editForm.email.trim(),
       phone: editForm.phone.trim(),
+      company: editForm.company_name.trim(),
       company_name: editForm.company_name.trim(),
       designation: editForm.designation.trim(),
       job_title: editForm.designation.trim(),

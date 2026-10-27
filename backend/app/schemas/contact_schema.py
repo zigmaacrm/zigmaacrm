@@ -4,9 +4,11 @@ from datetime import datetime
 
 class ContactBase(BaseModel):
     full_name: Optional[str] = "Unnamed Contact"
+    name: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = ""
     company_name: Optional[str] = None
+    company: Optional[str] = None
     designation: Optional[str] = None
     job_title: Optional[str] = None
     status: Optional[str] = "NEW"
@@ -15,6 +17,7 @@ class ContactBase(BaseModel):
     custom_data: Optional[Dict[str, Any]] = {}
     custom_properties: Optional[Dict[str, Any]] = {}
     assigned_user_name: Optional[str] = "Mohamed Thoufiq"
+    assigned_to: Optional[str] = None
 
 class ContactCreate(ContactBase):
     pass

@@ -26,6 +26,8 @@ async def get_deals(
     current_user: User = Depends(get_current_user)
 ):
     query = select(Deal).order_by(Deal.id.desc())
+    if current_user.organization_id:
+        query = query.where(Deal.organization_id == current_user.organization_id)
     if pipeline_id:
         query = query.where(Deal.pipeline_id == pipeline_id)
     if current_user.role == "SALES_REP":

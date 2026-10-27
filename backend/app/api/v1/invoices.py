@@ -13,8 +13,9 @@ from app.models.deal import Deal
 from app.models.contact import Contact
 from app.models.activity import Activity
 from app.models.lead_pipeline import PipelineStage
-from app.models.organization_user import Organization
+from app.models.organization_user import Organization, User
 from app.models.organization_setting import OrganizationSetting
+from app.api.deps import get_optional_current_user
 
 router = APIRouter()
 
@@ -160,9 +161,13 @@ async def get_invoices(
     status: Optional[str] = Query(None),
     deal_id: Optional[str] = Query(None),
     contact_id: Optional[str] = Query(None),
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     query = select(Invoice).order_by(Invoice.created_at.desc())
+
+    if current_user and current_user.organization_id:
+        query = query.where(Invoice.organization_id == current_user.organization_id)
 
     if deal_id:
         query = query.where(Invoice.deal_id == deal_id)
@@ -192,9 +197,10 @@ async def get_invoices(
 async def create_invoice(
     payload: InvoiceCreate,
     org_id: Optional[str] = None,
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    target_org_id = org_id
+    target_org_id = org_id or (current_user.organization_id if current_user else None)
     if not target_org_id:
         res = await db.execute(select(Organization))
         org = res.scalars().first()

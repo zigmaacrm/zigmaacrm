@@ -236,15 +236,10 @@ export default function LoginPage() {
       const res = await api.sendOtp(cleanEmail);
       setOtpSent(true);
       setOtpVerified(false);
-      const displayMsg = res?.message || `Verification code sent to ${cleanEmail}`;
+      setOtpValues(["", "", "", "", "", ""]);
+      const displayMsg = res?.message || `Verification code sent to ${cleanEmail}. Please check your inbox.`;
       setSuccessMsg(displayMsg);
       setToastMessage(displayMsg);
-      if (res?.otp && typeof res.otp === "string") {
-        const digits = res.otp.split("");
-        if (digits.length === 6) {
-          setOtpValues(digits);
-        }
-      }
       setError("");
     } catch (err: any) {
       // STRICT: Ensure OTP screen is NEVER displayed if email is not registered

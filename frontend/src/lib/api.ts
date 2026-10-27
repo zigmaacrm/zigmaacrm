@@ -1596,15 +1596,52 @@ export const zigmaaApi = {
   },
 
   async updateContact(id: number | string, data: Partial<Contact>): Promise<any> {
+    const payload: any = { ...data };
+    if (data.name && !payload.full_name) {
+      payload.full_name = data.name;
+    }
+    if (data.company && !payload.company_name) {
+      payload.company_name = data.company;
+    }
+    if (data.job_title && !payload.designation) {
+      payload.designation = data.job_title;
+    }
+    if (data.assigned_to && !payload.assigned_user_name) {
+      payload.assigned_user_name = data.assigned_to;
+    }
     try {
       const res = await fetch(`${API_BASE}/contacts/${id}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data)
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders()
+        },
+        body: JSON.stringify(payload)
       });
       if (res.ok) {
         invalidateClientCache("contacts");
-        return await res.json();
+        const c = await res.json();
+        const normalized = {
+          ...c,
+          id: c.id,
+          name: c.full_name || c.name,
+          full_name: c.full_name || c.name,
+          email: c.email || "",
+          phone: c.phone || "",
+          company: c.company_name || c.company || "",
+          company_name: c.company_name || c.company || "",
+          job_title: c.designation || c.job_title || "",
+          status: c.status || c.lifecycle_stage || "NEW",
+          lifecycle_stage: c.lifecycle_stage || c.status || "NEW",
+          source: c.source || "MANUAL",
+          assigned_to: c.assigned_user_name || c.assigned_to || "Mohamed Thoufiq",
+          custom_data: c.custom_data || c.custom_properties || {},
+          custom_properties: c.custom_properties || c.custom_data || {}
+        };
+        const contacts = getStorage<Contact[]>("zigmaa_contacts", INITIAL_CONTACTS);
+        const updated = contacts.map(item => String(item.id) === String(id) ? { ...item, ...normalized } : item);
+        setStorage("zigmaa_contacts", updated);
+        return normalized;
       }
     } catch {}
 
@@ -1612,6 +1649,53 @@ export const zigmaaApi = {
     const updated = contacts.map(c => String(c.id) === String(id) ? { ...c, ...data } : c);
     setStorage("zigmaa_contacts", updated);
     return data;
+  },
+
+  async deleteContact(id: number | string): Promise<boolean> {
+    try {
+      const res = await fetch(`${API_BASE}/contacts/${id}`, {
+        method: "DELETE",
+        headers: getAuthHeaders()
+      });
+      if (res.ok) {
+        invalidateClientCache("contacts");
+        const contacts = getStorage<Contact[]>("zigmaa_contacts", INITIAL_CONTACTS);
+        const remaining = contacts.filter(c => String(c.id) !== String(id));
+        setStorage("zigmaa_contacts", remaining);
+        return true;
+      }
+    } catch {}
+
+    const contacts = getStorage<Contact[]>("zigmaa_contacts", INITIAL_CONTACTS);
+    const remaining = contacts.filter(c => String(c.id) !== String(id));
+    setStorage("zigmaa_contacts", remaining);
+    return true;
+  },
+
+  async bulkDeleteContacts(ids: (number | string)[]): Promise<boolean> {
+    const stringIds = ids.map(String);
+    try {
+      const res = await fetch(`${API_BASE}/contacts/bulk-delete`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders()
+        },
+        body: JSON.stringify({ contact_ids: stringIds })
+      });
+      if (res.ok) {
+        invalidateClientCache("contacts");
+        const contacts = getStorage<Contact[]>("zigmaa_contacts", INITIAL_CONTACTS);
+        const remaining = contacts.filter(c => !stringIds.includes(String(c.id)));
+        setStorage("zigmaa_contacts", remaining);
+        return true;
+      }
+    } catch {}
+
+    const contacts = getStorage<Contact[]>("zigmaa_contacts", INITIAL_CONTACTS);
+    const remaining = contacts.filter(c => !stringIds.includes(String(c.id)));
+    setStorage("zigmaa_contacts", remaining);
+    return true;
   },
 
   async sendContactEmail(id: number | string, data: { subject: string; body: string }): Promise<any> {

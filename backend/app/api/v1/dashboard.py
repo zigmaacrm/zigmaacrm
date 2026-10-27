@@ -48,6 +48,8 @@ async def get_dashboard_metrics(
 
     # 1. Total Leads
     contact_query = select(Contact)
+    if current_user.organization_id:
+        contact_query = contact_query.where(Contact.organization_id == current_user.organization_id)
     if is_rep:
         contact_query = contact_query.where(contact_rep_filter)
     if filter_start and range_type != "All Time":
@@ -59,6 +61,8 @@ async def get_dashboard_metrics(
 
     # All-time contacts count for baseline
     all_contacts_query = select(func.count(Contact.id))
+    if current_user.organization_id:
+        all_contacts_query = all_contacts_query.where(Contact.organization_id == current_user.organization_id)
     if is_rep:
         all_contacts_query = all_contacts_query.where(contact_rep_filter)
     all_contacts_res = await db.execute(all_contacts_query)
@@ -66,6 +70,8 @@ async def get_dashboard_metrics(
 
     # Leads created today
     today_leads_query = select(func.count(Contact.id)).where(Contact.created_at >= today_start)
+    if current_user.organization_id:
+        today_leads_query = today_leads_query.where(Contact.organization_id == current_user.organization_id)
     if is_rep:
         today_leads_query = today_leads_query.where(contact_rep_filter)
     today_leads_res = await db.execute(today_leads_query)
@@ -73,6 +79,8 @@ async def get_dashboard_metrics(
 
     # 2. Deals and Pipeline calculations
     deals_query = select(Deal)
+    if current_user.organization_id:
+        deals_query = deals_query.where(Deal.organization_id == current_user.organization_id)
     if is_rep:
         deal_rep_filter = or_(
             Deal.owner_id == current_user.id,
@@ -147,6 +155,8 @@ async def get_dashboard_metrics(
 
     # 3. Tasks / Pending Follow-ups (status == PENDING and due_date <= today)
     tasks_query = select(Task).where(Task.status.ilike("PENDING"))
+    if current_user.organization_id:
+        tasks_query = tasks_query.where(Task.organization_id == current_user.organization_id)
     if is_rep:
         task_rep_filter = or_(
             Task.owner_id == current_user.id,
@@ -237,6 +247,8 @@ async def get_dashboard_metrics(
 
     # 5. Recent Leads (top 5 latest contacts)
     recent_leads_query = select(Contact)
+    if current_user.organization_id:
+        recent_leads_query = recent_leads_query.where(Contact.organization_id == current_user.organization_id)
     if is_rep:
         recent_leads_query = recent_leads_query.where(contact_rep_filter)
     recent_leads_res = await db.execute(
