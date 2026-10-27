@@ -11,6 +11,17 @@ db_url = os.getenv("DATABASE_URL", settings.DATABASE_URL)
 if db_url.startswith("postgresql://"):
     db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
+# Automatically URL-encode '@' in password if present
+if db_url.count("@") > 1 and "://" in db_url:
+    try:
+        scheme, rest = db_url.split("://", 1)
+        userpass, host_part = rest.rsplit("@", 1)
+        if ":" in userpass:
+            user, password = userpass.split(":", 1)
+            db_url = f"{scheme}://{user}:{password.replace('@', '%40')}@{host_part}"
+    except Exception:
+        pass
+
 # Asyncpg requires 'ssl=' instead of 'sslmode='
 if "sslmode=" in db_url:
     db_url = db_url.replace("sslmode=", "ssl=")
