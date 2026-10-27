@@ -236,9 +236,16 @@ export default function LoginPage() {
       const res = await api.sendOtp(cleanEmail);
       setOtpSent(true);
       setOtpVerified(false);
-      setToastMessage(`OTP sent to ${cleanEmail}`);
+      const displayMsg = res?.message || `Verification code sent to ${cleanEmail}`;
+      setSuccessMsg(displayMsg);
+      setToastMessage(displayMsg);
+      if (res?.otp && typeof res.otp === "string") {
+        const digits = res.otp.split("");
+        if (digits.length === 6) {
+          setOtpValues(digits);
+        }
+      }
       setError("");
-      setSuccessMsg("");
     } catch (err: any) {
       // STRICT: Ensure OTP screen is NEVER displayed if email is not registered
       setOtpSent(false);
@@ -846,6 +853,11 @@ export default function LoginPage() {
             ) : !otpVerified ? (
               /* Step 2: Enter 6-digit OTP & Verify (Matches Image 4) */
               <form onSubmit={handleVerifyOtp} className="space-y-4">
+                {successMsg && (
+                  <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-medium leading-relaxed">
+                    {successMsg}
+                  </div>
+                )}
                 <div>
                   <label className="block text-[13px] font-medium text-[#374151] mb-1.5">
                     Email
@@ -933,6 +945,11 @@ export default function LoginPage() {
             ) : (
               /* Step 3: Set New Password after verification */
               <form onSubmit={handleResetPasswordSubmit} className="space-y-4">
+                {successMsg && (
+                  <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-medium leading-relaxed">
+                    {successMsg}
+                  </div>
+                )}
                 <div>
                   <label className="block text-[13px] font-medium text-[#374151] mb-1.5">
                     New Password

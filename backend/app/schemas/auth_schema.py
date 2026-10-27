@@ -91,4 +91,5 @@ class UpdateProfileRequest(BaseModel):
 class SimpleMessageResponse(BaseModel):
     message: str
     success: bool = True
+    otp: Optional[str] = None
 
