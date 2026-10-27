@@ -39,13 +39,13 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
     CELERY_RESULT_BACKEND: str = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
 
-    # SMTP Configuration (Loaded from .env)
+    # SMTP Configuration (Loaded from .env with production fallback)
     SMTP_HOST: str = os.getenv("SMTP_HOST", "smtp.gmail.com")
     SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
-    SMTP_USER: str = os.getenv("SMTP_USER", "")
-    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
+    SMTP_USER: str = os.getenv("SMTP_USER") or "zigmaatech@gmail.com"
+    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD") or "fhgu cnck rkhj anmq"
     SMTP_FROM_NAME: str = os.getenv("SMTP_FROM_NAME", "Zigmaacrm")
-    SMTP_FROM_EMAIL: str = os.getenv("SMTP_FROM_EMAIL", "")
+    SMTP_FROM_EMAIL: str = os.getenv("SMTP_FROM_EMAIL") or "zigmaatech@gmail.com"
 
     # WhatsApp Meta Cloud API Configuration
     WHATSAPP_VERIFY_TOKEN: str = os.getenv("WHATSAPP_VERIFY_TOKEN", "zigmaa_wa_secure_webhook_token_2026")

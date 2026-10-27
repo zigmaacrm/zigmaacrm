@@ -88,29 +88,29 @@ def _send_email_sync(to_email: str, subject: str, html_body: str, plain_body: st
     last_err = None
     smtp_host = settings.SMTP_HOST or "smtp.gmail.com"
 
-    # Priority 1: Port 465 (SSL) strictly via IPv4
+    # Priority 1: Port 587 (STARTTLS) strictly via IPv4 (Fastest, widely supported across all ISPs)
     try:
-        with IPv4SMTP_SSL(smtp_host, 465, timeout=15) as server:
+        with IPv4SMTP(smtp_host, 587, timeout=8) as server:
             server.ehlo()
+            server.starttls()
             server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
             server.sendmail(settings.SMTP_FROM_EMAIL, [to_email], msg.as_string())
             sent = True
     except Exception as e:
         last_err = e
-        print(f"[EMAIL NOTICE] Port 465 SSL dispatch attempt note: {e}")
+        print(f"[EMAIL NOTICE] Port 587 STARTTLS dispatch attempt note: {e}")
 
-    # Priority 2: Port 587 (STARTTLS) strictly via IPv4
+    # Priority 2: Port 465 (SSL) strictly via IPv4 as backup
     if not sent:
         try:
-            with IPv4SMTP(smtp_host, 587, timeout=15) as server:
+            with IPv4SMTP_SSL(smtp_host, 465, timeout=8) as server:
                 server.ehlo()
-                server.starttls()
                 server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
                 server.sendmail(settings.SMTP_FROM_EMAIL, [to_email], msg.as_string())
                 sent = True
         except Exception as e:
             last_err = e
-            print(f"[EMAIL NOTICE] Port 587 STARTTLS dispatch attempt note: {e}")
+            print(f"[EMAIL NOTICE] Port 465 SSL dispatch attempt note: {e}")
 
     if not sent:
         raise RuntimeError(f"Unable to dispatch email to {to_email}: {last_err}")

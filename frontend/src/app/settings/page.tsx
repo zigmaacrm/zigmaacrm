@@ -608,7 +608,7 @@ export default function SettingsPage() {
                   {/* Profile Photo Row */}
                   <div className="flex flex-col sm:flex-row items-center gap-5 pt-1">
                     <div className="relative group shrink-0">
-                      <div className="w-20 h-20 rounded-full bg-gradient-to-br from-amber-400 to-amber-500 text-slate-900 font-bold text-2xl flex items-center justify-center shadow-sm select-none overflow-hidden border-2 border-white ring-2 ring-slate-200">
+                      <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-rose-600 to-red-500 text-white font-bold text-2xl flex items-center justify-center shadow-md select-none overflow-hidden border-2 border-white ring-2 ring-red-100">
                         {userPhoto ? (
                           <img
                             src={userPhoto}
@@ -618,14 +618,17 @@ export default function SettingsPage() {
                             crossOrigin="anonymous"
                           />
                         ) : (
-                          fullName
-                            ? fullName
-                                .split(" ")
-                                .map((n) => n[0])
-                                .join("")
-                                .toUpperCase()
-                                .slice(0, 2)
-                            : "AT"
+                          (() => {
+                            const nameToUse = (fullName || currentUser?.full_name || "").trim();
+                            if (nameToUse) {
+                              const parts = nameToUse.split(/\s+/);
+                              if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+                              return parts[0].slice(0, 2).toUpperCase();
+                            }
+                            const emailToUse = (email || currentUser?.email || "").trim();
+                            if (emailToUse) return emailToUse.slice(0, 2).toUpperCase();
+                            return "U";
+                          })()
                         )}
                       </div>
                       <input
@@ -677,8 +680,8 @@ export default function SettingsPage() {
                         type="text"
                         value={fullName}
                         onChange={(e) => setFullName(e.target.value)}
-                        placeholder={currentUser?.full_name || "Your Full Name"}
-                        className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 font-medium"
+                        placeholder="Enter your full name"
+                        className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 font-medium placeholder:text-slate-400 placeholder:font-normal"
                         required
                       />
                     </div>
@@ -692,8 +695,8 @@ export default function SettingsPage() {
                         type="email"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
-                        placeholder={currentUser?.email || "your.email@example.com"}
-                        className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 font-medium"
+                        placeholder="Enter your email address"
+                        className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 font-medium placeholder:text-slate-400 placeholder:font-normal"
                         required
                       />
                     </div>
@@ -716,8 +719,8 @@ export default function SettingsPage() {
                             const digits = e.target.value.replace(/\D/g, "").slice(0, 10);
                             setPhone(digits);
                           }}
-                          placeholder="9876543210"
-                          className="flex-1 bg-transparent text-slate-900 p-2.5 focus:outline-none font-medium tracking-wide text-xs"
+                          placeholder="Enter 10-digit mobile number"
+                          className="flex-1 bg-transparent text-slate-900 p-2.5 focus:outline-none font-medium tracking-wide text-xs placeholder:text-slate-400 placeholder:font-normal"
                         />
                       </div>
                     </div>
@@ -731,8 +734,8 @@ export default function SettingsPage() {
                         type="text"
                         value={companyName}
                         onChange={(e) => setCompanyName(e.target.value)}
-                        placeholder="Arsath Thoufiq's Workspace"
-                        className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 font-medium"
+                        placeholder="Enter company or organization name"
+                        className="w-full bg-slate-50 text-slate-900 p-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 font-medium placeholder:text-slate-400 placeholder:font-normal"
                       />
                     </div>
                   </div>
