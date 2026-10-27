@@ -7,7 +7,7 @@ from app.core.config import settings
 logger = logging.getLogger("zigmaa.database")
 
 # DB Configuration: Preferences settings.DATABASE_URL or environment variable
-db_url = os.getenv("DATABASE_URL", settings.DATABASE_URL)
+db_url = (os.getenv("DATABASE_URL", settings.DATABASE_URL) or "").strip().replace("\r", "").replace("\n", "")
 if db_url.startswith("postgresql://"):
     db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
