@@ -249,3 +249,99 @@ You received this email to let you know about important changes to your Zigmaa C
 """
 
     await send_email_async(to_email, subject, html_body, plain_body)
+
+async def send_team_invitation_email(to_email: str, full_name: str, org_name: str, invite_link: str, inviter_name: str = "Administrator"):
+    subject = f"You're invited to join {org_name} on Zigmaa CRM"
+    plain_body = f"""Hi {full_name},
+
+{inviter_name} has invited you to join {org_name} as a Sales Representative on Zigmaa CRM.
+
+Click the link below to set up your password and access your account:
+{invite_link}
+
+Note: This invitation link is strictly valid for 24 hours.
+
+Best regards,
+The Zigmaa CRM Team
+"""
+    html_body = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{subject}</title>
+</head>
+<body style="margin: 0; padding: 24px 12px; background-color: #f8f9fa; font-family: 'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; color: #202124;">
+  <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0">
+    <tr>
+      <td align="center">
+        <div style="max-width: 540px; margin: 0 auto; background-color: #ffffff; border: 1px solid #dadce0; border-radius: 12px; padding: 40px 44px; text-align: left; box-sizing: border-box; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+          
+          <!-- Logo -->
+          <div style="text-align: center; margin-bottom: 24px;">
+            <table role="presentation" border="0" cellspacing="0" cellpadding="0" style="margin: 0 auto;">
+              <tr>
+                <td align="center">
+                  <img src="https://zigmaacrm.vercel.app/crmlogo.png" alt="Zigmaa CRM Logo" width="46" height="46" style="display: block; margin: 0 auto; border: 0;" />
+                </td>
+              </tr>
+              <tr>
+                <td align="center" style="padding-top: 8px;">
+                  <span style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 20px; font-weight: 700; color: #111827; letter-spacing: -0.5px;">
+                    <span style="color: #E60012;">Zigmaa</span> CRM
+                  </span>
+                </td>
+              </tr>
+            </table>
+          </div>
+
+          <!-- Title -->
+          <h1 style="font-size: 22px; font-weight: 700; color: #111827; text-align: center; margin: 0 0 10px 0;">
+            Team Invitation
+          </h1>
+          <p style="font-size: 14px; line-height: 1.5; color: #4B5563; text-align: center; margin: 0 0 24px 0;">
+            <strong>{inviter_name}</strong> invited you to join <strong>{org_name}</strong> as a Sales Representative.
+          </p>
+
+          <div style="border-top: 1px solid #E5E7EB; margin: 0 0 24px 0;"></div>
+
+          <p style="font-size: 14px; line-height: 1.6; color: #374151; margin: 0 0 24px 0;">
+            Hello <strong>{full_name}</strong>,<br/>
+            You have been added to the sales team on Zigmaa CRM. Please click the button below to set up your password and access your deals, contacts, and sales pipelines.
+          </p>
+
+          <!-- Action Button -->
+          <div style="text-align: center; margin: 32px 0;">
+            <a href="{invite_link}" target="_blank" style="background-color: #E60012; color: #ffffff; padding: 14px 32px; font-size: 14px; font-weight: 600; text-decoration: none; border-radius: 8px; display: inline-block; box-shadow: 0 2px 4px rgba(230,0,18,0.25);">
+              Set Up Password &amp; Join Team
+            </a>
+          </div>
+
+          <!-- 24 Hour Expiry Warning -->
+          <div style="background-color: #FEF2F2; border-left: 4px solid #EF4444; padding: 12px 16px; border-radius: 6px; margin: 24px 0;">
+            <p style="font-size: 12px; color: #991B1B; margin: 0; font-weight: 500;">
+              ⏳ <strong>Security Notice:</strong> This invitation link is valid for <strong>24 hours</strong>. If it expires, please ask your administrator to send a new invitation.
+            </p>
+          </div>
+
+          <p style="font-size: 12px; color: #6B7280; margin: 20px 0 0 0; word-break: break-all;">
+            Or copy and paste this URL into your browser:<br/>
+            <a href="{invite_link}" style="color: #E60012; text-decoration: underline;">{invite_link}</a>
+          </p>
+
+          <!-- Footer -->
+          <div style="border-top: 1px solid #E5E7EB; margin-top: 32px; padding-top: 16px;">
+            <p style="font-size: 11px; line-height: 1.4; color: #9CA3AF; text-align: center; margin: 0;">
+              Sent by Zigmaa CRM Security. If you did not expect this invitation, you can safely ignore this email.
+            </p>
+          </div>
+
+        </div>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+"""
+    await send_email_async(to_email, subject, html_body, plain_body)
+

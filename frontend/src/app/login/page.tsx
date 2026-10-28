@@ -65,10 +65,52 @@ export default function LoginPage() {
   const [otpVerified, setOtpVerified] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
 
+  // Team Invitation state for sales reps
+  const [isInvitation, setIsInvitation] = useState(false);
+  const [invitationToken, setInvitationToken] = useState("");
+  const [invitedEmail, setInvitedEmail] = useState("");
+  const [invitedName, setInvitedName] = useState("");
+  const [setupPassword, setSetupPassword] = useState("");
+  const [confirmSetupPassword, setConfirmSetupPassword] = useState("");
+  const [showSetupPassword, setShowSetupPassword] = useState(false);
+  const [showConfirmSetupPassword, setShowConfirmSetupPassword] = useState(false);
+  const [invitationError, setInvitationError] = useState("");
+  const [invitationSuccess, setInvitationSuccess] = useState("");
+  const [verifyingInvite, setVerifyingInvite] = useState(false);
+
   useEffect(() => {
     // Keep login and sign-up pages permanently in pure light mode
     document.documentElement.classList.remove("dark");
     document.documentElement.style.colorScheme = "light";
+
+    // Detect team invitation token in URL query
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const token = params.get("invitation_token") || params.get("invite_token") || params.get("token");
+      const emailParam = params.get("email");
+      const nameParam = params.get("name");
+
+      if (token) {
+        setIsInvitation(true);
+        setInvitationToken(token);
+        if (emailParam) setInvitedEmail(emailParam);
+        if (nameParam) setInvitedName(nameParam);
+
+        // Verify token with backend
+        setVerifyingInvite(true);
+        api.verifyInvitation(token)
+          .then((res: any) => {
+            if (res.email) setInvitedEmail(res.email);
+            if (res.full_name) setInvitedName(res.full_name);
+          })
+          .catch((err: any) => {
+            setInvitationError(err.message || "This invitation link has expired (24-hour limit) or is invalid.");
+          })
+          .finally(() => {
+            setVerifyingInvite(false);
+          });
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -89,6 +131,41 @@ export default function LoginPage() {
     const clean = val.replace(/\D/g, "");
     return clean.length === 10;
   };
+
+  async function handleAcceptInvitation(e: React.FormEvent) {
+    e.preventDefault();
+    setInvitationError("");
+    setInvitationSuccess("");
+
+    if (!setupPassword) {
+      setInvitationError("Please enter a new password.");
+      return;
+    }
+    if (setupPassword.length < 6) {
+      setInvitationError("Password must be at least 6 characters.");
+      return;
+    }
+    if (setupPassword !== confirmSetupPassword) {
+      setInvitationError("Passwords do not match. Please re-enter.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      await api.acceptInvitation({
+        token: invitationToken,
+        password: setupPassword
+      });
+      setInvitationSuccess("Password set successfully! Logging you in...");
+      setTimeout(() => {
+        window.location.href = "/";
+      }, 1000);
+    } catch (err: any) {
+      setInvitationError(err.message || "Failed to set password. Link may have expired (24h limit).");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -517,8 +594,144 @@ export default function LoginPage() {
             </span>
           </div>
         </div>
-        {/* SIGN UP VIEW */}
-        {isSignUp ? (
+        {/* INVITATION SET UP PASSWORD VIEW FOR SALES REPS */}
+        {isInvitation ? (
+          <div className="w-full max-w-[400px] my-auto py-3 space-y-4 animate-in fade-in duration-200">
+            {/* Header */}
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-50 text-red-600 text-[11px] font-bold mb-3 border border-red-100">
+                <Sparkles className="w-3.5 h-3.5 text-red-600" />
+                <span>Sales Team Invitation</span>
+              </div>
+              <h2 className="text-[26px] sm:text-[28px] font-bold text-[#111827] tracking-tight">
+                Set up your password
+              </h2>
+              <p className="text-xs sm:text-sm text-[#6B7280] mt-1 font-normal leading-relaxed">
+                Welcome to Zigmaa CRM{invitedName ? `, ${invitedName}` : ""}! Please create your password to activate your Sales Representative account.
+              </p>
+            </div>
+
+            {invitationError && (
+              <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <div>
+                  <p>{invitationError}</p>
+                  <p className="mt-1 text-[11px] text-rose-500">
+                    Invitation links expire automatically after 24 hours for security.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {invitationSuccess && (
+              <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-medium flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{invitationSuccess}</span>
+              </div>
+            )}
+
+            {/* Read-only Invited Email */}
+            {invitedEmail && (
+              <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3 flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs text-slate-700">
+                  <Mail className="w-4 h-4 text-slate-400" />
+                  <span className="font-semibold text-slate-900">{invitedEmail}</span>
+                </div>
+                <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                  Verified Email
+                </span>
+              </div>
+            )}
+
+            <form onSubmit={handleAcceptInvitation} className="space-y-3.5" noValidate>
+              {/* Field 1: Set Password */}
+              <div>
+                <label className="block text-[13px] font-medium text-[#374151] mb-1">
+                  Create Password <span className="text-red-500">*</span>
+                </label>
+                <div className="relative flex items-center">
+                  <input
+                    type={showSetupPassword ? "text" : "password"}
+                    required
+                    value={setupPassword}
+                    onChange={(e) => {
+                      setSetupPassword(e.target.value);
+                      if (invitationError) setInvitationError("");
+                    }}
+                    placeholder="Enter at least 6 characters"
+                    className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-[#E5E7EB] bg-white text-[#111827] text-xs sm:text-sm placeholder:text-[#9CA3AF] placeholder:italic placeholder:font-normal focus:outline-none focus:border-red-600 focus:ring-1 focus:ring-red-600 transition-colors"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowSetupPassword(!showSetupPassword)}
+                    className="absolute right-3 text-[#9CA3AF] hover:text-[#4B5563] cursor-pointer p-0.5"
+                    title={showSetupPassword ? "Hide password" : "Show password"}
+                  >
+                    {showSetupPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Field 2: Confirm Password */}
+              <div>
+                <label className="block text-[13px] font-medium text-[#374151] mb-1">
+                  Confirm Password <span className="text-red-500">*</span>
+                </label>
+                <div className="relative flex items-center">
+                  <input
+                    type={showConfirmSetupPassword ? "text" : "password"}
+                    required
+                    value={confirmSetupPassword}
+                    onChange={(e) => {
+                      setConfirmSetupPassword(e.target.value);
+                      if (invitationError) setInvitationError("");
+                    }}
+                    placeholder="Re-enter your password"
+                    className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-[#E5E7EB] bg-white text-[#111827] text-xs sm:text-sm placeholder:text-[#9CA3AF] placeholder:italic placeholder:font-normal focus:outline-none focus:border-red-600 focus:ring-1 focus:ring-red-600 transition-colors"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmSetupPassword(!showConfirmSetupPassword)}
+                    className="absolute right-3 text-[#9CA3AF] hover:text-[#4B5563] cursor-pointer p-0.5"
+                    title={showConfirmSetupPassword ? "Hide password" : "Show password"}
+                  >
+                    {showConfirmSetupPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* 24 Hour Expiry Notice Pill */}
+              <div className="flex items-center gap-1.5 text-[11px] text-slate-500 bg-slate-50 border border-slate-200/60 px-3 py-1.5 rounded-lg">
+                <span className="text-red-500 font-bold">⏳ Note:</span>
+                <span>This invitation setup link is strictly valid for 24 hours.</span>
+              </div>
+
+              {/* Submit Button */}
+              <button
+                type="submit"
+                disabled={submitting || verifyingInvite}
+                className="w-full mt-2 py-2.5 px-4 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-semibold text-sm rounded-lg shadow-sm transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {submitting ? "Saving & Activating..." : "Set Password & Access CRM"}
+              </button>
+            </form>
+
+            <div className="text-center text-xs text-[#4B5563] pt-2">
+              Already have an active account?{" "}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsInvitation(false);
+                  setIsSignUp(false);
+                  router.push("/login");
+                }}
+                className="font-semibold text-red-600 hover:underline cursor-pointer"
+              >
+                Sign In
+              </button>
+            </div>
+          </div>
+        ) : isSignUp ? (
           <div className="w-full max-w-[420px] my-auto py-3 space-y-3.5">
             {/* Header */}
             <div>

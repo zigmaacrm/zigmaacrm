@@ -1197,9 +1197,19 @@ export const zigmaaApi = {
               created_at: d.created_at || new Date().toISOString()
             };
           });
-          setStorage("zigmaa_deals", mapped);
-          clientMemoryCache.set(cacheKey, { data: mapped, timestamp: Date.now() });
-          return mapped;
+
+          // Merge with locally created deals so freshly added deals are never lost
+          const mergedMap = new Map<string, Deal>();
+          mapped.forEach((d: Deal) => mergedMap.set(String(d.id), d));
+          localDeals.forEach((ld: Deal) => {
+            if (ld && ld.id && !mergedMap.has(String(ld.id))) {
+              mergedMap.set(String(ld.id), ld);
+            }
+          });
+          const merged = Array.from(mergedMap.values());
+          setStorage("zigmaa_deals", merged);
+          clientMemoryCache.set(cacheKey, { data: merged, timestamp: Date.now() });
+          return merged;
         }
       }
     } catch {}
@@ -1254,8 +1264,16 @@ export const zigmaaApi = {
               created_at: d.created_at || new Date().toISOString()
             };
           });
-          setStorage("zigmaa_deals", mapped);
-          clientMemoryCache.set("deals:all", { data: mapped, timestamp: Date.now() });
+          const mergedMap = new Map<string, Deal>();
+          mapped.forEach((d: Deal) => mergedMap.set(String(d.id), d));
+          localDeals.forEach((ld: Deal) => {
+            if (ld && ld.id && !mergedMap.has(String(ld.id))) {
+              mergedMap.set(String(ld.id), ld);
+            }
+          });
+          const merged = Array.from(mergedMap.values());
+          setStorage("zigmaa_deals", merged);
+          clientMemoryCache.set("deals:all", { data: merged, timestamp: Date.now() });
         }
       }
     } catch {}
@@ -1385,9 +1403,37 @@ export const zigmaaApi = {
         // Instant Cache Invalidation & Local Storage Synchronization:
         clientMemoryCache.delete("deals:all");
         clientMemoryCache.delete("deals:board");
+        clientMemoryCache.delete("contacts:all");
         const existingDeals = getStorage<Deal[]>("zigmaa_deals", []);
         const filtered = existingDeals.filter((ed) => String(ed.id) !== String(newDealItem.id));
         setStorage("zigmaa_deals", [newDealItem, ...filtered]);
+
+        // Synchronize contact record in localStorage if deal is linked to a contact
+        if (newDealItem.contact_id) {
+          const contacts = getStorage<Contact[]>("zigmaa_contacts", INITIAL_CONTACTS);
+          const targetLifecycle = (newDealItem.stage === "Won" || (newDealItem.stage_id && String(newDealItem.stage_id).toLowerCase().includes("won"))) ? "Customer" : "Qualified";
+          const updatedContacts = contacts.map(c => {
+            if (String(c.id) === String(newDealItem.contact_id)) {
+              return {
+                ...c,
+                lifecycle_stage: targetLifecycle,
+                status: targetLifecycle,
+                total_deals: (c.total_deals || 0) + 1,
+                has_open_deal: true,
+                deals: [newDealItem, ...(c.deals || [])],
+                custom_data: {
+                  ...(c.custom_data || {}),
+                  has_open_deal: true,
+                  latest_deal_id: newDealItem.id,
+                  latest_deal_title: newDealItem.title,
+                  latest_deal_stage: newDealItem.stage
+                }
+              };
+            }
+            return c;
+          });
+          setStorage("zigmaa_contacts", updatedContacts);
+        }
 
         this.revalidateDeals();
         return newDealItem;
@@ -1402,6 +1448,8 @@ export const zigmaaApi = {
       contact_name: dealData.contact_name || "",
       contact_phone: dealData.contact_phone || "",
       contact_email: dealData.contact_email || "",
+      contact_id: dealData.contact_id ? String(dealData.contact_id) : undefined,
+      lead_id: dealData.lead_id ? String(dealData.lead_id) : undefined,
       value: Number(dealData.value || dealData.deal_value) || 0,
       deal_value: Number(dealData.value || dealData.deal_value) || 0,
       currency: dealData.currency || "INR",
@@ -1423,6 +1471,34 @@ export const zigmaaApi = {
     setStorage("zigmaa_deals", deals);
     clientMemoryCache.delete("deals:all");
     clientMemoryCache.delete("deals:board");
+    clientMemoryCache.delete("contacts:all");
+
+    // Also update contact in local storage if contact_id exists
+    if (dealData.contact_id) {
+      const contacts = getStorage<Contact[]>("zigmaa_contacts", INITIAL_CONTACTS);
+      const targetLifecycle = targetStage === "Won" ? "Customer" : "Qualified";
+      const updatedContacts = contacts.map(c => {
+        if (String(c.id) === String(dealData.contact_id)) {
+          return {
+            ...c,
+            lifecycle_stage: targetLifecycle,
+            status: targetLifecycle,
+            total_deals: (c.total_deals || 0) + 1,
+            has_open_deal: true,
+            deals: [newDeal, ...(c.deals || [])],
+            custom_data: {
+              ...(c.custom_data || {}),
+              has_open_deal: true,
+              latest_deal_id: newDeal.id,
+              latest_deal_title: newDeal.title,
+              latest_deal_stage: newDeal.stage
+            }
+          };
+        }
+        return c;
+      });
+      setStorage("zigmaa_contacts", updatedContacts);
+    }
     return newDeal;
   },
 
@@ -1620,6 +1696,7 @@ export const zigmaaApi = {
       });
       if (res.ok) {
         invalidateClientCache("contacts");
+        clientMemoryCache.delete("contacts:all");
         const c = await res.json();
         const normalized = {
           ...c,
@@ -1645,6 +1722,7 @@ export const zigmaaApi = {
       }
     } catch {}
 
+    clientMemoryCache.delete("contacts:all");
     const contacts = getStorage<Contact[]>("zigmaa_contacts", INITIAL_CONTACTS);
     const updated = contacts.map(c => String(c.id) === String(id) ? { ...c, ...data } : c);
     setStorage("zigmaa_contacts", updated);
@@ -3073,6 +3151,52 @@ export const zigmaaApi = {
     });
     if (!res.ok) {
       let err = "Failed to impersonate tenant";
+      try {
+        const j = await res.json();
+        err = j.detail || err;
+      } catch {}
+      throw new Error(err);
+    }
+    const data = await res.json();
+    if (data.access_token) {
+      setStorage("zigmaa_token", data.access_token);
+      setStorage("zigmaa_user", data.user);
+      if (typeof document !== "undefined") {
+        document.cookie = `zigmaa_token=${encodeURIComponent(data.access_token)}; path=/; max-age=86400; SameSite=Lax`;
+      }
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("zigmaa_user_updated"));
+      }
+    }
+    return data;
+  },
+
+  async verifyInvitation(token: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/auth/verify-invitation?token=${encodeURIComponent(token)}`, {
+      method: "GET",
+      cache: "no-store"
+    });
+    if (!res.ok) {
+      let err = "This invitation link has expired (24-hour limit) or is invalid.";
+      try {
+        const j = await res.json();
+        err = j.detail || err;
+      } catch {}
+      throw new Error(err);
+    }
+    return await res.json();
+  },
+
+  async acceptInvitation(payload: { token: string; password: string }): Promise<any> {
+    const res = await fetch(`${API_BASE}/auth/accept-invitation`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      let err = "Failed to set password. Invitation link may have expired (24h limit).";
       try {
         const j = await res.json();
         err = j.detail || err;

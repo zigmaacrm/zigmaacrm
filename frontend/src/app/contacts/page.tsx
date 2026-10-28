@@ -40,7 +40,8 @@ import FilterSelect from "@/components/common/FilterSelect";
 import CallDialerModal from "@/components/common/CallDialerModal";
 import { api } from "@/lib/api";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import { Contact } from "@/lib/mockData";
+import { Contact, Deal } from "@/lib/mockData";
+import Link from "next/link";
 import { useToast } from "@/components/common/ToastProvider";
 import ColumnCustomizerPopover, { ColumnDefinition, useColumnVisibility } from "@/components/common/ColumnCustomizerPopover";
 import { SourceBadge } from "@/components/common/SourceBadge";
@@ -139,6 +140,7 @@ export default function ContactsPage() {
   const [dealValue, setDealValue] = useState("");
   const [dealStage, setDealStage] = useState("Discovery");
   const [savingDeal, setSavingDeal] = useState(false);
+  const [deals, setDeals] = useState<Deal[]>([]);
 
   const dynamicContactColumns = useMemo(() => {
     return customFields.map((cf) => ({
@@ -158,13 +160,20 @@ export default function ContactsPage() {
   // In-App Phone Call Dialer Modal
   const [callModalContact, setCallModalContact] = useState<Contact | null>(null);
 
-  const loadContacts = async () => {
+  const loadContacts = async (forceRefresh = false) => {
     try {
-      const data = await api.getContacts();
+      const data = await api.getContacts(forceRefresh);
       setContacts(data || []);
     } catch (e) {
       console.error(e);
     }
+  };
+
+  const loadDeals = async () => {
+    try {
+      const d = await api.getDeals();
+      setDeals(d || []);
+    } catch {}
   };
 
   const handleCustomFieldsLoaded = useCallback((cfs: any[]) => {
@@ -188,6 +197,7 @@ export default function ContactsPage() {
 
   useEffect(() => {
     loadContacts();
+    loadDeals();
     loadCustomFields();
     try {
       const u = api.getCurrentUser();
@@ -359,6 +369,14 @@ export default function ContactsPage() {
     }
   };
 
+  const getContactDeals = useCallback((contact: Contact) => {
+    return deals.filter(d => 
+      (d.contact_id && String(d.contact_id) === String(contact.id)) ||
+      (contact.name && d.contact_name && d.contact_name.toLowerCase().trim() === contact.name.toLowerCase().trim()) ||
+      (contact.company_name && d.company_name && d.company_name.toLowerCase().trim() === contact.company_name.toLowerCase().trim())
+    );
+  }, [deals]);
+
   const handleOpenDealModal = (contact: Contact) => {
     setDealModalContact(contact);
     setDealTitle(`${contact.company_name || contact.name} - Deal`);
@@ -375,7 +393,7 @@ export default function ContactsPage() {
 
     setSavingDeal(true);
     try {
-      await api.createDeal({
+      const createdDeal = await api.createDeal({
         title: dealTitle.trim(),
         company_name: dealModalContact.company_name || dealModalContact.name,
         contact_name: dealModalContact.name,
@@ -389,25 +407,53 @@ export default function ContactsPage() {
         close_date: new Date(Date.now() + 14 * 86400000).toISOString().split("T")[0]
       });
 
-      // Automatically advance contact's lifecycle stage to reflect the deal
-      let targetLifecycle = dealModalContact.lifecycle_stage || dealModalContact.status || "New";
-      if (dealStage === "Won") targetLifecycle = "Customer";
-      else if (dealStage === "Proposal Sent" || dealStage === "Negotiation") targetLifecycle = "Qualified";
-      else if (dealStage === "Discovery") targetLifecycle = "Interested";
+      // Automatically advance contact's lifecycle stage to reflect the deal conversion
+      const targetLifecycle = dealStage === "Won" ? "Customer" : "Qualified";
 
-      if (targetLifecycle !== (dealModalContact.lifecycle_stage || dealModalContact.status)) {
-        await api.updateContact(dealModalContact.id, {
-          lifecycle_stage: targetLifecycle,
-          status: targetLifecycle
-        }).catch(() => {});
-      }
+      // 1. Optimistic update of local contacts state for instant UI conversion feedback
+      setContacts((prev) =>
+        prev.map((c) =>
+          String(c.id) === String(dealModalContact.id)
+            ? {
+                ...c,
+                lifecycle_stage: targetLifecycle,
+                status: targetLifecycle,
+                total_deals: (c.total_deals || 0) + 1,
+                deals: [createdDeal, ...(c.deals || [])],
+                custom_data: {
+                  ...(c.custom_data || {}),
+                  has_open_deal: true,
+                  latest_deal_id: createdDeal.id,
+                  latest_deal_title: dealTitle.trim(),
+                  latest_deal_stage: dealStage
+                }
+              }
+            : c
+        )
+      );
+
+      // 2. Also update local deals state
+      setDeals((prev) => [createdDeal, ...prev.filter(d => String(d.id) !== String(createdDeal.id))]);
+
+      // 3. Persist contact update to backend/storage
+      await api.updateContact(dealModalContact.id, {
+        lifecycle_stage: targetLifecycle,
+        status: targetLifecycle,
+        custom_data: {
+          has_open_deal: true,
+          latest_deal_id: createdDeal.id,
+          latest_deal_title: dealTitle.trim(),
+          latest_deal_stage: dealStage
+        }
+      }).catch(() => {});
 
       toast.success(
         "Deal Created & Converted",
-        `"${dealTitle}" added directly to "${dealStage}" stage in Pipeline Deals.`
+        `"${dealTitle}" added directly to "${dealStage}" stage in Pipeline Deals. Contact converted to "${targetLifecycle}".`
       );
       setDealModalContact(null);
-      await loadContacts();
+      await loadContacts(true);
+      await loadDeals();
     } catch (err: any) {
       toast.error("Error", err.message || "Failed to create deal.");
     } finally {
@@ -1558,83 +1604,121 @@ export default function ContactsPage() {
                           })}
 
                           {/* Actions (Standard Flow) */}
-                          {visibleColumns.actions !== false && (
-                            <td
-                              className="py-4 px-6 border-b border-slate-100 text-right w-28 min-w-[112px] transition-all duration-150"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <div className="flex items-center justify-end gap-1.5 relative">
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenDealModal(contact)}
-                                  className="text-red-600 border border-red-200/90 hover:bg-red-50 hover:border-red-300 text-[11px] px-2 py-0.5 rounded-lg font-semibold transition-all cursor-pointer flex items-center gap-1 shadow-2xs"
-                                  title="Attach Deal"
-                                >
-                                  <Plus className="w-3 h-3" />
-                                  <span>Deal</span>
-                                </button>
+                          {visibleColumns.actions !== false && (() => {
+                            const contactDeals = getContactDeals(contact);
+                            const hasDeal = contactDeals.length > 0 || (typeof contact.total_deals === "number" && contact.total_deals > 0) || (contact.custom_data && contact.custom_data.has_open_deal);
 
-                                {/* Three-dots menu */}
-                                <div className="relative">
-                                  <button
-                                    type="button"
-                                    onClick={() => setActiveActionMenuId(isMenuOpen ? null : contact.id)}
-                                    className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
-                                    title="Options"
-                                  >
-                                    <MoreVertical className="w-4 h-4" />
-                                  </button>
-
-                                  {isMenuOpen && (
-                                    <>
-                                      <div
-                                        className="fixed inset-0 z-30"
-                                        onClick={() => setActiveActionMenuId(null)}
-                                      />
-                                      <div className="absolute right-0 mt-1 w-44 bg-white rounded-xl shadow-xl border border-slate-200 py-1 z-40 text-xs animate-in fade-in zoom-in-95 duration-100 text-left">
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setActiveActionMenuId(null);
-                                            setOpenDrawerInEditMode(false);
-                                            setSelectedContact(contact);
-                                          }}
-                                          className="w-full px-3.5 py-2 text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer font-medium"
-                                        >
-                                          <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
-                                          <span>View Details</span>
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setActiveActionMenuId(null);
-                                            setOpenDrawerInEditMode(true);
-                                            setSelectedContact(contact);
-                                          }}
-                                          className="w-full px-3.5 py-2 text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer font-medium"
-                                        >
-                                          <Edit2 className="w-3.5 h-3.5 text-red-600" />
-                                          <span className="font-semibold text-slate-900">Edit Contact</span>
-                                        </button>
-                                        <div className="my-1 border-t border-slate-100" />
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setActiveActionMenuId(null);
-                                            handleDelete(contact.id);
-                                          }}
-                                          className="w-full px-3.5 py-2 text-rose-600 hover:bg-rose-50 flex items-center gap-2 cursor-pointer font-medium"
-                                        >
-                                          <Trash2 className="w-3.5 h-3.5 text-rose-500" />
-                                          <span>Delete Contact</span>
-                                        </button>
-                                      </div>
-                                    </>
+                            return (
+                              <td
+                                className="py-4 px-6 border-b border-slate-100 text-right w-28 min-w-[112px] transition-all duration-150"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <div className="flex items-center justify-end gap-1.5 relative">
+                                  {hasDeal ? (
+                                    <Link
+                                      href={`/pipeline?search=${encodeURIComponent(contact.company_name || contact.name)}`}
+                                      className="text-emerald-700 bg-emerald-50 border border-emerald-200/90 hover:bg-emerald-100 hover:border-emerald-300 text-[11px] px-2 py-0.5 rounded-lg font-semibold transition-all cursor-pointer flex items-center gap-1 shadow-2xs group/deal"
+                                      title={contactDeals[0] ? `View Deal: "${contactDeals[0].title}" (${contactDeals[0].stage})` : "View Deal in Pipeline"}
+                                    >
+                                      <Handshake className="w-3 h-3 text-emerald-600 group-hover/deal:scale-110 transition-transform" />
+                                      <span>{contactDeals.length > 1 ? `${contactDeals.length} Deals` : "Deal Active"}</span>
+                                    </Link>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenDealModal(contact)}
+                                      className="text-red-600 border border-red-200/90 hover:bg-red-50 hover:border-red-300 text-[11px] px-2 py-0.5 rounded-lg font-semibold transition-all cursor-pointer flex items-center gap-1 shadow-2xs"
+                                      title="Convert Contact to Deal"
+                                    >
+                                      <Plus className="w-3 h-3" />
+                                      <span>Deal</span>
+                                    </button>
                                   )}
+
+                                  {/* Three-dots menu */}
+                                  <div className="relative">
+                                    <button
+                                      type="button"
+                                      onClick={() => setActiveActionMenuId(isMenuOpen ? null : contact.id)}
+                                      className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                                      title="Options"
+                                    >
+                                      <MoreVertical className="w-4 h-4" />
+                                    </button>
+
+                                    {isMenuOpen && (
+                                      <>
+                                        <div
+                                          className="fixed inset-0 z-30"
+                                          onClick={() => setActiveActionMenuId(null)}
+                                        />
+                                        <div className="absolute right-0 mt-1 w-44 bg-white rounded-xl shadow-xl border border-slate-200 py-1 z-40 text-xs animate-in fade-in zoom-in-95 duration-100 text-left">
+                                          {hasDeal && (
+                                            <Link
+                                              href={`/pipeline?search=${encodeURIComponent(contact.company_name || contact.name)}`}
+                                              onClick={() => setActiveActionMenuId(null)}
+                                              className="w-full px-3.5 py-2 text-emerald-700 hover:bg-emerald-50/60 flex items-center gap-2 cursor-pointer font-medium"
+                                            >
+                                              <Handshake className="w-3.5 h-3.5 text-emerald-600" />
+                                              <span>View in Pipeline</span>
+                                            </Link>
+                                          )}
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setActiveActionMenuId(null);
+                                              handleOpenDealModal(contact);
+                                            }}
+                                            className="w-full px-3.5 py-2 text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer font-medium"
+                                          >
+                                            <Plus className="w-3.5 h-3.5 text-slate-400" />
+                                            <span>{hasDeal ? "Add Another Deal" : "Create Deal"}</span>
+                                          </button>
+                                          <div className="my-1 border-t border-slate-100" />
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setActiveActionMenuId(null);
+                                              setOpenDrawerInEditMode(false);
+                                              setSelectedContact(contact);
+                                            }}
+                                            className="w-full px-3.5 py-2 text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer font-medium"
+                                          >
+                                            <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
+                                            <span>View Details</span>
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setActiveActionMenuId(null);
+                                              setOpenDrawerInEditMode(true);
+                                              setSelectedContact(contact);
+                                            }}
+                                            className="w-full px-3.5 py-2 text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer font-medium"
+                                          >
+                                            <Edit2 className="w-3.5 h-3.5 text-red-600" />
+                                            <span className="font-semibold text-slate-900">Edit Contact</span>
+                                          </button>
+                                          <div className="my-1 border-t border-slate-100" />
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setActiveActionMenuId(null);
+                                              handleDelete(contact.id);
+                                            }}
+                                            className="w-full px-3.5 py-2 text-rose-600 hover:bg-rose-50 flex items-center gap-2 cursor-pointer font-medium"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                                            <span>Delete Contact</span>
+                                          </button>
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
                                 </div>
-                              </div>
-                            </td>
-                          )}
+                              </td>
+                            );
+                          })()}
                         </tr>
                       );
                     })

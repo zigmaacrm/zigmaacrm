@@ -316,18 +316,19 @@ export default function ContactSlideDrawer({
         close_date: new Date(Date.now() + 14 * 86400000).toISOString().split("T")[0]
       });
 
-      // Advance contact lifecycle stage to reflect the deal
-      let targetLifecycle = currentStage;
-      if (dealStage === "Won") targetLifecycle = "Customer";
-      else if (dealStage === "Proposal Sent" || dealStage === "Negotiation") targetLifecycle = "Qualified";
-      else if (dealStage === "Discovery") targetLifecycle = "Interested";
+      // Advance contact lifecycle stage to reflect the converted deal
+      const targetLifecycle = dealStage === "Won" ? "Customer" : "Qualified";
 
-      if (targetLifecycle !== currentStage) {
-        await api.updateContact(currentContact.id, {
-          lifecycle_stage: targetLifecycle,
-          status: targetLifecycle
-        }).catch(() => {});
-      }
+      await api.updateContact(currentContact.id, {
+        lifecycle_stage: targetLifecycle,
+        status: targetLifecycle,
+        custom_data: {
+          has_open_deal: true,
+          latest_deal_id: createdDeal.id,
+          latest_deal_title: dealTitle.trim(),
+          latest_deal_stage: dealStage
+        }
+      }).catch(() => {});
 
       setDetail((prev: any) => {
         const existingDeals = prev?.deals || [];
@@ -349,7 +350,7 @@ export default function ContactSlideDrawer({
 
       toast.success(
         "Deal Created & Converted",
-        `Created "${dealTitle}" directly in "${dealStage}" stage in Pipeline Deals.`
+        `Created "${dealTitle}" in "${dealStage}" stage. Contact converted to "${targetLifecycle}".`
       );
       setShowQuickDeal(false);
       if (onUpdated) onUpdated();

@@ -27,7 +27,13 @@ async def get_deals(
 ):
     query = select(Deal).order_by(Deal.id.desc())
     if current_user.organization_id:
-        query = query.where(Deal.organization_id == current_user.organization_id)
+        query = query.where(
+            or_(
+                Deal.organization_id == current_user.organization_id,
+                Deal.organization_id.is_(None),
+                Deal.organization_id == "default_org"
+            )
+        )
     if pipeline_id:
         query = query.where(Deal.pipeline_id == pipeline_id)
     if current_user.role == "SALES_REP":
@@ -35,7 +41,9 @@ async def get_deals(
             or_(
                 Deal.owner_id == current_user.id,
                 Deal.assigned_user_id == current_user.id,
-                Deal.owner_name.ilike(f"%{current_user.full_name}%")
+                Deal.owner_name.ilike(f"%{current_user.full_name}%"),
+                Deal.owner_id.is_(None),
+                Deal.assigned_user_id.is_(None)
             )
         )
     result = await db.execute(query)
@@ -136,7 +144,9 @@ async def get_deals_board(
             or_(
                 Deal.owner_id == current_user.id,
                 Deal.assigned_user_id == current_user.id,
-                Deal.owner_name.ilike(f"%{current_user.full_name}%")
+                Deal.owner_name.ilike(f"%{current_user.full_name}%"),
+                Deal.owner_id.is_(None),
+                Deal.assigned_user_id.is_(None)
             )
         )
     deals_res = await db.execute(deals_query.order_by(Deal.updated_at.desc()))
@@ -165,10 +175,23 @@ async def get_deals_board(
         stage_deals = []
         total_value = 0.0
         for d in deduped_deals:
-            # match by stage_id or case-insensitive title match
-            if d.stage_id == st.id or d.stage_id == st.title:
+            cd = d.custom_data or {}
+            custom_stage = (cd.get("stage") or "").lower()
+            st_title = (st.title or "").lower()
+            st_id = (st.id or "").lower()
+            deal_stage_id = (d.stage_id or "").lower()
+
+            matches = (
+                deal_stage_id == st_id
+                or deal_stage_id == st_title
+                or custom_stage == st_title
+                or custom_stage == st_id
+                or (st_title in custom_stage and len(st_title) > 3)
+                or (custom_stage in st_title and len(custom_stage) > 3)
+            )
+
+            if matches:
                 total_value += float(d.deal_value or 0.0)
-                cd = d.custom_data or {}
                 contact = contacts_map.get(d.contact_id) if d.contact_id else None
                 lead = leads_map.get(d.lead_id) if d.lead_id else None
 
@@ -228,6 +251,7 @@ async def create_deal(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    org_id = org_id or current_user.organization_id
     if not org_id or not isinstance(org_id, str):
         res = await db.execute(select(Organization))
         org = res.scalars().first()
@@ -363,12 +387,9 @@ async def create_deal(
             if is_won:
                 contact_obj.lifecycle_stage = "Customer"
                 contact_obj.status = "CUSTOMER"
-            elif any(w in resolved_stage_title.lower() for w in ["proposal", "negotiation"]):
+            else:
                 contact_obj.lifecycle_stage = "Qualified"
                 contact_obj.status = "QUALIFIED"
-            elif "discovery" in resolved_stage_title.lower():
-                contact_obj.lifecycle_stage = "Interested"
-                contact_obj.status = "INTERESTED"
 
             c_cd = dict(contact_obj.custom_data or {})
             c_cd["has_open_deal"] = True
@@ -538,6 +559,17 @@ async def update_deal_stage(
     cdata = dict(deal.custom_data or {})
     cdata["stage"] = stage_title
     deal.custom_data = cdata
+
+    if deal.contact_id:
+        c_res = await db.execute(select(Contact).where(Contact.id == deal.contact_id))
+        c_obj = c_res.scalar_one_or_none()
+        if c_obj:
+            if "won" in stage_title.lower():
+                c_obj.lifecycle_stage = "Customer"
+                c_obj.status = "CUSTOMER"
+            elif not "lost" in stage_title.lower():
+                c_obj.lifecycle_stage = "Qualified"
+                c_obj.status = "QUALIFIED"
 
     # Log activity
     act = Activity(

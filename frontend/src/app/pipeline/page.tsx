@@ -329,18 +329,13 @@ export default function PipelineDealsPage() {
       return true;
     });
 
-    // Enforce that each contact or lead has only ONE deal present across pipeline stages
+    // Ensure each deal with a unique id is preserved
     const seen = new Set<string>();
     const uniqueDeals: Deal[] = [];
     for (const d of rawFiltered) {
-      const contactKey = d.contact_id
-        ? `contact_${d.contact_id}`
-        : d.lead_id
-        ? `lead_${d.lead_id}`
-        : `deal_${d.id}`;
-
-      if (seen.has(contactKey)) continue;
-      seen.add(contactKey);
+      const dealKey = String(d.id);
+      if (seen.has(dealKey)) continue;
+      seen.add(dealKey);
       uniqueDeals.push(d);
     }
 
@@ -469,8 +464,36 @@ export default function PipelineDealsPage() {
             <div className="flex items-start gap-4 min-w-max">
               {pipelineStages.map((st, colIndex) => {
                 const stageDeals = filteredDeals.filter((d) => {
-                  const stageStr = (d.stage || "").trim().toLowerCase();
-                  return stageStr === st.label.trim().toLowerCase() || stageStr === st.id.trim().toLowerCase();
+                  const ds = (d.stage || (d as any).stage_id || "").trim().toLowerCase();
+                  const sl = st.label.trim().toLowerCase();
+                  const si = st.id.trim().toLowerCase();
+                  if (ds === sl || ds === si) return true;
+                  if (sl.includes("discovery") && ds.includes("discovery")) return true;
+                  if (sl.includes("proposal") && (ds.includes("proposal") || ds.includes("quote"))) return true;
+                  if (sl.includes("negotiat") && ds.includes("negotiat")) return true;
+                  if (sl.includes("won") && (ds.includes("won") || ds.includes("customer"))) return true;
+                  if (sl.includes("lost") && (ds.includes("lost") || ds.includes("disqualif"))) return true;
+                  if ((sl.includes("new") || sl.includes("lead")) && (ds.includes("new") || ds.includes("lead"))) return true;
+
+                  // Catch-all: If colIndex is 0 (first column) and deal does not match any other column, show it here
+                  if (colIndex === 0) {
+                    const matchesOther = pipelineStages.some((otherSt, idx) => {
+                      if (idx === 0) return false;
+                      const osl = otherSt.label.trim().toLowerCase();
+                      const osi = otherSt.id.trim().toLowerCase();
+                      if (ds === osl || ds === osi) return true;
+                      if (osl.includes("discovery") && ds.includes("discovery")) return true;
+                      if (osl.includes("proposal") && (ds.includes("proposal") || ds.includes("quote"))) return true;
+                      if (osl.includes("negotiat") && ds.includes("negotiat")) return true;
+                      if (osl.includes("won") && (ds.includes("won") || ds.includes("customer"))) return true;
+                      if (osl.includes("lost") && (ds.includes("lost") || ds.includes("disqualif"))) return true;
+                      if ((osl.includes("new") || osl.includes("lead")) && (ds.includes("new") || ds.includes("lead"))) return true;
+                      return false;
+                    });
+                    if (!matchesOther) return true;
+                  }
+
+                  return false;
                 });
                 const stageTotalValue = stageDeals.reduce((sum, d) => sum + (d.value || d.deal_value || 0), 0);
 

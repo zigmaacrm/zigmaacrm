@@ -42,3 +42,30 @@ def decode_access_token(token: str) -> Optional[dict]:
         return payload
     except JWTError:
         return None
+
+def create_invitation_token(data: dict) -> str:
+    """
+    Creates a cryptographically signed invitation token with a strict 24-hour expiration limit.
+    """
+    to_encode = data.copy()
+    now = datetime.utcnow()
+    expire = now + timedelta(hours=24)
+    to_encode.update({
+        "exp": expire,
+        "iat": now,
+        "type": "team_invitation"
+    })
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+def decode_invitation_token(token: str) -> Optional[dict]:
+    """
+    Validates the invitation token. Rejects expired tokens (> 24 hours) or invalid signatures.
+    """
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        if payload.get("type") != "team_invitation":
+            return None
+        return payload
+    except JWTError:
+        return None
+

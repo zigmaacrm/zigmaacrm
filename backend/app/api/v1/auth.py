@@ -2,11 +2,12 @@ import secrets
 import re
 from typing import Optional
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, status, Header
+from fastapi import APIRouter, Depends, HTTPException, status, Header, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func
 from app.core.database import get_db
-from app.core.security import verify_password, get_password_hash, create_access_token
+from app.core.security import verify_password, get_password_hash, create_access_token, decode_invitation_token
 from app.models.organization_user import User, Organization
 from app.models.organization_setting import OrganizationSetting
 from app.models.otp import PasswordResetOTP
@@ -515,4 +516,74 @@ async def update_profile(payload: UpdateProfileRequest, db: AsyncSession = Depen
     await db.refresh(user)
 
     return await _build_user_out(user, db)
+
+class AcceptInvitationRequest(BaseModel):
+    token: str
+    password: str
+
+@router.get("/verify-invitation")
+async def verify_invitation(token: str = Query(...), db: AsyncSession = Depends(get_db)):
+    payload = decode_invitation_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This invitation link has expired (24-hour limit) or is invalid. Please ask your administrator to resend the invite."
+        )
+    user_id = payload.get("sub")
+    user_res = await db.execute(select(User).where(User.id == user_id))
+    user = user_res.scalar_one_or_none()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invited user account not found."
+        )
+    return {
+        "valid": True,
+        "email": user.email,
+        "full_name": user.full_name,
+        "role": user.role
+    }
+
+@router.post("/accept-invitation", response_model=TokenResponse)
+async def accept_invitation(payload: AcceptInvitationRequest, db: AsyncSession = Depends(get_db)):
+    if len(payload.password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 6 characters long."
+        )
+    token_data = decode_invitation_token(payload.token)
+    if not token_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This invitation link has expired (24-hour limit) or is invalid. Please ask your administrator to resend the invite."
+        )
+    user_id = token_data.get("sub")
+    user_res = await db.execute(select(User).where(User.id == user_id))
+    user = user_res.scalar_one_or_none()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invited user account not found."
+        )
+
+    # Set the permanent password and activate user
+    user.hashed_password = get_password_hash(payload.password)
+    user.is_active = True
+    await db.commit()
+    await db.refresh(user)
+
+    # Issue access token so user is automatically authenticated and logged in
+    token = create_access_token({
+        "sub": str(user.id),
+        "email": user.email,
+        "org_id": str(user.organization_id) if user.organization_id else "",
+        "role": user.role
+    })
+    user_out = await _build_user_out(user, db)
+    return TokenResponse(
+        access_token=token,
+        token_type="bearer",
+        user=user_out
+    )
+
 

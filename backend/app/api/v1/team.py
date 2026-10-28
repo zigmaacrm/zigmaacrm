@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import urllib.parse
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_, delete
 from typing import List, Optional
@@ -6,7 +7,8 @@ from pydantic import BaseModel, EmailStr
 from datetime import datetime
 
 from app.core.database import get_db
-from app.core.security import get_password_hash
+from app.core.security import get_password_hash, create_invitation_token
+from app.core.email import send_team_invitation_email
 from app.models.organization_user import User, Organization
 from app.models.deal import Deal
 from app.models.contact import Contact
@@ -89,20 +91,12 @@ async def list_team_members(
 @router.post("/invite", status_code=status.HTTP_201_CREATED)
 async def invite_team_member(
     req: InviteMemberRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     admin_user: User = Depends(get_current_admin)
 ):
     clean_email = req.email.lower().strip()
-    # The organization operates with 1 primary Administrator. All invited team members are strictly Sales Representatives.
     norm_role = "sales_rep"
-
-    # Check if user already exists
-    existing_res = await db.execute(select(User).where(User.email == clean_email))
-    if existing_res.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"User with email {clean_email} already exists."
-        )
 
     # Strictly assign the inviting admin's organization_id
     org_id = admin_user.organization_id
@@ -112,7 +106,58 @@ async def invite_team_member(
             detail="Creator does not have a linked organization."
         )
 
-    # Create new user with temporary secure initial password
+    # Fetch organization name for email
+    org_res = await db.execute(select(Organization).where(Organization.id == org_id))
+    org_obj = org_res.scalar_one_or_none()
+    org_name = org_obj.name if org_obj and org_obj.name else "Zigmaa CRM"
+
+    # Check if user already exists
+    existing_res = await db.execute(select(User).where(User.email == clean_email))
+    existing_user = existing_res.scalar_one_or_none()
+
+    if existing_user:
+        # If user exists and is already active with custom password
+        if existing_user.is_active and existing_user.organization_id == org_id:
+            # Generate a new 24h invitation/setup token to allow password reset/re-invite
+            invite_token = create_invitation_token({
+                "sub": str(existing_user.id),
+                "email": clean_email,
+                "name": existing_user.full_name,
+                "org_id": str(org_id),
+                "role": existing_user.role
+            })
+            base_url = request.headers.get("origin") or "https://zigmaacrm.vercel.app"
+            invite_link = f"{base_url.rstrip('/')}/login?invitation_token={invite_token}&email={clean_email}&name={urllib.parse.quote(existing_user.full_name)}"
+            
+            try:
+                await send_team_invitation_email(clean_email, existing_user.full_name, org_name, invite_link, admin_user.full_name)
+            except Exception as e:
+                print(f"[INVITE EMAIL NOTICE] Could not send email: {e}")
+
+            return {
+                "status": "success",
+                "message": f"Resent 24-hour invitation setup link to {existing_user.email}.",
+                "invitation_link": invite_link,
+                "invitation_token": invite_token,
+                "user": {
+                    "id": existing_user.id,
+                    "organization_id": existing_user.organization_id,
+                    "full_name": existing_user.full_name,
+                    "email": existing_user.email,
+                    "role": existing_user.role,
+                    "is_active": existing_user.is_active,
+                    "assigned_deals_count": 0,
+                    "assigned_leads_count": 0,
+                    "created_at": existing_user.created_at.isoformat() if existing_user.created_at else None
+                }
+            }
+        elif existing_user.organization_id != org_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"User with email {clean_email} belongs to another organization."
+            )
+
+    # Create new sales representative
     temp_pass = "Zigmaa@2026"
     new_user = User(
         organization_id=org_id,
@@ -127,9 +172,36 @@ async def invite_team_member(
     await db.commit()
     await db.refresh(new_user)
 
+    # Generate 24-hour cryptographically signed invitation token
+    invite_token = create_invitation_token({
+        "sub": str(new_user.id),
+        "email": clean_email,
+        "name": new_user.full_name,
+        "org_id": str(org_id),
+        "role": norm_role
+    })
+
+    # Build direct setup password link
+    base_url = request.headers.get("origin") or "https://zigmaacrm.vercel.app"
+    invite_link = f"{base_url.rstrip('/')}/login?invitation_token={invite_token}&email={clean_email}&name={urllib.parse.quote(new_user.full_name)}"
+
+    # Dispatch branded invitation email
+    try:
+        await send_team_invitation_email(
+            clean_email,
+            new_user.full_name,
+            org_name,
+            invite_link,
+            admin_user.full_name or "Administrator"
+        )
+    except Exception as e:
+        print(f"[INVITE EMAIL NOTICE] Could not send email: {e}")
+
     return {
         "status": "success",
-        "message": f"Successfully invited {new_user.full_name} ({new_user.email}) as {new_user.role}.",
+        "message": f"Invitation email sent to {new_user.email} with 24-hour setup password link.",
+        "invitation_link": invite_link,
+        "invitation_token": invite_token,
         "user": {
             "id": new_user.id,
             "organization_id": new_user.organization_id,
