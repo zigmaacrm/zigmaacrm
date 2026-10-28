@@ -353,11 +353,11 @@ export default function PipelineDealsPage() {
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <Header />
 
-        <main className="flex-1 overflow-y-auto p-5 lg:p-7 space-y-5 custom-scrollbar bg-[#F8FAFC] dark:bg-[#0b0f19]">
-          {/* Controls: ONE Straight Row Above Board (Tabs on Left | Actions on Right) */}
-          <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-3">
+        <main className="flex-1 overflow-y-auto p-4 lg:p-6 space-y-4 custom-scrollbar bg-[#F8FAFC] dark:bg-[#0b0f19]">
+          {/* Controls: Responsive Row Above Board (Single row on wide screens, wraps cleanly on laptops without clipping) */}
+          <div className="flex flex-wrap xl:flex-nowrap items-center justify-between gap-2 pb-2.5 shrink-0">
             {/* Left: Navigation Tabs + More Views (···) */}
-            <div className="flex items-center gap-1.5 text-sm flex-wrap sm:flex-nowrap">
+            <div className="flex items-center gap-1 sm:gap-1.5 text-xs sm:text-sm shrink-0 overflow-x-auto max-w-full scrollbar-none">
               {["All Deals", "My Deals", "Open Deals", "Won Deals", "Closing This Month"].map((tab) => (
                 <button
                   key={tab}
@@ -366,7 +366,7 @@ export default function PipelineDealsPage() {
                     setActiveTab(tab);
                     e.currentTarget.blur();
                   }}
-                  className={`px-3.5 py-1.5 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap text-sm outline-none! focus:outline-none! focus-visible:outline-none! ring-0! focus:ring-0! focus-visible:ring-0! border select-none ${
+                  className={`px-2 sm:px-2.5 xl:px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap text-xs xl:text-sm outline-none! focus:outline-none! focus-visible:outline-none! ring-0! focus:ring-0! focus-visible:ring-0! border select-none ${
                     activeTab === tab
                       ? "bg-red-50 text-red-600 font-bold border-red-200/80 shadow-2xs"
                       : "border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100"
@@ -388,7 +388,7 @@ export default function PipelineDealsPage() {
             </div>
 
             {/* Right Actions: [Stage ▾] [Add Deal ▾] [Export] [Pipeline Stages Settings] */}
-            <div className="flex items-center gap-2.5 shrink-0">
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-wrap sm:flex-nowrap">
               {/* Search Toggle */}
               {showSearchInput ? (
                 <div className="relative flex items-center">
@@ -399,7 +399,7 @@ export default function PipelineDealsPage() {
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Search deals..."
                     autoFocus
-                    className="w-56 pl-9 pr-8 py-1.5 text-xs bg-white border border-slate-200 rounded-xl focus:border-red-500 outline-none shadow-2xs"
+                    className="w-44 sm:w-52 md:w-56 pl-9 pr-8 h-9 text-xs sm:text-sm bg-white border border-slate-200 rounded-xl focus:border-red-500 outline-none shadow-2xs"
                   />
                   <button
                     onClick={() => {
@@ -414,7 +414,7 @@ export default function PipelineDealsPage() {
               ) : (
                 <button
                   onClick={() => setShowSearchInput(true)}
-                  className="p-2 bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 rounded-xl text-sm font-semibold shadow-2xs transition-colors cursor-pointer"
+                  className="h-9 w-9 p-0 flex items-center justify-center bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 rounded-xl text-xs sm:text-sm font-semibold shadow-2xs transition-colors cursor-pointer shrink-0"
                   title="Search Deals"
                 >
                   <Search className="w-4 h-4" />
@@ -429,12 +429,13 @@ export default function PipelineDealsPage() {
                 onChange={(val) => {
                   setSelectedStage(val);
                 }}
+                className="shrink-0 [&>button]:h-9 [&>button]:py-0 [&>button]:px-2.5 sm:[&>button]:px-3 [&>button]:text-xs sm:[&>button]:text-sm"
               />
 
               {/* Right Action Buttons */}
               <button
                 onClick={() => setShowAddDrawer(true)}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+                className="h-9 px-3 sm:px-3.5 bg-red-600 hover:bg-red-700 text-white text-xs sm:text-sm font-semibold rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0"
               >
                 <Plus className="w-4 h-4" />
                 <span>Add Deal</span>
@@ -442,7 +443,7 @@ export default function PipelineDealsPage() {
 
               <button
                 onClick={handleExportCsv}
-                className="px-4 py-2 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl text-sm font-semibold shadow-2xs transition-colors cursor-pointer"
+                className="h-9 px-3 sm:px-3.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl text-xs sm:text-sm font-semibold shadow-2xs transition-colors cursor-pointer flex items-center justify-center shrink-0 whitespace-nowrap"
               >
                 Export
               </button>
@@ -452,7 +453,7 @@ export default function PipelineDealsPage() {
                 type="button"
                 onClick={() => setShowStagesModal(true)}
                 title="Customize Pipeline Stages"
-                className="p-2 bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 rounded-xl text-sm font-semibold shadow-2xs transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                className="h-9 w-9 p-0 bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 rounded-xl text-xs sm:text-sm font-semibold shadow-2xs transition-colors cursor-pointer flex items-center justify-center shrink-0"
               >
                 <SlidersHorizontal className="w-4 h-4" />
               </button>

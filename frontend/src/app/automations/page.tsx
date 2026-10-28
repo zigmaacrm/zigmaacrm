@@ -175,11 +175,11 @@ export default function AutomationsPage() {
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <Header />
 
-        <main className="flex-1 overflow-y-auto p-5 lg:p-7 space-y-5 custom-scrollbar bg-[#F8FAFC] dark:bg-[#0b0f19]">
+        <main className="flex-1 overflow-y-auto p-4 lg:p-6 space-y-4 custom-scrollbar bg-[#F8FAFC] dark:bg-[#0b0f19]">
           {/* Top Control Bar: Search on left, Refresh + Tabs + Create on right */}
-          <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-3">
+          <div className="flex flex-wrap xl:flex-nowrap items-center justify-between gap-2 pb-2.5 shrink-0">
             {/* Left: Search input filling available space */}
-            <div className="relative flex-1 min-w-[240px] max-w-md">
+            <div className="relative flex-1 min-w-[200px] sm:min-w-[240px] max-w-md">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
@@ -191,7 +191,7 @@ export default function AutomationsPage() {
             </div>
 
             {/* Right: Refresh button (near All Workflows on left), Tabs, and Create Workflow */}
-            <div className="flex items-center gap-2.5 shrink-0">
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-wrap sm:flex-nowrap">
               <button
                 type="button"
                 onClick={() => {

@@ -291,11 +291,11 @@ export default function LeadsPage() {
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <Header />
 
-        <main className="flex-1 overflow-y-auto p-5 lg:p-7 space-y-5 custom-scrollbar bg-[#F8FAFC] dark:bg-[#0b0f19]">
-          {/* Controls: ONE Straight Row Above Table (Tabs on Left | Actions on Right) */}
-          <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-3">
+        <main className="flex-1 overflow-y-auto p-4 lg:p-6 space-y-4 custom-scrollbar bg-[#F8FAFC] dark:bg-[#0b0f19]">
+          {/* Controls: Responsive Row Above Table (Single row on wide screens, wraps cleanly on laptops without clipping) */}
+          <div className="flex flex-wrap xl:flex-nowrap items-center justify-between gap-2 pb-2.5 shrink-0">
             {/* Left: Navigation Tabs + More Views (···) */}
-            <div className="flex items-center gap-1.5 text-sm flex-wrap sm:flex-nowrap">
+            <div className="flex items-center gap-1 sm:gap-1.5 text-xs sm:text-sm shrink-0 overflow-x-auto max-w-full scrollbar-none">
               {["All Leads", "My Leads", "Open Leads", "Converted Leads", "Today's Leads"].map((tab) => (
                 <button
                   key={tab}
@@ -305,7 +305,7 @@ export default function LeadsPage() {
                     setCurrentPage(1);
                     e.currentTarget.blur();
                   }}
-                  className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap text-sm outline-none! focus:outline-none! focus-visible:outline-none! ring-0! focus:ring-0! focus-visible:ring-0! border select-none ${
+                  className={`px-2 sm:px-2.5 xl:px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap text-xs xl:text-sm outline-none! focus:outline-none! focus-visible:outline-none! ring-0! focus:ring-0! focus-visible:ring-0! border select-none ${
                     activeTab === tab
                       ? "bg-red-50 text-red-600 font-bold border-red-200/80 shadow-2xs"
                       : "border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100"
@@ -328,7 +328,7 @@ export default function LeadsPage() {
 
               {/* Bulk Actions Indicator */}
               {selectedIds.size > 0 && (
-                <div className="flex items-center gap-2 ml-2 px-3 py-1 bg-red-50 text-red-700 border border-red-200 rounded-lg text-xs font-bold animate-in fade-in duration-100">
+                <div className="flex items-center gap-2 ml-1 px-2.5 py-1 bg-red-50 text-red-700 border border-red-200 rounded-lg text-xs font-bold animate-in fade-in duration-100 shrink-0">
                   <span>{selectedIds.size} selected</span>
                   <button
                     onClick={handleBulkDelete}
@@ -342,7 +342,7 @@ export default function LeadsPage() {
             </div>
 
             {/* Right Actions: [Lead Source ▾] [Add Lead ▾] [Export] [ ⊞ | ▥ ] */}
-            <div className="flex items-center gap-2.5 shrink-0">
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-wrap sm:flex-nowrap">
               {/* Custom Lead Source Dropdown */}
               <FilterSelect
                 placeholder="Lead Source"
@@ -352,27 +352,28 @@ export default function LeadsPage() {
                   setSelectedSource(val);
                   setCurrentPage(1);
                 }}
+                className="shrink-0 [&>button]:h-9 [&>button]:py-0 [&>button]:px-2.5 sm:[&>button]:px-3 [&>button]:text-xs sm:[&>button]:text-sm"
               />
 
               {/* Add Lead with Split Dropdown */}
-              <div className="relative">
-                <div className="inline-flex rounded-xl shadow-xs">
+              <div className="relative inline-block shrink-0">
+                <div className="inline-flex rounded-xl shadow-xs overflow-hidden h-9">
                   <button
                     onClick={() => setShowAddLead(true)}
-                    className="px-4 py-2 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white text-sm font-semibold rounded-l-xl transition-all cursor-pointer flex items-center gap-1.5"
+                    className="px-3 sm:px-3.5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white text-xs sm:text-sm font-semibold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap"
                   >
                     <span>Add Lead</span>
                   </button>
                   <button
                     onClick={() => setShowAddMenu(!showAddMenu)}
-                    className="px-2.5 py-2 bg-red-700 hover:bg-red-800 text-white text-sm rounded-r-xl transition-all cursor-pointer border-l border-red-500/30"
+                    className="px-2 bg-red-700 hover:bg-red-800 text-white text-xs sm:text-sm transition-all cursor-pointer border-l border-red-500/30 flex items-center justify-center"
                   >
-                    <ChevronDown className="w-4 h-4" />
+                    <ChevronDown className="w-3.5 h-3.5" />
                   </button>
                 </div>
 
                 {showAddMenu && (
-                  <div className="absolute right-0 mt-1.5 w-48 bg-white border border-slate-200 rounded-xl shadow-lg p-1.5 z-30 text-sm space-y-0.5 animate-in fade-in zoom-in-95 duration-100">
+                  <div className="absolute right-0 mt-1.5 w-48 bg-white border border-slate-200 rounded-xl shadow-lg p-1.5 z-30 text-xs sm:text-sm space-y-0.5 animate-in fade-in zoom-in-95 duration-100">
                     <button
                       onClick={() => {
                         setShowAddLead(true);
@@ -397,7 +398,7 @@ export default function LeadsPage() {
               {/* Export Button */}
               <button
                 onClick={handleExportCsv}
-                className="px-3.5 py-2 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl text-sm font-semibold shadow-2xs transition-colors cursor-pointer flex items-center gap-1.5"
+                className="h-9 px-3 sm:px-3.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl text-xs sm:text-sm font-semibold shadow-2xs transition-colors cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap"
                 title="Export Leads CSV"
               >
                 <Download className="w-3.5 h-3.5 text-slate-500" />
@@ -408,7 +409,7 @@ export default function LeadsPage() {
               <button
                 type="button"
                 onClick={() => setShowCustomFields(true)}
-                className="px-3.5 py-2 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl text-sm font-semibold shadow-2xs transition-colors cursor-pointer flex items-center gap-1.5"
+                className="h-9 px-2.5 sm:px-3 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl text-xs sm:text-sm font-semibold shadow-2xs transition-colors cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap"
                 title="Manage Custom Attributes"
               >
                 <Sliders className="w-3.5 h-3.5 text-slate-500" />

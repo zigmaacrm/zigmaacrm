@@ -440,10 +440,10 @@ export default function TasksPage() {
         <Header />
 
         <main className="flex-1 flex flex-col min-h-0 bg-[#F8FAFC] dark:bg-[#0b0f19] overflow-hidden p-4 lg:p-6 pb-2">
-          {/* Controls: ONE Clean Row Above Table (Tabs on Left | Actions on Right) */}
-          <div className="flex items-center justify-between gap-3 pb-3 shrink-0">
+          {/* Controls: Responsive Row Above Table (Single row on wide screens, wraps cleanly on laptops without clipping) */}
+          <div className="flex flex-wrap xl:flex-nowrap items-center justify-between gap-2 pb-2.5 shrink-0">
             {/* Left: Navigation Tabs + More Views (···) */}
-            <div className="flex items-center gap-1.5 text-sm shrink-0">
+            <div className="flex items-center gap-1 sm:gap-1.5 text-xs sm:text-sm shrink-0 overflow-x-auto max-w-full scrollbar-none">
               {PRIMARY_TASK_TABS.map((tab) => {
                 const isTabActive = activeTab === tab || (tab === "Overdue" && activeTab === "Overdue Tasks");
                 return (
@@ -455,7 +455,7 @@ export default function TasksPage() {
                       setCurrentPage(1);
                       e.currentTarget.blur();
                     }}
-                    className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap text-sm outline-none! focus:outline-none! focus-visible:outline-none! ring-0! focus:ring-0! focus-visible:ring-0! border select-none inline-flex items-center gap-1.5 ${
+                    className={`px-2 sm:px-2.5 xl:px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap text-xs xl:text-sm outline-none! focus:outline-none! focus-visible:outline-none! ring-0! focus:ring-0! focus-visible:ring-0! border select-none inline-flex items-center gap-1.5 ${
                       isTabActive
                         ? "bg-red-50 text-red-600 font-bold border-red-200/80 shadow-2xs"
                         : "border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100"
@@ -483,8 +483,8 @@ export default function TasksPage() {
               />
             </div>
 
-            {/* Right Actions: [Search] [Status ▾] [Add Task] [Export] in one row */}
-            <div className="flex items-center gap-2 shrink-0">
+            {/* Right Actions: [Search] [Status ▾] [Add Task] [Export] */}
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-wrap sm:flex-nowrap">
               {/* Search Box */}
               <div className="relative">
                 <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -496,7 +496,7 @@ export default function TasksPage() {
                     setSearchQuery(e.target.value);
                     setCurrentPage(1);
                   }}
-                  className="pl-8.5 pr-3 h-9 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-red-500 w-32 md:w-36 lg:w-44 shadow-2xs transition-all"
+                  className="pl-8.5 pr-3 h-9 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-red-500 w-28 sm:w-32 md:w-36 lg:w-44 shadow-2xs transition-all"
                 />
               </div>
 
@@ -509,14 +509,14 @@ export default function TasksPage() {
                   setSelectedStatus(val);
                   setCurrentPage(1);
                 }}
-                className="shrink-0 [&>button]:h-9 [&>button]:py-0 [&>button]:px-3 [&>button]:text-xs sm:[&>button]:text-sm"
+                className="shrink-0 [&>button]:h-9 [&>button]:py-0 [&>button]:px-2.5 sm:[&>button]:px-3 [&>button]:text-xs sm:[&>button]:text-sm"
               />
 
               {/* Add Task Button */}
               <button
                 type="button"
                 onClick={() => setShowAddDrawer(true)}
-                className="h-9 px-3.5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white text-xs sm:text-sm font-semibold rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1.5 whitespace-nowrap"
+                className="h-9 px-3 sm:px-3.5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white text-xs sm:text-sm font-semibold rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1.5 whitespace-nowrap"
               >
                 <Plus className="w-4 h-4" />
                 <span>Add Task</span>
@@ -526,7 +526,7 @@ export default function TasksPage() {
               <button
                 type="button"
                 onClick={handleExportCsv}
-                className="h-9 px-3.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl text-xs sm:text-sm font-semibold shadow-2xs transition-colors cursor-pointer flex items-center justify-center shrink-0 whitespace-nowrap"
+                className="h-9 px-3 sm:px-3.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl text-xs sm:text-sm font-semibold shadow-2xs transition-colors cursor-pointer flex items-center justify-center shrink-0 whitespace-nowrap"
               >
                 Export
               </button>

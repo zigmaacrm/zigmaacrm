@@ -676,7 +676,7 @@ export default function ContactsPage() {
           {/* Controls: Responsive Row Above Table (Single row on wide screens, wraps cleanly on laptops without clipping) */}
           <div className="flex flex-wrap xl:flex-nowrap items-center justify-between gap-2 pb-2.5 shrink-0">
             {/* Left: Navigation Tabs + More Views (···) */}
-            <div className="flex items-center gap-1 sm:gap-1.5 text-xs sm:text-sm shrink-0">
+            <div className="flex items-center gap-1 sm:gap-1.5 text-xs sm:text-sm shrink-0 overflow-x-auto max-w-full scrollbar-none">
               {(
                 [
                   "All Contacts",
