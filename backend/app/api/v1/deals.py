@@ -73,7 +73,7 @@ async def get_deals(
         contact = contacts_map.get(d.contact_id) if d.contact_id else None
         lead = leads_map.get(d.lead_id) if d.lead_id else None
 
-        c_name = cd.get("contact_name") or (contact.name if contact else None) or (lead.full_name if lead else None) or ""
+        c_name = cd.get("contact_name") or (contact.full_name if contact else None) or (lead.full_name if lead else None) or ""
         comp_name = cd.get("company_name") or (contact.company_name if contact else None) or (lead.company_name if lead else None) or ""
         c_phone = cd.get("contact_phone") or cd.get("phone") or (contact.phone if contact else None) or (lead.phone if lead else None) or ""
         c_email = cd.get("contact_email") or cd.get("email") or (contact.email if contact else None) or (lead.email if lead else None) or ""
@@ -195,7 +195,7 @@ async def get_deals_board(
                 contact = contacts_map.get(d.contact_id) if d.contact_id else None
                 lead = leads_map.get(d.lead_id) if d.lead_id else None
 
-                c_name = cd.get("contact_name") or (contact.name if contact else None) or (lead.full_name if lead else None) or ""
+                c_name = cd.get("contact_name") or (contact.full_name if contact else None) or (lead.full_name if lead else None) or ""
                 comp_name = cd.get("company_name") or (contact.company_name if contact else None) or (lead.company_name if lead else None) or ""
                 c_phone = cd.get("contact_phone") or cd.get("phone") or (contact.phone if contact else None) or (lead.phone if lead else None) or ""
                 c_email = cd.get("contact_email") or cd.get("email") or (contact.email if contact else None) or (lead.email if lead else None) or ""

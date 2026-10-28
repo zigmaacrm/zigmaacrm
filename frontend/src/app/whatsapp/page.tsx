@@ -471,9 +471,26 @@ export default function WhatsAppPage() {
   };
 
   // Quick Action: Create Deal
-  const handleQuickCreateDeal = () => {
+  const handleQuickCreateDeal = async () => {
     if (!activeChat) return;
-    toast.success("Deal Linked", `Active pipeline deal synchronized for ${activeChat.companyName}`);
+    try {
+      const dealTitle = `${activeChat.contactName || activeChat.companyName || "WhatsApp Prospect"} - Deal`;
+      const created = await api.createDeal({
+        title: dealTitle,
+        contact_id: activeChat.contact_id ? String(activeChat.contact_id) : undefined,
+        contact_name: activeChat.contactName,
+        contact_phone: activeChat.phone,
+        company_name: activeChat.companyName,
+        stage: "New Deal",
+        stage_id: "New Deal",
+        value: 50000,
+        deal_value: 50000,
+        currency: "INR"
+      });
+      toast.success("Deal Created & Linked", `Deal "${created.title}" added to pipeline in New Deal stage.`);
+    } catch (err: any) {
+      toast.error("Deal Creation Failed", err.message || "Could not create deal for WhatsApp contact.");
+    }
   };
 
   // Explicit Contact Name Update Action
