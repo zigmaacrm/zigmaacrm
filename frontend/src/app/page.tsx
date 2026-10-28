@@ -172,7 +172,7 @@ export default function DashboardPage() {
   const fetchDashboardMetrics = async (range: string) => {
     try {
       setLoading(true);
-      const data = await api.getDashboardMetrics(range);
+      const data = await api.getDashboardMetrics(range, true);
       if (data) {
         setMetrics(data);
       }
@@ -608,50 +608,52 @@ export default function DashboardPage() {
                     <div key={i} className="h-9 bg-slate-50 rounded-xl animate-pulse" />
                   ))}
                 </div>
-              ) : (metrics?.stage_breakdown?.length ?? 0) === 0 ? (
-                <div className="py-8 text-center text-xs text-slate-400">
-                  No active pipeline deals created yet.
-                </div>
-              ) : (
-                <div className="space-y-3.5">
-                  {metrics?.stage_breakdown.map((st, idx) => {
-                    const maxVal = Math.max(
-                      ...(metrics?.stage_breakdown.map((s) => s.value) || [1]),
-                      1
-                    );
-                    const widthPct = Math.max(5, Math.min(100, (st.value / maxVal) * 100));
-
-                    return (
-                      <div key={idx} className="space-y-1.5">
-                        <div className="flex items-center justify-between text-xs">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className="w-2.5 h-2.5 rounded-full"
-                              style={{ backgroundColor: st.color || "#3b82f6" }}
-                            />
-                            <span className="font-semibold text-slate-800">{st.title}</span>
-                            <span className="text-[11px] text-slate-400 font-medium">
-                              ({st.count} {st.count === 1 ? "deal" : "deals"})
+              ) : (() => {
+                const activeStages = (metrics?.stage_breakdown || []).filter((s) => (s.count || 0) > 0);
+                if (activeStages.length === 0) {
+                  return (
+                    <div className="py-8 text-center text-xs text-slate-400">
+                      No active pipeline deals created yet.
+                    </div>
+                  );
+                }
+                const maxVal = Math.max(...activeStages.map((s) => s.value || 0), 1);
+                return (
+                  <div className="space-y-3.5">
+                    {activeStages.map((st, idx) => {
+                      const widthPct = Math.max(5, Math.min(100, ((st.value || 0) / maxVal) * 100));
+                      return (
+                        <div key={idx} className="space-y-1.5">
+                          <div className="flex items-center justify-between text-xs">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className="w-2.5 h-2.5 rounded-full"
+                                style={{ backgroundColor: st.color || "#3b82f6" }}
+                              />
+                              <span className="font-semibold text-slate-800">{st.title}</span>
+                              <span className="text-[11px] text-slate-400 font-medium">
+                                ({st.count} {st.count === 1 ? "deal" : "deals"})
+                              </span>
+                            </div>
+                            <span className="font-bold text-slate-900 font-mono">
+                              {formatCurrency(st.value)}
                             </span>
                           </div>
-                          <span className="font-bold text-slate-900 font-mono">
-                            {formatCurrency(st.value)}
-                          </span>
+                          <div className="h-2.5 w-full bg-slate-100 rounded-full overflow-hidden">
+                            <div
+                              className="h-full rounded-full transition-all duration-500"
+                              style={{
+                                width: `${widthPct}%`,
+                                backgroundColor: st.color || "#3b82f6"
+                              }}
+                            />
+                          </div>
                         </div>
-                        <div className="h-2.5 w-full bg-slate-100 rounded-full overflow-hidden">
-                          <div
-                            className="h-full rounded-full transition-all duration-500"
-                            style={{
-                              width: `${widthPct}%`,
-                              backgroundColor: st.color || "#3b82f6"
-                            }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+                      );
+                    })}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Right: Lead Source Performance (4 Cols) */}

@@ -47,49 +47,82 @@ async def get_dashboard_metrics(
     ) if is_rep else None
 
     # 1. Total Leads
-    contact_query = select(Contact)
-    if current_user.organization_id:
-        contact_query = contact_query.where(Contact.organization_id == current_user.organization_id)
+    target_org = current_user.organization_id or "default_org"
+
+    # 1. Total Leads
+    contact_query = select(Contact).where(
+        or_(
+            Contact.organization_id == target_org,
+            Contact.organization_id.is_(None),
+            Contact.organization_id == "default_org"
+        )
+    )
     if is_rep:
         contact_query = contact_query.where(contact_rep_filter)
     if filter_start and range_type != "All Time":
-        contact_query = contact_query.where(Contact.created_at >= filter_start)
+        contact_query = contact_query.where(
+            or_(
+                Contact.created_at >= filter_start,
+                Contact.created_at.is_(None)
+            )
+        )
     
     contacts_res = await db.execute(contact_query)
     contacts = contacts_res.scalars().all()
     total_leads = len(contacts)
 
     # All-time contacts count for baseline
-    all_contacts_query = select(func.count(Contact.id))
-    if current_user.organization_id:
-        all_contacts_query = all_contacts_query.where(Contact.organization_id == current_user.organization_id)
+    all_contacts_query = select(func.count(Contact.id)).where(
+        or_(
+            Contact.organization_id == target_org,
+            Contact.organization_id.is_(None),
+            Contact.organization_id == "default_org"
+        )
+    )
     if is_rep:
         all_contacts_query = all_contacts_query.where(contact_rep_filter)
     all_contacts_res = await db.execute(all_contacts_query)
     all_time_leads = all_contacts_res.scalar() or 0
 
     # Leads created today
-    today_leads_query = select(func.count(Contact.id)).where(Contact.created_at >= today_start)
-    if current_user.organization_id:
-        today_leads_query = today_leads_query.where(Contact.organization_id == current_user.organization_id)
+    today_leads_query = select(func.count(Contact.id)).where(
+        Contact.created_at >= today_start,
+        or_(
+            Contact.organization_id == target_org,
+            Contact.organization_id.is_(None),
+            Contact.organization_id == "default_org"
+        )
+    )
     if is_rep:
         today_leads_query = today_leads_query.where(contact_rep_filter)
     today_leads_res = await db.execute(today_leads_query)
     today_leads = today_leads_res.scalar() or 0
 
     # 2. Deals and Pipeline calculations
-    deals_query = select(Deal)
-    if current_user.organization_id:
-        deals_query = deals_query.where(Deal.organization_id == current_user.organization_id)
+    deals_query = select(Deal).where(
+        or_(
+            Deal.organization_id == target_org,
+            Deal.organization_id.is_(None),
+            Deal.organization_id == "default_org"
+        )
+    )
     if is_rep:
         deal_rep_filter = or_(
             Deal.owner_id == current_user.id,
             Deal.assigned_user_id == current_user.id,
-            Deal.owner_name.ilike(f"%{current_user.full_name}%")
+            Deal.owner_name.ilike(f"%{current_user.full_name}%"),
+            Deal.owner_id.is_(None),
+            Deal.assigned_user_id.is_(None)
         )
         deals_query = deals_query.where(deal_rep_filter)
     if filter_start and range_type != "All Time":
-        deals_query = deals_query.where(Deal.created_at >= filter_start)
+        deals_query = deals_query.where(
+            or_(
+                Deal.created_at >= filter_start,
+                Deal.updated_at >= filter_start,
+                Deal.created_at.is_(None)
+            )
+        )
     deals_res = await db.execute(deals_query)
     deals = deals_res.scalars().all()
 
@@ -104,25 +137,42 @@ async def get_dashboard_metrics(
     stages_list = stages_res.scalars().all()
     stage_id_to_title = {s.id: s.title for s in stages_list}
 
-    # Tracking by stages for middle section
+    canonical_stage_names = ["New Deal", "Discovery", "Proposal Sent", "Negotiation", "Won", "Lost"]
+    stage_colors = {
+        "New Deal": "#64748b",
+        "Discovery": "#3b82f6",
+        "Proposal Sent": "#6366f1",
+        "Negotiation": "#f59e0b",
+        "Won": "#10b981",
+        "Lost": "#f43f5e"
+    }
+
+    def normalize_stage_title(raw: str) -> str:
+        s = (raw or "").strip()
+        sl = s.lower()
+        if "new" in sl or "lead in" in sl or sl == "new deal":
+            return "New Deal"
+        if "discover" in sl or "contact made" in sl or "contact" in sl:
+            return "Discovery"
+        if "propos" in sl or "quote" in sl:
+            return "Proposal Sent"
+        if "negotiat" in sl:
+            return "Negotiation"
+        if "won" in sl or "closed won" in sl or "customer" in sl:
+            return "Won"
+        if "lost" in sl or "closed lost" in sl:
+            return "Lost"
+        return s or "New Deal"
+
     stage_aggregation: Dict[str, Dict[str, Any]] = {}
-    for st in stages_list:
-        stage_aggregation[st.title] = {
-            "title": st.title,
-            "order": st.stage_order,
-            "color": st.color_code or "#3b82f6",
-            "count": 0,
-            "value": 0.0
-        }
 
     for d in deals:
-        val = float(d.deal_value or 0.0)
-        # Stage title resolution
-        st_title = stage_id_to_title.get(d.stage_id, d.stage_id or "")
+        val = float(d.deal_value or (d.custom_data and (d.custom_data.get("value") or d.custom_data.get("deal_value"))) or 0.0)
+        raw_st = stage_id_to_title.get(d.stage_id) or (d.custom_data and d.custom_data.get("stage")) or d.stage_id or "New Deal"
+        st_title = normalize_stage_title(raw_st)
 
-        # Check if won/lost
-        is_won = d.status == "WON" or "won" in st_title.lower()
-        is_lost = d.status == "LOST" or "lost" in st_title.lower()
+        is_won = d.status == "WON" or st_title == "Won"
+        is_lost = d.status == "LOST" or st_title == "Lost"
 
         if is_won:
             won_revenue += val
@@ -131,22 +181,20 @@ async def get_dashboard_metrics(
         elif is_lost:
             total_closed_deals += 1
         else:
-            # Active pipeline
             pipeline_value += val
             active_deals_count += 1
 
-        # Populate stage aggregation
-        if st_title:
-            if st_title not in stage_aggregation:
-                stage_aggregation[st_title] = {
-                    "title": st_title,
-                    "order": 99,
-                    "color": "#64748b",
-                    "count": 0,
-                    "value": 0.0
-                }
-            stage_aggregation[st_title]["count"] += 1
-            stage_aggregation[st_title]["value"] += val
+        if st_title not in stage_aggregation:
+            order = canonical_stage_names.index(st_title) if st_title in canonical_stage_names else 99
+            stage_aggregation[st_title] = {
+                "title": st_title,
+                "order": order,
+                "color": stage_colors.get(st_title, "#3b82f6"),
+                "count": 0,
+                "value": 0.0
+            }
+        stage_aggregation[st_title]["count"] += 1
+        stage_aggregation[st_title]["value"] += val
 
     # Conversion Rate %
     conversion_rate = 0.0
@@ -269,8 +317,11 @@ async def get_dashboard_metrics(
         for c in recent_contacts
     ]
 
-    # Convert stage_aggregation to sorted list
-    stage_breakdown = sorted(stage_aggregation.values(), key=lambda x: x["order"])
+    # Convert stage_aggregation to sorted list, showing only active stages with deals
+    stage_breakdown = sorted(
+        [s for s in stage_aggregation.values() if s["count"] > 0],
+        key=lambda x: x["order"]
+    )
 
     return {
         "range_type": range_type,

@@ -513,6 +513,75 @@ export const zigmaaApi = {
       return cached.data;
     }
 
+    // Pre-calculate real metrics from all deals (merged backend + localStorage)
+    const [deals, contacts, tasks] = await Promise.all([
+      this.getDeals().catch(() => []),
+      this.getContacts().catch(() => []),
+      this.getTasks().catch(() => [])
+    ]);
+
+    let realPipelineVal = 0;
+    let realWonRev = 0;
+    let realWonCount = 0;
+    let realActiveCount = 0;
+
+    const STAGE_COLORS: Record<string, string> = {
+      "New Deal": "#64748b",
+      "Discovery": "#3b82f6",
+      "Proposal Sent": "#6366f1",
+      "Negotiation": "#f59e0b",
+      "Won": "#10b981",
+      "Lost": "#f43f5e"
+    };
+
+    const CANONICAL_ORDER = ["New Deal", "Discovery", "Proposal Sent", "Negotiation", "Won", "Lost"];
+
+    const normalizeStage = (raw: string): string => {
+      const s = (raw || "").trim();
+      const sl = s.toLowerCase();
+      if (sl.includes("new") || sl.includes("lead")) return "New Deal";
+      if (sl.includes("discover") || sl.includes("contact")) return "Discovery";
+      if (sl.includes("propos") || sl.includes("quote")) return "Proposal Sent";
+      if (sl.includes("negotiat")) return "Negotiation";
+      if (sl.includes("won") || sl.includes("customer")) return "Won";
+      if (sl.includes("lost")) return "Lost";
+      return s || "New Deal";
+    };
+
+    const stageMap: Record<string, { title: string; count: number; value: number; color?: string; order: number }> = {};
+
+    deals.forEach((d: any) => {
+      const v = Number(d.value || d.deal_value || (d.custom_data && (d.custom_data.value || d.custom_data.deal_value))) || 0;
+      const rawSt = d.stage || (d.custom_data && d.custom_data.stage) || d.stage_id || "";
+      const st = normalizeStage(rawSt);
+      const isWon = st === "Won" || (d.status || "").toUpperCase() === "WON";
+      const isLost = st === "Lost" || (d.status || "").toUpperCase() === "LOST";
+
+      if (isWon) {
+        realWonRev += v;
+        realWonCount += 1;
+      } else if (!isLost) {
+        realPipelineVal += v;
+        realActiveCount += 1;
+      }
+
+      if (!stageMap[st]) {
+        stageMap[st] = {
+          title: st,
+          count: 0,
+          value: 0,
+          color: STAGE_COLORS[st] || "#3b82f6",
+          order: CANONICAL_ORDER.indexOf(st) >= 0 ? CANONICAL_ORDER.indexOf(st) : 99
+        };
+      }
+      stageMap[st].count += 1;
+      stageMap[st].value += v;
+    });
+
+    const realStageBreakdown = Object.values(stageMap)
+      .filter((s) => s.count > 0)
+      .sort((a, b) => a.order - b.order);
+
     try {
       const res = await fetch(`${API_BASE}/dashboard/metrics?range_type=${encodeURIComponent(rangeType)}`, {
         headers: getAuthHeaders(),
@@ -520,6 +589,37 @@ export const zigmaaApi = {
       });
       if (res.ok) {
         const json = await res.json();
+        // If backend returns zero pipeline/deals but real user deals exist, merge real data!
+        if (deals.length > 0 && (json.pipeline_value === 0 || json.active_deals_count === 0)) {
+          json.pipeline_value = realPipelineVal;
+          json.active_deals_count = realActiveCount;
+          if (realWonRev > 0) {
+            json.won_revenue = realWonRev;
+            json.won_deals_count = realWonCount;
+          }
+        }
+
+        // Clean up stage_breakdown: Filter out any stages with 0 deals
+        if (json.stage_breakdown && Array.isArray(json.stage_breakdown)) {
+          const cleanedBreakdown = json.stage_breakdown
+            .filter((st: any) => (st.count || 0) > 0)
+            .map((st: any) => ({
+              ...st,
+              title: normalizeStage(st.title),
+              color: STAGE_COLORS[normalizeStage(st.title)] || st.color || "#3b82f6"
+            }));
+
+          if (cleanedBreakdown.length > 0) {
+            json.stage_breakdown = cleanedBreakdown;
+          } else if (realStageBreakdown.length > 0) {
+            json.stage_breakdown = realStageBreakdown;
+          } else {
+            json.stage_breakdown = [];
+          }
+        } else if (realStageBreakdown.length > 0) {
+          json.stage_breakdown = realStageBreakdown;
+        }
+
         clientMemoryCache.set(cacheKey, { data: json, timestamp: Date.now() });
         return json;
       }
@@ -527,53 +627,31 @@ export const zigmaaApi = {
       console.error("Dashboard metrics API error:", e);
     }
 
-    // Fallback computed from local contacts & deals if backend is offline
-    const contacts = await this.getContacts();
-    const deals = await this.getDeals();
-    const tasks = await this.getTasks();
-
+    // Complete real fallback when backend is offline or unreachable
     const totalLeads = contacts.length;
     const now = new Date();
     const todayStr = now.toISOString().split("T")[0];
-    const todayLeads = contacts.filter(c => (c.created_at || "").startsWith(todayStr)).length;
+    const todayLeads = contacts.filter((c: any) => (c.created_at || "").startsWith(todayStr)).length;
+    const pendingFollowups = tasks.filter((t: any) => t.status === "PENDING").length;
 
-    let pipelineVal = 0;
-    let wonRev = 0;
-    let wonCount = 0;
-    let activeDealsCount = 0;
-
-    deals.forEach(d => {
-      const v = Number(d.value || d.deal_value) || 0;
-      const st = (d.stage || "").toLowerCase();
-      if (st.includes("won")) {
-        wonRev += v;
-        wonCount += 1;
-      } else if (!st.includes("lost")) {
-        pipelineVal += v;
-        activeDealsCount += 1;
-      }
-    });
-
-    const pendingFollowups = tasks.filter(t => t.status === "PENDING").length;
-
-    return {
+    const fallbackData = {
       range_type: rangeType,
       total_leads: totalLeads,
       all_time_leads: totalLeads,
       today_leads: todayLeads,
-      pipeline_value: pipelineVal,
-      active_deals_count: activeDealsCount,
-      won_revenue: wonRev,
-      won_deals_count: wonCount,
-      conversion_rate: deals.length > 0 ? Number(((wonCount / deals.length) * 100).toFixed(1)) : 0,
+      pipeline_value: realPipelineVal,
+      active_deals_count: realActiveCount,
+      won_revenue: realWonRev,
+      won_deals_count: realWonCount,
+      conversion_rate: deals.length > 0 ? Number(((realWonCount / deals.length) * 100).toFixed(1)) : 0,
       pending_followups: pendingFollowups,
       source_breakdown: [
         { source: "META_ADS", count: 0, percentage: 0 },
         { source: "WEBSITE_FORM", count: 0, percentage: 0 },
         { source: "MANUAL", count: totalLeads, percentage: 100 }
       ],
-      stage_breakdown: [],
-      recent_leads: contacts.slice(0, 5).map(c => ({
+      stage_breakdown: realStageBreakdown,
+      recent_leads: contacts.slice(0, 5).map((c: any) => ({
         id: String(c.id),
         full_name: c.name,
         email: c.email,
@@ -584,6 +662,9 @@ export const zigmaaApi = {
       })),
       today_due_tasks: tasks.slice(0, 5)
     };
+
+    clientMemoryCache.set(cacheKey, { data: fallbackData, timestamp: Date.now() });
+    return fallbackData;
   },
 
   async revalidateDashboardMetrics(rangeType: string = "Last 30 Days"): Promise<void> {
@@ -1320,6 +1401,9 @@ export const zigmaaApi = {
   async updateDealStage(id: number | string, stage: string, stageId?: string): Promise<any> {
     clientMemoryCache.delete("deals:all");
     clientMemoryCache.delete("deals:board");
+    Array.from(clientMemoryCache.keys()).forEach((k) => {
+      if (k.startsWith("dashboard:metrics")) clientMemoryCache.delete(k);
+    });
 
     // Immediately persist in localStorage
     const deals = getStorage<Deal[]>("zigmaa_deals", INITIAL_DEALS);
@@ -1404,6 +1488,9 @@ export const zigmaaApi = {
         clientMemoryCache.delete("deals:all");
         clientMemoryCache.delete("deals:board");
         clientMemoryCache.delete("contacts:all");
+        Array.from(clientMemoryCache.keys()).forEach((k) => {
+          if (k.startsWith("dashboard:metrics")) clientMemoryCache.delete(k);
+        });
         const existingDeals = getStorage<Deal[]>("zigmaa_deals", []);
         const filtered = existingDeals.filter((ed) => String(ed.id) !== String(newDealItem.id));
         setStorage("zigmaa_deals", [newDealItem, ...filtered]);
@@ -1472,6 +1559,9 @@ export const zigmaaApi = {
     clientMemoryCache.delete("deals:all");
     clientMemoryCache.delete("deals:board");
     clientMemoryCache.delete("contacts:all");
+    Array.from(clientMemoryCache.keys()).forEach((k) => {
+      if (k.startsWith("dashboard:metrics")) clientMemoryCache.delete(k);
+    });
 
     // Also update contact in local storage if contact_id exists
     if (dealData.contact_id) {
