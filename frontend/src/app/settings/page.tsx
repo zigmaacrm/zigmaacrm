@@ -40,6 +40,8 @@ import InviteMemberDrawer from "@/components/settings/InviteMemberDrawer";
 import ModulesAndFieldsManager from "@/components/settings/ModulesAndFieldsManager";
 import { api } from "@/lib/api";
 import { useToast } from "@/components/common/ToastProvider";
+import PasswordStrengthIndicator from "@/components/auth/PasswordStrengthIndicator";
+import { getPasswordValidationError } from "@/lib/passwordValidation";
 
 type SettingsTab = "profile" | "team" | "modules" | "webhooks" | "email-sync" | "integrations";
 
@@ -394,8 +396,9 @@ export default function SettingsPage() {
       setPasswordError("Please enter your current password.");
       return;
     }
-    if (!newPassword || newPassword.length < 6) {
-      setPasswordError("New password must be at least 6 characters.");
+    const pwdErr = getPasswordValidationError(newPassword);
+    if (pwdErr) {
+      setPasswordError(pwdErr);
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -818,13 +821,16 @@ export default function SettingsPage() {
                     </div>
 
                     <div>
-                      <label className="block text-slate-700 font-bold mb-1.5">New Password (min. 6)</label>
+                      <label className="block text-slate-700 font-bold mb-1.5">New Strong Password</label>
                       <div className="relative">
                         <input
                           type={showNewPassword ? "text" : "password"}
                           value={newPassword}
-                          onChange={(e) => setNewPassword(e.target.value)}
-                          placeholder="••••••••"
+                          onChange={(e) => {
+                            setNewPassword(e.target.value);
+                            if (passwordError) setPasswordError("");
+                          }}
+                          placeholder="Min. 8 chars (1 uppercase, 1 number, 1 special)"
                           className="w-full bg-slate-50 text-slate-900 p-2.5 pr-10 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 font-medium"
                           required
                         />
@@ -836,6 +842,7 @@ export default function SettingsPage() {
                           {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                         </button>
                       </div>
+                      <PasswordStrengthIndicator password={newPassword} />
                     </div>
 
                     <div>

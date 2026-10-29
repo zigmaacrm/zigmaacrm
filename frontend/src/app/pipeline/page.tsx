@@ -41,7 +41,11 @@ import { formatCurrency } from "@/lib/utils";
 import { Deal } from "@/lib/mockData";
 import { useToast } from "@/components/common/ToastProvider";
 
+const PRIMARY_DEAL_TABS = ["All Deals", "My Deals", "Open Deals", "Won Deals"];
+const EXTENDED_DEAL_TAB = "Closing This Month";
+
 const DEALS_MORE_VIEWS = [
+  "Closing This Month",
   "Lost Deals",
   "Today's Deals",
   "Recently Created Deals",
@@ -355,10 +359,10 @@ export default function PipelineDealsPage() {
 
         <main className="flex-1 overflow-y-auto p-4 lg:p-6 space-y-4 custom-scrollbar bg-[#F8FAFC] dark:bg-[#0b0f19]">
           {/* Controls: Responsive Row Above Board (Single row on wide screens, wraps cleanly on laptops without clipping) */}
-          <div className="flex flex-wrap xl:flex-nowrap items-center justify-between gap-2 pb-2.5 shrink-0">
+          <div className="flex flex-wrap 2xl:flex-nowrap items-center justify-between gap-2 pb-2.5 shrink-0">
             {/* Left: Navigation Tabs + More Views (···) */}
             <div className="flex items-center gap-1 sm:gap-1.5 text-xs sm:text-sm shrink-0 overflow-x-auto max-w-full scrollbar-none">
-              {["All Deals", "My Deals", "Open Deals", "Won Deals", "Closing This Month"].map((tab) => (
+              {PRIMARY_DEAL_TABS.map((tab) => (
                 <button
                   key={tab}
                   type="button"
@@ -376,6 +380,26 @@ export default function PipelineDealsPage() {
                   {tab}
                 </button>
               ))}
+
+              {/* Extended Tab (Closing This Month): visible on 2xl large screens or when currently active */}
+              <button
+                key={EXTENDED_DEAL_TAB}
+                type="button"
+                onClick={(e) => {
+                  setActiveTab(EXTENDED_DEAL_TAB);
+                  e.currentTarget.blur();
+                }}
+                className={`px-2 sm:px-2.5 xl:px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap text-xs xl:text-sm outline-none! focus:outline-none! focus-visible:outline-none! ring-0! focus:ring-0! focus-visible:ring-0! border select-none items-center gap-1.5 ${
+                  activeTab === EXTENDED_DEAL_TAB ? "inline-flex" : "hidden 2xl:inline-flex"
+                } ${
+                  activeTab === EXTENDED_DEAL_TAB
+                    ? "bg-red-50 text-red-600 font-bold border-red-200/80 shadow-2xs"
+                    : "border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                }`}
+                style={{ outline: "none", boxShadow: activeTab === EXTENDED_DEAL_TAB ? undefined : "none" }}
+              >
+                <span>{EXTENDED_DEAL_TAB}</span>
+              </button>
 
               {/* More Views Dropdown (···) */}
               <MoreViewsDropdown
@@ -399,7 +423,7 @@ export default function PipelineDealsPage() {
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Search deals..."
                     autoFocus
-                    className="w-44 sm:w-52 md:w-56 pl-9 pr-8 h-9 text-xs sm:text-sm bg-white border border-slate-200 rounded-xl focus:border-red-500 outline-none shadow-2xs"
+                    className="w-36 sm:w-44 md:w-52 pl-9 pr-8 h-9 text-xs sm:text-sm bg-white border border-slate-200 rounded-xl focus:border-red-500 outline-none shadow-2xs"
                   />
                   <button
                     onClick={() => {
@@ -429,13 +453,13 @@ export default function PipelineDealsPage() {
                 onChange={(val) => {
                   setSelectedStage(val);
                 }}
-                className="shrink-0 [&>button]:h-9 [&>button]:py-0 [&>button]:px-2.5 sm:[&>button]:px-3 [&>button]:text-xs sm:[&>button]:text-sm"
+                className="shrink-0 [&>button]:h-9 [&>button]:py-0 [&>button]:px-2 sm:[&>button]:px-2.5 xl:[&>button]:px-3 [&>button]:text-xs sm:[&>button]:text-sm"
               />
 
               {/* Right Action Buttons */}
               <button
                 onClick={() => setShowAddDrawer(true)}
-                className="h-9 px-3 sm:px-3.5 bg-red-600 hover:bg-red-700 text-white text-xs sm:text-sm font-semibold rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                className="h-9 px-2.5 sm:px-3 xl:px-3.5 bg-red-600 hover:bg-red-700 text-white text-xs sm:text-sm font-semibold rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0"
               >
                 <Plus className="w-4 h-4" />
                 <span>Add Deal</span>
@@ -443,7 +467,7 @@ export default function PipelineDealsPage() {
 
               <button
                 onClick={handleExportCsv}
-                className="h-9 px-3 sm:px-3.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl text-xs sm:text-sm font-semibold shadow-2xs transition-colors cursor-pointer flex items-center justify-center shrink-0 whitespace-nowrap"
+                className="h-9 px-2.5 sm:px-3 xl:px-3.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl text-xs sm:text-sm font-semibold shadow-2xs transition-colors cursor-pointer flex items-center justify-center shrink-0 whitespace-nowrap"
               >
                 Export
               </button>

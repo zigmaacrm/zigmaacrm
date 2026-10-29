@@ -29,6 +29,8 @@ import {
   AlertCircle
 } from "lucide-react";
 import { api } from "@/lib/api";
+import PasswordStrengthIndicator from "@/components/auth/PasswordStrengthIndicator";
+import { getPasswordValidationError } from "@/lib/passwordValidation";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -141,8 +143,9 @@ export default function LoginPage() {
       setInvitationError("Please enter a new password.");
       return;
     }
-    if (setupPassword.length < 6) {
-      setInvitationError("Password must be at least 6 characters.");
+    const pwdErr = getPasswordValidationError(setupPassword);
+    if (pwdErr) {
+      setInvitationError(pwdErr);
       return;
     }
     if (setupPassword !== confirmSetupPassword) {
@@ -230,8 +233,11 @@ export default function LoginPage() {
     }
     if (!signUpPassword) {
       errors.signUpPassword = "Password is required";
-    } else if (signUpPassword.length < 6) {
-      errors.signUpPassword = "Password must be at least 6 characters";
+    } else {
+      const pwdErr = getPasswordValidationError(signUpPassword);
+      if (pwdErr) {
+        errors.signUpPassword = pwdErr;
+      }
     }
 
     if (!signUpEmail.trim()) {
@@ -358,8 +364,9 @@ export default function LoginPage() {
     e.preventDefault();
     const cleanEmail = resetEmail.trim().toLowerCase();
     const otpCode = otpValues.join("").trim();
-    if (!newPassword || newPassword.length < 6) {
-      setError("Password must be at least 6 characters");
+    const pwdErr = getPasswordValidationError(newPassword);
+    if (pwdErr) {
+      setError(pwdErr);
       return;
     }
 
@@ -658,7 +665,7 @@ export default function LoginPage() {
                       setSetupPassword(e.target.value);
                       if (invitationError) setInvitationError("");
                     }}
-                    placeholder="Enter at least 6 characters"
+                    placeholder="Min. 8 chars (1 uppercase, 1 number, 1 special)"
                     className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-[#E5E7EB] bg-white text-[#111827] text-xs sm:text-sm placeholder:text-[#9CA3AF] placeholder:italic placeholder:font-normal focus:outline-none focus:border-red-600 focus:ring-1 focus:ring-red-600 transition-colors"
                   />
                   <button
@@ -670,6 +677,7 @@ export default function LoginPage() {
                     {showSetupPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
+                <PasswordStrengthIndicator password={setupPassword} />
               </div>
 
               {/* Field 2: Confirm Password */}
@@ -889,6 +897,7 @@ export default function LoginPage() {
                       <span>{fieldErrors.signUpPassword}</span>
                     </div>
                   )}
+                  <PasswordStrengthIndicator password={signUpPassword} />
                 </div>
               </div>
 
@@ -1160,16 +1169,17 @@ export default function LoginPage() {
                 )}
                 <div>
                   <label className="block text-[13px] font-medium text-[#374151] mb-1.5">
-                    New Password
+                    New Strong Password
                   </label>
                   <input
                     type="password"
                     required
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
-                    placeholder="Enter your new password"
+                    placeholder="Min. 8 chars (1 uppercase, 1 number, 1 special)"
                     className="w-full px-3.5 py-2.5 rounded-lg border border-[#E5E7EB] bg-white text-[#111827] text-xs sm:text-sm placeholder:text-[#9CA3AF] placeholder:italic placeholder:font-normal focus:outline-none focus:border-red-600 focus:ring-1 focus:ring-red-600 transition-colors"
                   />
+                  <PasswordStrengthIndicator password={newPassword} />
                 </div>
 
                 <button

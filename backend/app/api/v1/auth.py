@@ -7,7 +7,13 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func
 from app.core.database import get_db
-from app.core.security import verify_password, get_password_hash, create_access_token, decode_invitation_token
+from app.core.security import (
+    verify_password,
+    get_password_hash,
+    create_access_token,
+    decode_invitation_token,
+    validate_strong_password
+)
 from app.models.organization_user import User, Organization
 from app.models.organization_setting import OrganizationSetting
 from app.models.otp import PasswordResetOTP
@@ -172,6 +178,9 @@ async def login(
 @router.post("/signup", response_model=TokenResponse)
 @router.post("/register", response_model=TokenResponse)
 async def signup(user_in: SignupRequest, db: AsyncSession = Depends(get_db)):
+    # Validate password strength (min 8 chars, 1 uppercase, 1 number, 1 special character)
+    validate_strong_password(user_in.password)
+
     clean_email = user_in.email.lower().strip()
     raw_company = (user_in.company_name or user_in.organization_name or "").strip()
     raw_phone = (user_in.phone or user_in.contact_number or "").strip()
@@ -390,6 +399,9 @@ async def verify_otp(payload: VerifyOtpRequest, db: AsyncSession = Depends(get_d
 
 @router.post("/reset-password", response_model=SimpleMessageResponse)
 async def reset_password(payload: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
+    # Validate password strength (min 8 chars, 1 uppercase, 1 number, 1 special character)
+    validate_strong_password(payload.new_password)
+
     clean_email = payload.email.lower().strip()
     clean_otp = payload.otp.strip()
 
@@ -449,11 +461,8 @@ async def change_password(payload: ChangePasswordRequest, db: AsyncSession = Dep
             detail="Current password is incorrect."
         )
 
-    if len(payload.new_password) < 6:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="New password must be at least 6 characters."
-        )
+    # Validate strong password (min 8 chars, 1 uppercase, 1 number, 1 special character)
+    validate_strong_password(payload.new_password)
 
     user.hashed_password = get_password_hash(payload.new_password)
     await db.commit()
@@ -546,11 +555,9 @@ async def verify_invitation(token: str = Query(...), db: AsyncSession = Depends(
 
 @router.post("/accept-invitation", response_model=TokenResponse)
 async def accept_invitation(payload: AcceptInvitationRequest, db: AsyncSession = Depends(get_db)):
-    if len(payload.password) < 6:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Password must be at least 6 characters long."
-        )
+    # Validate strong password (min 8 chars, 1 uppercase, 1 number, 1 special character)
+    validate_strong_password(payload.password)
+
     token_data = decode_invitation_token(payload.token)
     if not token_data:
         raise HTTPException(

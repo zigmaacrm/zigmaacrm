@@ -177,7 +177,7 @@ export default function AutomationsPage() {
 
         <main className="flex-1 overflow-y-auto p-4 lg:p-6 space-y-4 custom-scrollbar bg-[#F8FAFC] dark:bg-[#0b0f19]">
           {/* Top Control Bar: Search on left, Refresh + Tabs + Create on right */}
-          <div className="flex flex-wrap xl:flex-nowrap items-center justify-between gap-2 pb-2.5 shrink-0">
+          <div className="flex flex-wrap 2xl:flex-nowrap items-center justify-between gap-2 pb-2.5 shrink-0">
             {/* Left: Search input filling available space */}
             <div className="relative flex-1 min-w-[200px] sm:min-w-[240px] max-w-md">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />

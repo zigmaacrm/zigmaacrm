@@ -46,11 +46,13 @@ const PRIMARY_TASK_TABS = [
   "All Tasks",
   "To Do",
   "Pending",
-  "Overdue",
-  "Completed"
+  "Overdue"
 ];
 
+const EXTENDED_TASK_TAB = "Completed";
+
 const TASKS_MORE_VIEWS = [
+  "Completed",
   "My Tasks",
   "In Progress",
   "Today's Tasks",
@@ -441,7 +443,7 @@ export default function TasksPage() {
 
         <main className="flex-1 flex flex-col min-h-0 bg-[#F8FAFC] dark:bg-[#0b0f19] overflow-hidden p-4 lg:p-6 pb-2">
           {/* Controls: Responsive Row Above Table (Single row on wide screens, wraps cleanly on laptops without clipping) */}
-          <div className="flex flex-wrap xl:flex-nowrap items-center justify-between gap-2 pb-2.5 shrink-0">
+          <div className="flex flex-wrap 2xl:flex-nowrap items-center justify-between gap-2 pb-2.5 shrink-0">
             {/* Left: Navigation Tabs + More Views (···) */}
             <div className="flex items-center gap-1 sm:gap-1.5 text-xs sm:text-sm shrink-0 overflow-x-auto max-w-full scrollbar-none">
               {PRIMARY_TASK_TABS.map((tab) => {
@@ -472,6 +474,27 @@ export default function TasksPage() {
                 );
               })}
 
+              {/* Extended Tab (Completed): visible on 2xl large screens or when currently selected */}
+              <button
+                key={EXTENDED_TASK_TAB}
+                type="button"
+                onClick={(e) => {
+                  setActiveTab(EXTENDED_TASK_TAB);
+                  setCurrentPage(1);
+                  e.currentTarget.blur();
+                }}
+                className={`px-2 sm:px-2.5 xl:px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap text-xs xl:text-sm outline-none! focus:outline-none! focus-visible:outline-none! ring-0! focus:ring-0! focus-visible:ring-0! border select-none items-center gap-1.5 ${
+                  activeTab === EXTENDED_TASK_TAB ? "inline-flex" : "hidden 2xl:inline-flex"
+                } ${
+                  activeTab === EXTENDED_TASK_TAB
+                    ? "bg-red-50 text-red-600 font-bold border-red-200/80 shadow-2xs"
+                    : "border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                }`}
+                style={{ outline: "none", boxShadow: activeTab === EXTENDED_TASK_TAB ? undefined : "none" }}
+              >
+                <span>{EXTENDED_TASK_TAB}</span>
+              </button>
+
               {/* More Views Dropdown (···) */}
               <MoreViewsDropdown
                 views={TASKS_MORE_VIEWS}
@@ -485,7 +508,7 @@ export default function TasksPage() {
 
             {/* Right Actions: [Search] [Status ▾] [Add Task] [Export] */}
             <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-wrap sm:flex-nowrap">
-              {/* Search Box */}
+              {/* Search Box - matching Contacts compact width */}
               <div className="relative">
                 <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
@@ -496,7 +519,7 @@ export default function TasksPage() {
                     setSearchQuery(e.target.value);
                     setCurrentPage(1);
                   }}
-                  className="pl-8.5 pr-3 h-9 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-red-500 w-28 sm:w-32 md:w-36 lg:w-44 shadow-2xs transition-all"
+                  className="pl-8.5 pr-3 h-9 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-red-500 w-24 sm:w-28 md:w-32 lg:w-36 shadow-2xs transition-all"
                 />
               </div>
 
@@ -509,14 +532,14 @@ export default function TasksPage() {
                   setSelectedStatus(val);
                   setCurrentPage(1);
                 }}
-                className="shrink-0 [&>button]:h-9 [&>button]:py-0 [&>button]:px-2.5 sm:[&>button]:px-3 [&>button]:text-xs sm:[&>button]:text-sm"
+                className="shrink-0 [&>button]:h-9 [&>button]:py-0 [&>button]:px-2 sm:[&>button]:px-2.5 xl:[&>button]:px-3 [&>button]:text-xs sm:[&>button]:text-sm"
               />
 
               {/* Add Task Button */}
               <button
                 type="button"
                 onClick={() => setShowAddDrawer(true)}
-                className="h-9 px-3 sm:px-3.5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white text-xs sm:text-sm font-semibold rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1.5 whitespace-nowrap"
+                className="h-9 px-2.5 sm:px-3 xl:px-3.5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white text-xs sm:text-sm font-semibold rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0"
               >
                 <Plus className="w-4 h-4" />
                 <span>Add Task</span>
@@ -526,7 +549,7 @@ export default function TasksPage() {
               <button
                 type="button"
                 onClick={handleExportCsv}
-                className="h-9 px-3 sm:px-3.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl text-xs sm:text-sm font-semibold shadow-2xs transition-colors cursor-pointer flex items-center justify-center shrink-0 whitespace-nowrap"
+                className="h-9 px-2.5 sm:px-3 xl:px-3.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl text-xs sm:text-sm font-semibold shadow-2xs transition-colors cursor-pointer flex items-center justify-center shrink-0 whitespace-nowrap"
               >
                 Export
               </button>
