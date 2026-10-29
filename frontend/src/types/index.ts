@@ -93,6 +93,8 @@ export interface Task {
   priority: "High" | "Medium" | "Low" | "Urgent" | string;
   status: "To Do" | "In Progress" | "Completed" | "PENDING" | "COMPLETED" | string;
   assigned_to?: string;
+  owner_id?: number | string;
+  owner_name?: string;
   description?: string;
   contact_id?: number | string;
   contact_name?: string;

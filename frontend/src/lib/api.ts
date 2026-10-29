@@ -2153,7 +2153,7 @@ export const zigmaaApi = {
       });
       if (res.ok) {
         const backendTasks = await res.json();
-        if (Array.isArray(backendTasks) && backendTasks.length > 0) {
+        if (Array.isArray(backendTasks)) {
           const mapped = backendTasks.map((t: any) => ({
             id: t.id,
             title: t.title,
@@ -2171,6 +2171,7 @@ export const zigmaaApi = {
             created_at: t.created_at || new Date().toISOString()
           }));
           clientMemoryCache.set(cacheKey, { data: mapped, timestamp: Date.now() });
+          setStorage("zigmaa_tasks", mapped);
           return mapped;
         }
       }
@@ -2178,7 +2179,7 @@ export const zigmaaApi = {
       console.warn("Backend tasks fetch failed, falling back to local storage", e);
     }
 
-    const raw = getStorage<Task[]>("zigmaa_tasks", INITIAL_TASKS);
+    const raw = getStorage<Task[]>("zigmaa_tasks", []);
     if (!Array.isArray(raw)) return [];
     const seen = new Set<string>();
     const deduplicated: Task[] = [];
@@ -2200,7 +2201,7 @@ export const zigmaaApi = {
       });
       if (res.ok) {
         const backendTasks = await res.json();
-        if (Array.isArray(backendTasks) && backendTasks.length > 0) {
+        if (Array.isArray(backendTasks)) {
           const mapped = backendTasks.map((t: any) => ({
             id: t.id,
             title: t.title,
@@ -2227,7 +2228,10 @@ export const zigmaaApi = {
     try {
       const res = await fetch(`${API_BASE}/tasks`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          ...getAuthHeaders(),
+          "Content-Type": "application/json"
+        },
         body: JSON.stringify({
           title: taskData.title || "",
           activity_type: taskData.activity_type || "To-Do",
@@ -2245,7 +2249,8 @@ export const zigmaaApi = {
       });
       if (res.ok) {
         const created = await res.json();
-        return {
+        clientMemoryCache.delete("tasks:all");
+        const mappedTask: Task = {
           id: created.id,
           title: created.title,
           activity_type: created.activity_type || "To-Do",
@@ -2261,6 +2266,10 @@ export const zigmaaApi = {
           contact_company: created.contact_company || "",
           created_at: created.created_at || new Date().toISOString()
         };
+        const localTasks = getStorage<Task[]>("zigmaa_tasks", []);
+        const withoutDup = localTasks.filter(t => String(t.id) !== String(mappedTask.id));
+        setStorage("zigmaa_tasks", [mappedTask, ...withoutDup]);
+        return mappedTask;
       }
     } catch (e) {
       console.warn("Backend task creation failed, saving locally", e);
@@ -2285,6 +2294,7 @@ export const zigmaaApi = {
     };
     tasks.unshift(newTask);
     setStorage("zigmaa_tasks", tasks);
+    clientMemoryCache.delete("tasks:all");
     return newTask;
   },
 
@@ -2292,51 +2302,69 @@ export const zigmaaApi = {
     try {
       const res = await fetch(`${API_BASE}/tasks/${id}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          ...getAuthHeaders(),
+          "Content-Type": "application/json"
+        },
         body: JSON.stringify(patch)
       });
       if (res.ok) {
+        clientMemoryCache.delete("tasks:all");
         return await res.json();
       }
     } catch {}
 
-    const tasks = getStorage<Task[]>("zigmaa_tasks", INITIAL_TASKS);
+    const tasks = getStorage<Task[]>("zigmaa_tasks", []);
     const idx = tasks.findIndex(t => String(t.id) === String(id));
     if (idx === -1) return null;
     tasks[idx] = { ...tasks[idx], ...patch };
     setStorage("zigmaa_tasks", tasks);
+    clientMemoryCache.delete("tasks:all");
     return tasks[idx];
   },
 
   async toggleTaskStatus(id: number | string): Promise<Task | null> {
     try {
       const res = await fetch(`${API_BASE}/tasks/${id}/toggle-status`, {
-        method: "PATCH"
+        method: "PATCH",
+        headers: getAuthHeaders()
       });
       if (res.ok) {
+        clientMemoryCache.delete("tasks:all");
         return await res.json();
       }
     } catch {}
 
-    const tasks = getStorage<Task[]>("zigmaa_tasks", INITIAL_TASKS);
+    const tasks = getStorage<Task[]>("zigmaa_tasks", []);
     const idx = tasks.findIndex(t => String(t.id) === String(id));
     if (idx === -1) return null;
     const current = tasks[idx].status;
     const next = current === "Completed" || current === "COMPLETED" ? "PENDING" : "COMPLETED";
     tasks[idx] = { ...tasks[idx], status: next };
     setStorage("zigmaa_tasks", tasks);
+    clientMemoryCache.delete("tasks:all");
     return tasks[idx];
   },
 
   async deleteTask(id: number | string): Promise<boolean> {
     try {
-      const res = await fetch(`${API_BASE}/tasks/${id}`, { method: "DELETE" });
-      if (res.ok) return true;
+      const res = await fetch(`${API_BASE}/tasks/${id}`, {
+        method: "DELETE",
+        headers: getAuthHeaders()
+      });
+      if (res.ok) {
+        clientMemoryCache.delete("tasks:all");
+        const tasks = getStorage<Task[]>("zigmaa_tasks", []);
+        const filtered = tasks.filter(t => String(t.id) !== String(id));
+        setStorage("zigmaa_tasks", filtered);
+        return true;
+      }
     } catch {}
 
-    const tasks = getStorage<Task[]>("zigmaa_tasks", INITIAL_TASKS);
+    const tasks = getStorage<Task[]>("zigmaa_tasks", []);
     const filtered = tasks.filter(t => String(t.id) !== String(id));
     setStorage("zigmaa_tasks", filtered);
+    clientMemoryCache.delete("tasks:all");
     return true;
   },
 

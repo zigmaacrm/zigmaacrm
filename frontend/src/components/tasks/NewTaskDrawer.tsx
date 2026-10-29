@@ -65,6 +65,15 @@ export default function NewTaskDrawer({
   const [assignedTo, setAssignedTo] = useState("");
   const [description, setDescription] = useState("");
 
+  // Team & Role State
+  const [teamMembers, setTeamMembers] = useState<any[]>([]);
+  const activeUser = useMemo(() => {
+    return currentUser || api.getCurrentUser() || null;
+  }, [currentUser]);
+
+  const userRole = (activeUser?.role || "").toLowerCase();
+  const isAdmin = !userRole || userRole === "admin" || userRole === "owner";
+
   // Contact association
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [contactSearch, setContactSearch] = useState("");
@@ -80,12 +89,65 @@ export default function NewTaskDrawer({
         })
         .catch(() => {});
 
+      api.getTeamMembers()
+        .then((members) => {
+          if (Array.isArray(members)) {
+            setTeamMembers(members);
+          }
+        })
+        .catch(() => {});
+
       // Prefill due date to tomorrow
       const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split("T")[0];
       setDueDate(tomorrow);
       setDueTime("04:30 PM");
+
+      // Auto-assign: sales reps must assign to themselves; admins default to themselves
+      if (!isAdmin && activeUser?.full_name) {
+        setAssignedTo(activeUser.full_name);
+      } else if (!assignedTo && activeUser?.full_name) {
+        setAssignedTo(activeUser.full_name);
+      }
     }
-  }, [isOpen]);
+  }, [isOpen, isAdmin, activeUser]);
+
+  const assignedOptions = useMemo(() => {
+    const opts = [];
+    const seen = new Set<string>();
+
+    if (activeUser?.full_name) {
+      seen.add(activeUser.full_name);
+      opts.push({
+        value: activeUser.full_name,
+        label: `${activeUser.full_name} (${isAdmin ? "Admin / You" : "Sales Rep / You"})`,
+        dotColor: isAdmin ? "bg-red-500" : "bg-emerald-500"
+      });
+    }
+
+    if (isAdmin) {
+      for (const m of teamMembers) {
+        if (m.full_name && !seen.has(m.full_name)) {
+          seen.add(m.full_name);
+          const roleLabel = m.role?.toLowerCase() === "admin" ? "Admin" : "Sales Rep";
+          opts.push({
+            value: m.full_name,
+            label: `${m.full_name} (${roleLabel})`,
+            dotColor: roleLabel === "Admin" ? "bg-red-500" : "bg-emerald-500"
+          });
+        }
+      }
+    }
+
+    if (opts.length === 0) {
+      opts.push({
+        value: assignedTo || activeUser?.full_name || "Mohamed Thoufiq",
+        label: assignedTo || activeUser?.full_name || "Mohamed Thoufiq (Admin)",
+        dotColor: "bg-red-500"
+      });
+    }
+
+    return opts;
+  }, [teamMembers, activeUser, isAdmin, assignedTo]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -135,6 +197,10 @@ export default function NewTaskDrawer({
       return;
     }
 
+    const finalAssignedTo = !isAdmin
+      ? (activeUser?.full_name || assignedTo || "Sales Representative")
+      : (assignedTo || activeUser?.full_name || "Mohamed Thoufiq");
+
     setSubmitting(true);
     try {
       await onSubmit({
@@ -144,7 +210,7 @@ export default function NewTaskDrawer({
         due_time: dueTime.trim() || undefined,
         priority: priority as any,
         status: status || "Pending",
-        assigned_to: assignedTo.trim() || undefined,
+        assigned_to: finalAssignedTo.trim() || undefined,
         description: description.trim() || undefined,
         contact_id: selectedContact?.id || undefined,
         contact_name: selectedContact?.name || (contactSearch.trim() || undefined),
@@ -404,16 +470,35 @@ export default function NewTaskDrawer({
 
             {/* Assigned To */}
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                Assigned To
-              </label>
-              <input
-                type="text"
-                value={assignedTo}
-                onChange={(e) => setAssignedTo(e.target.value)}
-                placeholder="e.g. Sales Executive / Account Manager"
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl text-xs px-3.5 py-2.5 text-slate-900 outline-none focus:ring-2 focus:ring-red-100 focus:border-red-400 font-medium transition-all"
-              />
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-bold text-slate-700">
+                  Assigned To
+                </label>
+                <span className="text-[10px] text-slate-400 font-medium">
+                  {isAdmin ? "Select sales rep or team member" : "Assigned to yourself"}
+                </span>
+              </div>
+
+              {isAdmin ? (
+                <CustomDropdown
+                  value={assignedTo || activeUser?.full_name || (assignedOptions[0]?.value ?? "")}
+                  options={assignedOptions}
+                  onChange={(val) => setAssignedTo(val)}
+                  variant="input"
+                />
+              ) : (
+                <div className="relative">
+                  <input
+                    type="text"
+                    disabled
+                    value={activeUser?.full_name || assignedTo || "Sales Representative"}
+                    className="w-full bg-slate-100 border border-slate-200 rounded-xl text-xs px-3.5 py-2.5 text-slate-700 font-semibold cursor-not-allowed select-none"
+                  />
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Sales Representatives can only assign tasks to themselves.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Description / Notes */}

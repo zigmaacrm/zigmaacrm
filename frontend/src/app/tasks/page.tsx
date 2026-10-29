@@ -150,6 +150,7 @@ const TASK_STATUSES = [
 export default function TasksPage() {
   const { toast, confirm } = useToast();
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [currentUser, setCurrentUser] = useState<any>(null);
 
   const [activeTab, setActiveTab] = useState<string>("All Tasks");
   const [selectedStatus, setSelectedStatus] = useState("ALL");
@@ -164,7 +165,7 @@ export default function TasksPage() {
 
   const loadTasks = async () => {
     try {
-      const data = await api.getTasks();
+      const data = await api.getTasks(true);
       if (Array.isArray(data)) {
         // Deduplicate tasks by id to prevent duplicate key console errors
         const seen = new Set<string>();
@@ -195,6 +196,11 @@ export default function TasksPage() {
   }, [tasks]);
 
   useEffect(() => {
+    const user = api.getCurrentUser();
+    if (user) setCurrentUser(user);
+    api.getMe().then((p: any) => {
+      if (p) setCurrentUser(p);
+    }).catch(() => {});
     loadTasks();
   }, []);
 
@@ -205,11 +211,12 @@ export default function TasksPage() {
         const withoutDup = prev.filter((t) => String(t.id) !== String(created.id));
         return [created, ...withoutDup];
       });
+      setShowAddDrawer(false);
       toast.success("Task Created", `"${taskData.title}" was added.`);
-    } catch {
-      toast.error("Error", "Could not create task.");
+      await loadTasks();
+    } catch (err: any) {
+      toast.error("Error", err?.message || "Could not create task.");
     }
-    loadTasks();
   };
 
   const handleDelete = async (id: number | string) => {
@@ -231,6 +238,7 @@ export default function TasksPage() {
       });
       await api.deleteTask(id);
       toast.success("Task Deleted", "The task was removed.");
+      await loadTasks();
     }
   };
 
@@ -368,6 +376,14 @@ export default function TasksPage() {
       } else if (activeTab === "Today's Tasks") {
         const todayStr = new Date().toISOString().split("T")[0];
         if (t.due_date?.split("T")[0] !== todayStr) return false;
+      } else if (activeTab === "My Tasks") {
+        if (!currentUser) return true;
+        const myName = (currentUser.full_name || "").toLowerCase().trim();
+        const myEmail = (currentUser.email || "").toLowerCase().trim();
+        const myId = currentUser.id;
+        const assigned = (t.assigned_to || "").toLowerCase().trim();
+        const isAssigned = (myName && assigned.includes(myName)) || (myEmail && assigned.includes(myEmail)) || t.owner_id === myId;
+        if (!isAssigned) return false;
       }
 
       // Status dropdown filter
@@ -387,12 +403,13 @@ export default function TasksPage() {
         return (
           t.title.toLowerCase().includes(q) ||
           (t.related_to && t.related_to.toLowerCase().includes(q)) ||
-          (t.contact_name && t.contact_name.toLowerCase().includes(q))
+          (t.contact_name && t.contact_name.toLowerCase().includes(q)) ||
+          (t.assigned_to && t.assigned_to.toLowerCase().includes(q))
         );
       }
       return true;
     });
-  }, [tasks, activeTab, selectedStatus, searchQuery]);
+  }, [tasks, activeTab, selectedStatus, searchQuery, currentUser]);
 
   // Publish real-time UI context for Zigmaa AI Copilot
   useEffect(() => {
@@ -1009,6 +1026,7 @@ export default function TasksPage() {
         isOpen={showAddDrawer}
         onClose={() => setShowAddDrawer(false)}
         onSubmit={handleCreateTaskDrawer}
+        currentUser={currentUser}
       />
 
       {/* Contact Details Drawer (When Related Contact is Clicked) */}
