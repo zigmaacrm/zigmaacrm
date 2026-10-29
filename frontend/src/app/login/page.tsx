@@ -29,7 +29,6 @@ import {
   AlertCircle
 } from "lucide-react";
 import { api } from "@/lib/api";
-import PasswordStrengthIndicator from "@/components/auth/PasswordStrengthIndicator";
 import { getPasswordValidationError } from "@/lib/passwordValidation";
 
 export default function LoginPage() {
@@ -683,6 +682,9 @@ export default function LoginPage() {
               <div>
                 <label className="block text-[13px] font-medium text-[#374151] mb-1">
                   Create Password <span className="text-red-500">*</span>
+                  <span className="text-[11px] text-red-500 font-normal ml-2">
+                    (Min. 8 chars, 1 uppercase, 1 number, 1 special)
+                  </span>
                 </label>
                 <div className="relative flex items-center">
                   <input
@@ -693,7 +695,7 @@ export default function LoginPage() {
                       setSetupPassword(e.target.value);
                       if (invitationError) setInvitationError("");
                     }}
-                    placeholder="Min. 8 chars (1 uppercase, 1 number, 1 special)"
+                    placeholder="Enter password"
                     className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-[#E5E7EB] bg-white text-[#111827] text-xs sm:text-sm placeholder:text-[#9CA3AF] placeholder:italic placeholder:font-normal focus:outline-none focus:border-red-600 focus:ring-1 focus:ring-red-600 transition-colors"
                   />
                   <button
@@ -705,7 +707,6 @@ export default function LoginPage() {
                     {showSetupPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
-                <PasswordStrengthIndicator password={setupPassword} />
               </div>
 
               {/* Field 2: Confirm Password */}
@@ -966,6 +967,9 @@ export default function LoginPage() {
               <div>
                 <label className="block text-[13px] font-medium text-[#374151] mb-1">
                   Password <span className="text-red-500">*</span>
+                  <span className="text-[11px] text-red-500 font-normal ml-2">
+                    (Min. 8 chars, 1 uppercase, 1 number, 1 special)
+                  </span>
                 </label>
                 <div className="relative flex items-center">
                   <input
@@ -1003,7 +1007,6 @@ export default function LoginPage() {
                     <span>{fieldErrors.signUpPassword}</span>
                   </div>
                 )}
-                <PasswordStrengthIndicator password={signUpPassword} />
               </div>
 
               {/* Row 6: Confirm Password (Below Password) */}
@@ -1240,7 +1243,10 @@ export default function LoginPage() {
                 )}
                 <div>
                   <label className="block text-[13px] font-medium text-[#374151] mb-1.5">
-                    New Strong Password <span className="text-red-500">*</span>
+                    New Password <span className="text-red-500">*</span>
+                    <span className="text-[11px] text-red-500 font-normal ml-2">
+                      (Min. 8 chars, 1 uppercase, 1 number, 1 special)
+                    </span>
                   </label>
                   <div className="relative flex items-center">
                     <input
@@ -1251,7 +1257,7 @@ export default function LoginPage() {
                         setNewPassword(e.target.value);
                         if (error) setError("");
                       }}
-                      placeholder="Min. 8 chars (1 uppercase, 1 number, 1 special)"
+                      placeholder="Enter new password"
                       className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-[#E5E7EB] bg-white text-[#111827] text-xs sm:text-sm placeholder:text-[#9CA3AF] placeholder:italic placeholder:font-normal focus:outline-none focus:border-red-600 focus:ring-1 focus:ring-red-600 transition-colors"
                     />
                     <button
@@ -1263,7 +1269,6 @@ export default function LoginPage() {
                       {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
-                  <PasswordStrengthIndicator password={newPassword} />
                 </div>
 
                 {/* Confirm New Password (Below New Password) */}

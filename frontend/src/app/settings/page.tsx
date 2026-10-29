@@ -40,7 +40,6 @@ import InviteMemberDrawer from "@/components/settings/InviteMemberDrawer";
 import ModulesAndFieldsManager from "@/components/settings/ModulesAndFieldsManager";
 import { api } from "@/lib/api";
 import { useToast } from "@/components/common/ToastProvider";
-import PasswordStrengthIndicator from "@/components/auth/PasswordStrengthIndicator";
 import { getPasswordValidationError } from "@/lib/passwordValidation";
 
 type SettingsTab = "profile" | "team" | "modules" | "webhooks" | "email-sync" | "integrations";
@@ -821,7 +820,12 @@ export default function SettingsPage() {
                     </div>
 
                     <div>
-                      <label className="block text-slate-700 font-bold mb-1.5">New Strong Password</label>
+                      <label className="block text-slate-700 font-bold mb-1.5">
+                        New Password <span className="text-red-500">*</span>
+                        <span className="text-[11px] text-red-500 font-normal ml-2">
+                          (Min. 8 chars, 1 uppercase, 1 number, 1 special)
+                        </span>
+                      </label>
                       <div className="relative">
                         <input
                           type={showNewPassword ? "text" : "password"}
@@ -830,7 +834,7 @@ export default function SettingsPage() {
                             setNewPassword(e.target.value);
                             if (passwordError) setPasswordError("");
                           }}
-                          placeholder="Min. 8 chars (1 uppercase, 1 number, 1 special)"
+                          placeholder="Enter new password"
                           className="w-full bg-slate-50 text-slate-900 p-2.5 pr-10 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 font-medium"
                           required
                         />
@@ -842,7 +846,6 @@ export default function SettingsPage() {
                           {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                         </button>
                       </div>
-                      <PasswordStrengthIndicator password={newPassword} />
                     </div>
 
                     <div>
