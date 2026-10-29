@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     WHATSAPP_API_TOKEN: str = os.getenv("WHATSAPP_ACCESS_TOKEN", "") or os.getenv("WHATSAPP_API_TOKEN", "")
     WHATSAPP_PHONE_NUMBER_ID: str = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "1445856311935813")
 
+    # Google OAuth & Integrations (Gmail & Google Calendar)
+    GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "") or os.getenv("NEXT_PUBLIC_GOOGLE_CLIENT_ID", "")
+    GOOGLE_CLIENT_SECRET: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
+    GOOGLE_REDIRECT_URI: str = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/v1/integrations/google/callback")
+    FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
     class Config:
         env_file = ".env"
         extra = "allow"

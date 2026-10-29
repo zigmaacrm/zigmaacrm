@@ -12,12 +12,14 @@ from app.models.task import Task
 from app.models.calendar_event import CalendarEvent
 from app.models.organization_setting import OrganizationSetting
 from app.models.whatsapp import WhatsAppMessage
+from app.models.integration import UserIntegration
 
 __all__ = [
     "Base",
     "TimeStampedBase",
     "Organization",
     "User",
+    "UserIntegration",
     "Lead",
     "Contact",
     "Pipeline",

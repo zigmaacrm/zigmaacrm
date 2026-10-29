@@ -36,6 +36,18 @@ export default function ConnectEmailModal({
 
     setConnecting(true);
     try {
+      if (selectedProvider === "GMAIL") {
+        try {
+          const authData = await api.getGoogleAuthUrl();
+          if (authData?.url) {
+            window.location.href = authData.url;
+            return;
+          }
+        } catch (authErr) {
+          console.warn("Failed to get Google auth URL, falling back to direct connect:", authErr);
+        }
+      }
+
       // Connect to backend or fallback storage
       const res = await api.connectEmailSync({
         email: emailToConnect,

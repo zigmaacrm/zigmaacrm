@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, ForeignKey, DateTime, Integer
+from sqlalchemy import Column, String, Boolean, ForeignKey, DateTime, Integer, Text
 from sqlalchemy.orm import relationship
 from app.models.base import TimeStampedBase
 
@@ -32,6 +32,13 @@ class User(TimeStampedBase):
     is_active = Column(Boolean, default=True)
     is_super_admin = Column(Boolean, default=False)
     avatar_url = Column(String(1000), nullable=True)
+
+    # Google OAuth (Gmail & Google Calendar) Integration
+    google_email = Column(String(255), nullable=True)
+    google_access_token = Column(Text, nullable=True)
+    google_refresh_token = Column(Text, nullable=True)
+    google_token_expiry = Column(DateTime, nullable=True)
+    is_google_connected = Column(Boolean, default=False)
 
     organization = relationship("Organization", back_populates="users")
 

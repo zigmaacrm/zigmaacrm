@@ -79,6 +79,14 @@ export default function SettingsPage() {
     email: null,
     provider: null
   });
+  const [googleIntegration, setGoogleIntegration] = useState<{
+    connected: boolean;
+    email: string | null;
+  }>({
+    connected: false,
+    email: null
+  });
+  const [connectingGoogle, setConnectingGoogle] = useState(false);
   const [showConnectModal, setShowConnectModal] = useState(false);
   const [syncingNow, setSyncingNow] = useState(false);
 
@@ -133,9 +141,28 @@ export default function SettingsPage() {
 
   const loadEmailSync = async () => {
     try {
-      const syncStatus = await api.getEmailSync();
-      if (syncStatus) {
-        setEmailSync(syncStatus);
+      const [syncStatus, googleStatus] = await Promise.all([
+        api.getEmailSync().catch(() => null),
+        api.getGoogleStatus().catch(() => null)
+      ]);
+      if (googleStatus && googleStatus.connected) {
+        setGoogleIntegration(googleStatus);
+        setEmailSync({
+          is_connected: true,
+          email: googleStatus.email,
+          provider: "GMAIL",
+          last_synced_at: "Just now"
+        });
+      } else {
+        if (googleStatus) {
+          setGoogleIntegration(googleStatus);
+        }
+        if (syncStatus) {
+          setEmailSync(syncStatus);
+          if (syncStatus.is_connected && syncStatus.email) {
+            setGoogleIntegration({ connected: true, email: syncStatus.email });
+          }
+        }
       }
     } catch (e) {
       console.error(e);
@@ -256,9 +283,24 @@ export default function SettingsPage() {
       const handleSyncUpdate = () => loadEmailSync();
       window.addEventListener("zigmaa_email_sync_updated", handleSyncUpdate);
 
-      // Check URL query param for active tab e.g. /settings?tab=modules
+      // Check URL query param for active tab e.g. /settings?tab=modules or OAuth redirect
       const params = new URLSearchParams(window.location.search);
-      const tabParam = params.get("tab") as SettingsTab;
+      let tabParam = params.get("tab") as SettingsTab;
+      if ((tabParam as any) === "email_sync") tabParam = "email-sync";
+
+      // Handle OAuth redirect query params
+      const syncParam = params.get("sync");
+      if (syncParam === "success") {
+        const syncedEmail = params.get("email");
+        toast.success("Google Connected", `Connected ${syncedEmail || "Google Account"} for Gmail & Calendar sync!`);
+        loadEmailSync();
+        window.history.replaceState({}, document.title, window.location.pathname + "?tab=" + (tabParam || "email-sync"));
+      } else if (syncParam === "error") {
+        const errMsg = params.get("message") || "Authorization was cancelled or failed.";
+        toast.error("Google Sync Failed", errMsg);
+        window.history.replaceState({}, document.title, window.location.pathname + "?tab=" + (tabParam || "email-sync"));
+      }
+
       if (tabParam && ["profile", "team", "modules", "webhooks", "email-sync", "integrations"].includes(tabParam)) {
         const roleStr = (user?.role || api.getActiveRole() || "").toLowerCase();
         const userIsAdmin = roleStr.includes("admin");
@@ -445,6 +487,43 @@ export default function SettingsPage() {
       await api.disconnectEmailSync();
       setEmailSync({ is_connected: false, email: null, provider: null });
       toast.info("Disconnected", "Email sync account was removed.");
+    }
+  };
+
+  const handleConnectGoogle = async () => {
+    try {
+      setConnectingGoogle(true);
+      const data = await api.getGoogleAuthUrl();
+      if (data?.url) {
+        window.location.href = data.url;
+      } else {
+        toast.error("Connection Failed", "Could not generate Google authorization link.");
+      }
+    } catch (err: any) {
+      toast.error("Connection Failed", err.message || "Failed to reach Google OAuth endpoint.");
+    } finally {
+      setConnectingGoogle(false);
+    }
+  };
+
+  const handleDisconnectGoogle = async () => {
+    const confirmed = await confirm({
+      title: "Disconnect Google Account",
+      message: `Disconnect ${googleIntegration.email || emailSync.email || "your Google account"}? Gmail and Google Calendar sync will be disabled until reconnected.`,
+      confirmText: "Disconnect Google",
+      cancelText: "Cancel",
+      variant: "danger"
+    });
+
+    if (confirmed) {
+      try {
+        await api.disconnectGoogle();
+        setGoogleIntegration({ connected: false, email: null });
+        setEmailSync({ is_connected: false, email: null, provider: null });
+        toast.info("Google Disconnected", "Your Google account has been disconnected.");
+      } catch (err: any) {
+        toast.error("Disconnect Failed", err.message || "Failed to disconnect Google account.");
+      }
     }
   };
 
@@ -1421,7 +1500,7 @@ export default function SettingsPage() {
                   </div>
 
                   {/* Condition 1: If NOT Connected */}
-                  {!emailSync.is_connected ? (
+                  {!(emailSync.is_connected || googleIntegration.connected) ? (
                     <div className="space-y-6">
                       {/* Feature Highlights Grid */}
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1479,17 +1558,33 @@ export default function SettingsPage() {
                         <div>
                           <h3 className="text-sm font-bold text-slate-900">Ready to sync your mailbox?</h3>
                           <p className="text-xs text-slate-600 mt-0.5">
-                            Connect your Google Workspace, Microsoft Outlook, or corporate email in one click.
+                            Connect your Google Workspace, Gmail, or corporate email in one click.
                           </p>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => setShowConnectModal(true)}
-                          className="px-5 py-2.5 bg-[#e11d48] hover:bg-[#be123c] active:bg-[#9f1239] text-white rounded-xl text-xs font-bold shadow-sm shadow-rose-600/20 transition-all flex items-center gap-2 shrink-0 cursor-pointer"
-                        >
-                          <Plus className="w-4 h-4" />
-                          <span>Connect Email Account</span>
-                        </button>
+                        <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={handleConnectGoogle}
+                            disabled={connectingGoogle}
+                            className="px-5 py-2.5 bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-800 border border-slate-300 rounded-xl text-xs font-bold shadow-2xs transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                          >
+                            <svg className="w-4 h-4" viewBox="0 0 24 24">
+                              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                            </svg>
+                            <span>{connectingGoogle ? "Connecting..." : "Connect Google Account (Gmail & Calendar)"}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setShowConnectModal(true)}
+                            className="px-4 py-2.5 bg-[#e11d48] hover:bg-[#be123c] active:bg-[#9f1239] text-white rounded-xl text-xs font-bold shadow-sm shadow-rose-600/20 transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
+                          >
+                            <Plus className="w-4 h-4" />
+                            <span>Other Mailbox</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ) : (
@@ -1498,20 +1593,27 @@ export default function SettingsPage() {
                       <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                         <div className="flex items-center gap-3.5">
                           <div className="w-12 h-12 rounded-xl bg-white border border-slate-200 text-xl shadow-2xs shrink-0 flex items-center justify-center">
-                            {emailSync.provider === "GMAIL" || (emailSync.email && emailSync.email.includes("gmail")) ? "🔴" : emailSync.provider === "OUTLOOK" ? "🔷" : "✉️"}
+                            {googleIntegration.connected || emailSync.provider === "GMAIL" || (emailSync.email && emailSync.email.includes("gmail")) ? (
+                              <svg className="w-6 h-6" viewBox="0 0 24 24">
+                                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                              </svg>
+                            ) : emailSync.provider === "OUTLOOK" ? "🔷" : "✉️"}
                           </div>
                           <div>
                             <div className="flex items-center gap-2">
                               <h3 className="text-sm font-bold text-slate-900">
-                                {emailSync.email || email || currentUser?.email || "Connected Email"}
+                                {googleIntegration.email || emailSync.email || email || currentUser?.email || "Connected Email"}
                               </h3>
                               <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1.5">
                                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                <span>Connected & Active</span>
+                                <span>Connected: {googleIntegration.email || emailSync.email}</span>
                               </span>
                             </div>
                             <p className="text-xs text-slate-500 font-medium mt-1">
-                              Direct SMTP/OAuth Sync Active • Last checked: {emailSync.last_synced_at || "Just now"}
+                              {googleIntegration.connected ? "Live Google OAuth 2.0 (Gmail & Calendar Synced)" : "Direct Mailbox Sync Active"} • Last checked: {emailSync.last_synced_at || "Just now"}
                             </p>
                           </div>
                         </div>
@@ -1528,10 +1630,10 @@ export default function SettingsPage() {
                           </button>
                           <button
                             type="button"
-                            onClick={handleDisconnectEmail}
+                            onClick={googleIntegration.connected ? handleDisconnectGoogle : handleDisconnectEmail}
                             className="px-4 py-2 bg-rose-50 border border-rose-200 hover:bg-rose-100 text-[#e11d48] text-xs font-bold rounded-xl shadow-2xs transition-colors cursor-pointer"
                           >
-                            Disconnect Mailbox
+                            Disconnect Account
                           </button>
                         </div>
                       </div>
@@ -1553,39 +1655,73 @@ export default function SettingsPage() {
             {/* ============================================================== */}
             {activeTab === "integrations" && (
               <div className="space-y-6">
-                {/* Google Calendar Integration Card */}
-                <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-4 border-l-4 border-l-red-600">
+                {/* Google Calendar & Gmail Integration Card */}
+                <div className={`p-6 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-4 border-l-4 ${googleIntegration.connected ? "border-l-emerald-500" : "border-l-red-600"}`}>
                   <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                     <div className="flex items-center gap-2.5">
-                      <div className="p-2 rounded-xl bg-red-50 text-red-600">
+                      <div className={`p-2 rounded-xl ${googleIntegration.connected ? "bg-emerald-50 text-emerald-600" : "bg-red-50 text-red-600"}`}>
                         <Calendar className="w-5 h-5" />
                       </div>
                       <div>
-                        <h3 className="text-sm font-bold text-slate-900">Google Calendar Integration</h3>
+                        <h3 className="text-sm font-bold text-slate-900">Google Calendar & Gmail Integration</h3>
                         <p className="text-xs text-slate-500">Live synchronization for sales meetings and demo bookings</p>
                       </div>
                     </div>
 
-                    <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                      Ready & Enabled
-                    </span>
+                    {googleIntegration.connected ? (
+                      <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        <span>Connected: {googleIntegration.email}</span>
+                      </span>
+                    ) : (
+                      <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                        Not Connected
+                      </span>
+                    )}
                   </div>
 
                   <p className="text-xs text-slate-600 leading-relaxed">
-                    Your CRM integrates with Google Calendar. Every scheduled call or meeting includes direct
-                    <strong> &quot;Add to Google Cal&quot;</strong> and <strong>&quot;Download .ics&quot;</strong> actions.
+                    {googleIntegration.connected
+                      ? `Connected to ${googleIntegration.email}. Your CRM automatically syncs calendar events, allows 1-click Google Meet scheduling, and provides direct email sending.`
+                      : "Connect your Google Account to enable automatic calendar booking, live Google Meet sync, and 1-click email sending directly within Zigmaa CRM."}
                   </p>
 
                   <div className="flex items-center gap-3 pt-1">
-                    <a
-                      href="https://calendar.google.com"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex items-center gap-1.5 px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                      <span>Launch Google Calendar</span>
-                    </a>
+                    {googleIntegration.connected ? (
+                      <>
+                        <a
+                          href="https://calendar.google.com"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-semibold shadow-xs transition-colors"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          <span>Launch Google Calendar</span>
+                        </a>
+                        <button
+                          type="button"
+                          onClick={handleDisconnectGoogle}
+                          className="px-3.5 py-2 bg-rose-50 border border-rose-200 hover:bg-rose-100 text-[#e11d48] text-xs font-bold rounded-xl shadow-2xs transition-colors cursor-pointer"
+                        >
+                          Disconnect Account
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleConnectGoogle}
+                        disabled={connectingGoogle}
+                        className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        <svg className="w-4 h-4" viewBox="0 0 24 24">
+                          <path fill="#ffffff" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                          <path fill="#ffffff" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                          <path fill="#ffffff" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                          <path fill="#ffffff" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                        </svg>
+                        <span>{connectingGoogle ? "Connecting..." : "Connect Google Account (Gmail & Calendar)"}</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 

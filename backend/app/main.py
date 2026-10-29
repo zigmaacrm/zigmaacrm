@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import engine, Base
-from app.api.v1 import auth, organizations, leads, pipelines, deals, activities, webhooks, automations, invoices, contacts, custom_fields, copilot, tasks, dashboard, calendar, settings as settings_router, team, telephony, whatsapp, super_admin
+from app.api.v1 import auth, organizations, leads, pipelines, deals, activities, webhooks, automations, invoices, contacts, custom_fields, copilot, tasks, dashboard, calendar, settings as settings_router, team, telephony, whatsapp, super_admin, integrations_google
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -48,6 +48,7 @@ app.include_router(invoices.router, prefix=settings.API_V1_STR, tags=["Invoices"
 app.include_router(copilot.router, prefix=settings.API_V1_STR, tags=["AI Copilot"])
 app.include_router(telephony.router, prefix=settings.API_V1_STR, tags=["Telephony"])
 app.include_router(telephony.router, prefix=f"{settings.API_V1_STR}/telephony", tags=["Telephony-Direct"])
+app.include_router(integrations_google.router, prefix=f"{settings.API_V1_STR}/integrations/google", tags=["Google-Integration"])
 
 @app.on_event("startup")
 async def on_startup():
@@ -64,6 +65,11 @@ async def on_startup():
                 await conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS max_users INTEGER DEFAULT 15;"))
                 await conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS max_whatsapp INTEGER DEFAULT 1500;"))
                 await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50);"))
+                await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS google_email VARCHAR(255);"))
+                await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS google_access_token TEXT;"))
+                await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS google_refresh_token TEXT;"))
+                await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS google_token_expiry TIMESTAMP WITHOUT TIME ZONE;"))
+                await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_google_connected BOOLEAN DEFAULT FALSE;"))
             except Exception as e:
                 print(f"[STARTUP MIGRATION] Schema check note: {e}")
     except Exception as e:

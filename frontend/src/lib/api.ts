@@ -1105,6 +1105,55 @@ export const zigmaaApi = {
     return fallback;
   },
 
+  // ===== GOOGLE OAUTH INTEGRATION (GMAIL & CALENDAR) =====
+  async getGoogleAuthUrl(): Promise<{ url: string }> {
+    const res = await fetch(`${API_BASE}/integrations/google/auth-url`, {
+      headers: getAuthHeaders(),
+      cache: "no-store"
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to retrieve Google Auth URL");
+    }
+    const data = await res.json();
+    return { url: data.url || "" };
+  },
+
+  async getGoogleStatus(): Promise<{ connected: boolean; email: string | null; provider?: string }> {
+    try {
+      const res = await fetch(`${API_BASE}/integrations/google/status`, {
+        headers: getAuthHeaders(),
+        cache: "no-store"
+      });
+      if (res.ok) {
+        const json = await res.json();
+        return json;
+      }
+    } catch (e) {
+      console.error("Google integration status check error:", e);
+    }
+    return { connected: false, email: null };
+  },
+
+  async disconnectGoogle(): Promise<boolean> {
+    try {
+      const res = await fetch(`${API_BASE}/integrations/google/disconnect`, {
+        method: "POST",
+        headers: getAuthHeaders()
+      });
+      if (res.ok) {
+        setStorage("zigmaa_email_sync", { is_connected: false, email: null, provider: null });
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("zigmaa_email_sync_updated"));
+        }
+        return true;
+      }
+    } catch (e) {
+      console.error("Disconnect Google integration error:", e);
+    }
+    return false;
+  },
+
   // ===== ORGANIZATION & PROPOSAL BRANDING SETTINGS =====
   async getOrganizationSettings(): Promise<OrganizationSettings> {
     const currentUser = this.getCurrentUser();
