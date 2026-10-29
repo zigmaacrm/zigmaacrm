@@ -316,6 +316,22 @@ export default function PipelineDealsPage() {
         const thisMonth = new Date().toISOString().slice(0, 7);
         if (!(d.close_date || d.expected_close_date || "").startsWith(thisMonth)) return false;
       }
+      if (activeTab === "Today's Deals") {
+        const todayStr = new Date().toISOString().split("T")[0];
+        if (!(d.created_at || "").startsWith(todayStr)) return false;
+      }
+      if (activeTab === "My Deals") {
+        const currentUser = api.getCurrentUser();
+        if (currentUser) {
+          const myName = (currentUser.full_name || "").toLowerCase().trim();
+          const myId = String(currentUser.id);
+          const ownerName = (d.owner_name || "").toLowerCase().trim();
+          const ownerId = String(d.owner_id || "");
+          const assignedId = String(d.assigned_user_id || "");
+          const isMine = (myName && ownerName.includes(myName)) || ownerId === myId || assignedId === myId;
+          if (!isMine) return false;
+        }
+      }
 
       // Stage dropdown filter
       if (selectedStage !== "ALL") {

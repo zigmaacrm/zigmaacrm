@@ -46,6 +46,9 @@ export interface Deal {
   created_at: string;
   lead_id?: number | string;
   contact_id?: number | string;
+  owner_id?: number | string;
+  owner_name?: string;
+  assigned_user_id?: number | string;
   status?: string;
   custom_data?: Record<string, any>;
 }
