@@ -851,8 +851,11 @@ export default function SettingsPage() {
                         <input
                           type={showConfirmPassword ? "text" : "password"}
                           value={confirmPassword}
-                          onChange={(e) => setConfirmPassword(e.target.value)}
-                          placeholder="••••••••"
+                          onChange={(e) => {
+                            setConfirmPassword(e.target.value);
+                            if (passwordError) setPasswordError("");
+                          }}
+                          placeholder="Re-enter your new password"
                           className="w-full bg-slate-50 text-slate-900 p-2.5 pr-10 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 font-medium"
                           required
                         />

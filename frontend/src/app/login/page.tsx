@@ -54,16 +54,21 @@ export default function LoginPage() {
   const [lastName, setLastName] = useState("");
   const [companyName, setCompanyName] = useState("");
   const [signUpPassword, setSignUpPassword] = useState("");
+  const [signUpConfirmPassword, setSignUpConfirmPassword] = useState("");
   const [signUpEmail, setSignUpEmail] = useState("");
   const [countryCode, setCountryCode] = useState("+91");
   const [contactNumber, setContactNumber] = useState("");
   const [showSignUpPassword, setShowSignUpPassword] = useState(false);
+  const [showSignUpConfirmPassword, setShowSignUpConfirmPassword] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false);
   const [otpVerified, setOtpVerified] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
 
@@ -146,6 +151,10 @@ export default function LoginPage() {
     const pwdErr = getPasswordValidationError(setupPassword);
     if (pwdErr) {
       setInvitationError(pwdErr);
+      return;
+    }
+    if (!confirmSetupPassword) {
+      setInvitationError("Please confirm your new password.");
       return;
     }
     if (setupPassword !== confirmSetupPassword) {
@@ -238,6 +247,12 @@ export default function LoginPage() {
       if (pwdErr) {
         errors.signUpPassword = pwdErr;
       }
+    }
+
+    if (!signUpConfirmPassword) {
+      errors.signUpConfirmPassword = "Confirm password is required";
+    } else if (signUpPassword !== signUpConfirmPassword) {
+      errors.signUpConfirmPassword = "Passwords do not match";
     }
 
     if (!signUpEmail.trim()) {
@@ -364,9 +379,22 @@ export default function LoginPage() {
     e.preventDefault();
     const cleanEmail = resetEmail.trim().toLowerCase();
     const otpCode = otpValues.join("").trim();
+
+    if (!newPassword) {
+      setError("Please enter a new password.");
+      return;
+    }
     const pwdErr = getPasswordValidationError(newPassword);
     if (pwdErr) {
       setError(pwdErr);
+      return;
+    }
+    if (!confirmNewPassword) {
+      setError("Please confirm your new password.");
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setError("Passwords do not match. Please re-enter.");
       return;
     }
 
@@ -824,81 +852,37 @@ export default function LoginPage() {
                 </div>
               </div>
 
-              {/* Row 2: Company Name & Password */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                <div>
-                  <label className="block text-[13px] font-medium text-[#374151] mb-1">
-                    Company Name <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={companyName}
-                    onChange={(e) => {
-                      setCompanyName(e.target.value);
-                      if (fieldErrors.companyName) {
-                        setFieldErrors((prev) => {
-                          const n = { ...prev };
-                          delete n.companyName;
-                          return n;
-                        });
-                      }
-                    }}
-                    placeholder="Enter Your Company Name"
-                    className={`w-full px-3.5 py-2.5 rounded-lg border text-[#111827] text-xs sm:text-sm placeholder:text-[#9CA3AF] placeholder:italic placeholder:font-normal focus:outline-none transition-colors ${
-                      fieldErrors.companyName
-                        ? "border-[#EF4444] bg-[#FFF5F5] focus:border-[#EF4444] focus:ring-1 focus:ring-[#EF4444]"
-                        : "border-[#E5E7EB] bg-white focus:border-red-600 focus:ring-1 focus:ring-red-600"
-                    }`}
-                  />
-                  {fieldErrors.companyName && (
-                    <div className="flex items-center gap-1 text-[11px] text-[#EF4444] mt-1 font-medium">
-                      <AlertCircle className="w-3 h-3 shrink-0" />
-                      <span>{fieldErrors.companyName}</span>
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-[13px] font-medium text-[#374151] mb-1">
-                    Password <span className="text-red-500">*</span>
-                  </label>
-                  <div className="relative flex items-center">
-                    <input
-                      type={showSignUpPassword ? "text" : "password"}
-                      value={signUpPassword}
-                      onChange={(e) => {
-                        setSignUpPassword(e.target.value);
-                        if (fieldErrors.signUpPassword) {
-                          setFieldErrors((prev) => {
-                            const n = { ...prev };
-                            delete n.signUpPassword;
-                            return n;
-                          });
-                        }
-                      }}
-                      placeholder="Enter Your Password"
-                      className={`w-full px-3.5 py-2.5 pr-10 rounded-lg border text-[#111827] text-xs sm:text-sm placeholder:text-[#9CA3AF] placeholder:italic placeholder:font-normal focus:outline-none transition-colors ${
-                        fieldErrors.signUpPassword
-                          ? "border-[#EF4444] bg-[#FFF5F5] focus:border-[#EF4444] focus:ring-1 focus:ring-[#EF4444]"
-                          : "border-[#E5E7EB] bg-white focus:border-red-600 focus:ring-1 focus:ring-red-600"
-                      }`}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowSignUpPassword(!showSignUpPassword)}
-                      className="absolute right-3 text-[#9CA3AF] hover:text-[#4B5563] cursor-pointer p-0.5"
-                      title={showSignUpPassword ? "Hide password" : "Show password"}
-                    >
-                      {showSignUpPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
+              {/* Row 2: Company Name */}
+              <div>
+                <label className="block text-[13px] font-medium text-[#374151] mb-1">
+                  Company Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={companyName}
+                  onChange={(e) => {
+                    setCompanyName(e.target.value);
+                    if (fieldErrors.companyName) {
+                      setFieldErrors((prev) => {
+                        const n = { ...prev };
+                        delete n.companyName;
+                        return n;
+                      });
+                    }
+                  }}
+                  placeholder="Enter Your Company Name"
+                  className={`w-full px-3.5 py-2.5 rounded-lg border text-[#111827] text-xs sm:text-sm placeholder:text-[#9CA3AF] placeholder:italic placeholder:font-normal focus:outline-none transition-colors ${
+                    fieldErrors.companyName
+                      ? "border-[#EF4444] bg-[#FFF5F5] focus:border-[#EF4444] focus:ring-1 focus:ring-[#EF4444]"
+                      : "border-[#E5E7EB] bg-white focus:border-red-600 focus:ring-1 focus:ring-red-600"
+                  }`}
+                />
+                {fieldErrors.companyName && (
+                  <div className="flex items-center gap-1 text-[11px] text-[#EF4444] mt-1 font-medium">
+                    <AlertCircle className="w-3 h-3 shrink-0" />
+                    <span>{fieldErrors.companyName}</span>
                   </div>
-                  {fieldErrors.signUpPassword && (
-                    <div className="flex items-center gap-1 text-[11px] text-[#EF4444] mt-1 font-medium">
-                      <AlertCircle className="w-3 h-3 shrink-0" />
-                      <span>{fieldErrors.signUpPassword}</span>
-                    </div>
-                  )}
-                  <PasswordStrengthIndicator password={signUpPassword} />
-                </div>
+                )}
               </div>
 
               {/* Row 3: Email */}
@@ -974,6 +958,93 @@ export default function LoginPage() {
                   <div className="flex items-center gap-1 text-[11px] text-[#EF4444] mt-1 font-medium">
                     <AlertCircle className="w-3 h-3 shrink-0" />
                     <span>{fieldErrors.contactNumber}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Row 5: Password */}
+              <div>
+                <label className="block text-[13px] font-medium text-[#374151] mb-1">
+                  Password <span className="text-red-500">*</span>
+                </label>
+                <div className="relative flex items-center">
+                  <input
+                    type={showSignUpPassword ? "text" : "password"}
+                    value={signUpPassword}
+                    onChange={(e) => {
+                      setSignUpPassword(e.target.value);
+                      if (fieldErrors.signUpPassword) {
+                        setFieldErrors((prev) => {
+                          const n = { ...prev };
+                          delete n.signUpPassword;
+                          return n;
+                        });
+                      }
+                    }}
+                    placeholder="Enter Your Password"
+                    className={`w-full px-3.5 py-2.5 pr-10 rounded-lg border text-[#111827] text-xs sm:text-sm placeholder:text-[#9CA3AF] placeholder:italic placeholder:font-normal focus:outline-none transition-colors ${
+                      fieldErrors.signUpPassword
+                        ? "border-[#EF4444] bg-[#FFF5F5] focus:border-[#EF4444] focus:ring-1 focus:ring-[#EF4444]"
+                        : "border-[#E5E7EB] bg-white focus:border-red-600 focus:ring-1 focus:ring-red-600"
+                    }`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowSignUpPassword(!showSignUpPassword)}
+                    className="absolute right-3 text-[#9CA3AF] hover:text-[#4B5563] cursor-pointer p-0.5"
+                    title={showSignUpPassword ? "Hide password" : "Show password"}
+                  >
+                    {showSignUpPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                {fieldErrors.signUpPassword && (
+                  <div className="flex items-center gap-1 text-[11px] text-[#EF4444] mt-1 font-medium">
+                    <AlertCircle className="w-3 h-3 shrink-0" />
+                    <span>{fieldErrors.signUpPassword}</span>
+                  </div>
+                )}
+                <PasswordStrengthIndicator password={signUpPassword} />
+              </div>
+
+              {/* Row 6: Confirm Password (Below Password) */}
+              <div>
+                <label className="block text-[13px] font-medium text-[#374151] mb-1">
+                  Confirm Password <span className="text-red-500">*</span>
+                </label>
+                <div className="relative flex items-center">
+                  <input
+                    type={showSignUpConfirmPassword ? "text" : "password"}
+                    value={signUpConfirmPassword}
+                    onChange={(e) => {
+                      setSignUpConfirmPassword(e.target.value);
+                      if (fieldErrors.signUpConfirmPassword) {
+                        setFieldErrors((prev) => {
+                          const n = { ...prev };
+                          delete n.signUpConfirmPassword;
+                          return n;
+                        });
+                      }
+                    }}
+                    placeholder="Confirm Your Password"
+                    className={`w-full px-3.5 py-2.5 pr-10 rounded-lg border text-[#111827] text-xs sm:text-sm placeholder:text-[#9CA3AF] placeholder:italic placeholder:font-normal focus:outline-none transition-colors ${
+                      fieldErrors.signUpConfirmPassword
+                        ? "border-[#EF4444] bg-[#FFF5F5] focus:border-[#EF4444] focus:ring-1 focus:ring-[#EF4444]"
+                        : "border-[#E5E7EB] bg-white focus:border-red-600 focus:ring-1 focus:ring-red-600"
+                    }`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowSignUpConfirmPassword(!showSignUpConfirmPassword)}
+                    className="absolute right-3 text-[#9CA3AF] hover:text-[#4B5563] cursor-pointer p-0.5"
+                    title={showSignUpConfirmPassword ? "Hide password" : "Show password"}
+                  >
+                    {showSignUpConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                {fieldErrors.signUpConfirmPassword && (
+                  <div className="flex items-center gap-1 text-[11px] text-[#EF4444] mt-1 font-medium">
+                    <AlertCircle className="w-3 h-3 shrink-0" />
+                    <span>{fieldErrors.signUpConfirmPassword}</span>
                   </div>
                 )}
               </div>
@@ -1169,17 +1240,58 @@ export default function LoginPage() {
                 )}
                 <div>
                   <label className="block text-[13px] font-medium text-[#374151] mb-1.5">
-                    New Strong Password
+                    New Strong Password <span className="text-red-500">*</span>
                   </label>
-                  <input
-                    type="password"
-                    required
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    placeholder="Min. 8 chars (1 uppercase, 1 number, 1 special)"
-                    className="w-full px-3.5 py-2.5 rounded-lg border border-[#E5E7EB] bg-white text-[#111827] text-xs sm:text-sm placeholder:text-[#9CA3AF] placeholder:italic placeholder:font-normal focus:outline-none focus:border-red-600 focus:ring-1 focus:ring-red-600 transition-colors"
-                  />
+                  <div className="relative flex items-center">
+                    <input
+                      type={showNewPassword ? "text" : "password"}
+                      required
+                      value={newPassword}
+                      onChange={(e) => {
+                        setNewPassword(e.target.value);
+                        if (error) setError("");
+                      }}
+                      placeholder="Min. 8 chars (1 uppercase, 1 number, 1 special)"
+                      className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-[#E5E7EB] bg-white text-[#111827] text-xs sm:text-sm placeholder:text-[#9CA3AF] placeholder:italic placeholder:font-normal focus:outline-none focus:border-red-600 focus:ring-1 focus:ring-red-600 transition-colors"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewPassword(!showNewPassword)}
+                      className="absolute right-3 text-[#9CA3AF] hover:text-[#4B5563] cursor-pointer p-0.5"
+                      title={showNewPassword ? "Hide password" : "Show password"}
+                    >
+                      {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                   <PasswordStrengthIndicator password={newPassword} />
+                </div>
+
+                {/* Confirm New Password (Below New Password) */}
+                <div>
+                  <label className="block text-[13px] font-medium text-[#374151] mb-1.5">
+                    Confirm New Password <span className="text-red-500">*</span>
+                  </label>
+                  <div className="relative flex items-center">
+                    <input
+                      type={showConfirmNewPassword ? "text" : "password"}
+                      required
+                      value={confirmNewPassword}
+                      onChange={(e) => {
+                        setConfirmNewPassword(e.target.value);
+                        if (error) setError("");
+                      }}
+                      placeholder="Re-enter your new password"
+                      className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-[#E5E7EB] bg-white text-[#111827] text-xs sm:text-sm placeholder:text-[#9CA3AF] placeholder:italic placeholder:font-normal focus:outline-none focus:border-red-600 focus:ring-1 focus:ring-red-600 transition-colors"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmNewPassword(!showConfirmNewPassword)}
+                      className="absolute right-3 text-[#9CA3AF] hover:text-[#4B5563] cursor-pointer p-0.5"
+                      title={showConfirmNewPassword ? "Hide password" : "Show password"}
+                    >
+                      {showConfirmNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
 
                 <button

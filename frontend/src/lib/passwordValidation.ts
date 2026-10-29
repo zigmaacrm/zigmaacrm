@@ -43,3 +43,4 @@ export function getPasswordValidationError(password: string): string | null {
   }
   return null;
 }
+
