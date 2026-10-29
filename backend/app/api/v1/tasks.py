@@ -4,12 +4,15 @@ from sqlalchemy import select, desc, or_
 from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime
+import logging
 
 from app.core.database import get_db
 from app.models.task import Task
 from app.models.contact import Contact
-from app.models.organization_user import User
+from app.models.organization_user import User, Organization
 from app.api.deps import get_optional_current_user
+
+logger = logging.getLogger("zigmaa.tasks")
 
 router = APIRouter()
 
@@ -75,8 +78,12 @@ async def get_tasks(
                 Task.organization_id == None
             )
         )
-        # Sales representatives receive only tasks assigned to them or created by them
-        if current_user.role and current_user.role.lower() in ("sales_rep", "sales rep", "rep", "member"):
+        # Supabase RLS / Query Isolation:
+        # Admins, Owners, and Super Admins MUST receive ALL organization tasks across sessions.
+        # Only non-admin sales reps have their query scoped to assigned tasks.
+        role = (current_user.role or "").upper().replace(" ", "_")
+        is_admin = role in ("ADMIN", "SUPER_ADMIN", "OWNER") or "ADMIN" in role
+        if not is_admin and role in ("SALES_REP", "REP", "MEMBER"):
             query = query.where(
                 or_(
                     Task.assigned_to == current_user.full_name,
@@ -117,8 +124,15 @@ async def create_task(
     else:
         assigned_name = payload.assigned_to or (current_user.full_name if current_user else "Mohamed Thoufiq")
 
+    # Resolve organization_id to ensure task is never orphaned
+    org_id = current_user.organization_id if current_user and current_user.organization_id else None
+    if not org_id:
+        res = await db.execute(select(Organization))
+        org = res.scalars().first()
+        org_id = org.id if org else "default_org"
+
     task = Task(
-        organization_id=current_user.organization_id if current_user else None,
+        organization_id=org_id,
         title=payload.title,
         activity_type=payload.activity_type or "To-Do",
         due_date=payload.due_date,
@@ -135,8 +149,14 @@ async def create_task(
         contact_company=c_company
     )
     db.add(task)
-    await db.commit()
-    await db.refresh(task)
+    try:
+        await db.commit()
+        await db.refresh(task)
+        logger.info(f"Persisted task {task.id} for org {task.organization_id} to Supabase")
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Failed to persist task to Supabase: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Database persistence error: {str(e)}")
     return task
 
 @router.patch("/{task_id}", response_model=TaskOut)
@@ -168,8 +188,13 @@ async def update_task(
     for field, value in update_data.items():
         setattr(task, field, value)
 
-    await db.commit()
-    await db.refresh(task)
+    try:
+        await db.commit()
+        await db.refresh(task)
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Failed to update task: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Database update error: {str(e)}")
     return task
 
 @router.patch("/{task_id}/toggle-status", response_model=TaskOut)
@@ -191,8 +216,13 @@ async def toggle_task_status(
         raise HTTPException(status_code=404, detail="Task not found")
 
     task.status = "PENDING" if task.status == "COMPLETED" else "COMPLETED"
-    await db.commit()
-    await db.refresh(task)
+    try:
+        await db.commit()
+        await db.refresh(task)
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Failed to toggle task: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Database update error: {str(e)}")
     return task
 
 @router.delete("/{task_id}")
@@ -214,7 +244,12 @@ async def delete_task(
     if not task:
         return {"message": "Task already deleted or not found", "id": task_id}
 
-    await db.delete(task)
-    await db.commit()
+    try:
+        await db.delete(task)
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Failed to delete task: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Database delete error: {str(e)}")
     return {"message": "Task deleted successfully", "id": task_id}
     return {"message": "Task deleted successfully", "id": task_id}

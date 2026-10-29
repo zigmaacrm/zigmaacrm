@@ -27,6 +27,10 @@ if "sslmode=" in db_url:
     db_url = db_url.replace("sslmode=", "ssl=")
 
 connect_args = {}
+if "postgresql" in db_url:
+    # Disable asyncpg statement cache for Supabase transaction pooler (pgbouncer) compatibility
+    connect_args["statement_cache_size"] = 0
+
 engine_kwargs = {
     "connect_args": connect_args,
     "echo": False,
@@ -35,12 +39,13 @@ engine_kwargs = {
 if db_url.startswith("sqlite"):
     connect_args["check_same_thread"] = False
 else:
-    # High-concurrency PostgreSQL async connection pool
+    # High-concurrency Supabase / PostgreSQL async connection pool
     engine_kwargs.update({
-        "pool_size": 20,
-        "max_overflow": 10,
+        "pool_size": 10,
+        "max_overflow": 20,
         "pool_recycle": 300,
         "pool_timeout": 30,
+        "pool_pre_ping": True,
     })
 
 engine = create_async_engine(db_url, **engine_kwargs)

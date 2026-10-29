@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_
 from typing import List, Optional, Any, Dict
 from pydantic import BaseModel
+import logging
 
 from app.core.database import get_db
 from app.models.deal import Deal
@@ -12,6 +13,8 @@ from app.models.organization_user import Organization, User
 from app.api.deps import get_current_user
 from app.models.activity import Activity
 from app.schemas.deal_schema import DealCreate, DealOut, DealStageMove
+
+logger = logging.getLogger("zigmaa.deals")
 
 router = APIRouter()
 
@@ -36,7 +39,13 @@ async def get_deals(
         )
     if pipeline_id:
         query = query.where(Deal.pipeline_id == pipeline_id)
-    if current_user.role == "SALES_REP":
+
+    # Supabase RLS / Query Isolation:
+    # Admins, Owners, and Super Admins MUST receive ALL organization deals across sessions.
+    # Only non-admin sales reps have their query scoped to assigned deals.
+    role = (current_user.role or "").upper().replace(" ", "_")
+    is_admin = role in ("ADMIN", "SUPER_ADMIN", "OWNER") or "ADMIN" in role
+    if not is_admin and role in ("SALES_REP", "MEMBER", "REP"):
         query = query.where(
             or_(
                 Deal.owner_id == current_user.id,
@@ -137,9 +146,19 @@ async def get_deals_board(
     )
     stages = stages_res.scalars().all()
 
-    # Retrieve deals for this pipeline
+    # Retrieve deals for this pipeline with organization filtering
     deals_query = select(Deal).where(Deal.pipeline_id == pipeline.id)
-    if current_user.role == "SALES_REP":
+    if current_user.organization_id:
+        deals_query = deals_query.where(
+            or_(
+                Deal.organization_id == current_user.organization_id,
+                Deal.organization_id.is_(None),
+                Deal.organization_id == "default_org"
+            )
+        )
+    role = (current_user.role or "").upper().replace(" ", "_")
+    is_admin = role in ("ADMIN", "SUPER_ADMIN", "OWNER") or "ADMIN" in role
+    if not is_admin and role in ("SALES_REP", "MEMBER", "REP"):
         deals_query = deals_query.where(
             or_(
                 Deal.owner_id == current_user.id,
@@ -398,8 +417,14 @@ async def create_deal(
             c_cd["latest_deal_stage"] = resolved_stage_title
             contact_obj.custom_data = c_cd
 
-    await db.commit()
-    await db.refresh(deal)
+    try:
+        await db.commit()
+        await db.refresh(deal)
+        logger.info(f"Persisted deal {deal.id} for org {deal.organization_id} to Supabase")
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Failed to persist deal to Supabase: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Database persistence error: {str(e)}")
 
     return {
         "id": deal.id,
@@ -483,8 +508,14 @@ async def update_deal(
         if key not in ["id", "created_at", "custom_properties", "custom_data", "stage", "stage_id"] and hasattr(deal, key):
             setattr(deal, key, val)
 
-    await db.commit()
-    await db.refresh(deal)
+    try:
+        await db.commit()
+        await db.refresh(deal)
+        logger.info(f"Persisted deal {deal.id} for org {deal.organization_id} to Supabase")
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Failed to persist deal to Supabase: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Database persistence error: {str(e)}")
     return deal
 
 @router.patch("/deals/{deal_id}/stage")
@@ -581,8 +612,14 @@ async def update_deal_stage(
         status="COMPLETED"
     )
     db.add(act)
-    await db.commit()
-    await db.refresh(deal)
+    try:
+        await db.commit()
+        await db.refresh(deal)
+        logger.info(f"Persisted deal {deal.id} for org {deal.organization_id} to Supabase")
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Failed to persist deal to Supabase: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Database persistence error: {str(e)}")
     return {
         "success": True,
         "deal_id": deal.id,

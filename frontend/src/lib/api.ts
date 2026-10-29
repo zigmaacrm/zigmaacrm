@@ -88,7 +88,10 @@ export function invalidateClientCache(prefix?: string) {
 }
 
 export function getAuthHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = {
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache"
+  };
   if (typeof window !== "undefined") {
     let token = localStorage.getItem("zigmaa_token");
     if (token) {
@@ -1279,18 +1282,9 @@ export const zigmaaApi = {
             };
           });
 
-          // Merge with locally created deals so freshly added deals are never lost
-          const mergedMap = new Map<string, Deal>();
-          mapped.forEach((d: Deal) => mergedMap.set(String(d.id), d));
-          localDeals.forEach((ld: Deal) => {
-            if (ld && ld.id && !mergedMap.has(String(ld.id))) {
-              mergedMap.set(String(ld.id), ld);
-            }
-          });
-          const merged = Array.from(mergedMap.values());
-          setStorage("zigmaa_deals", merged);
-          clientMemoryCache.set(cacheKey, { data: merged, timestamp: Date.now() });
-          return merged;
+          setStorage("zigmaa_deals", mapped);
+          clientMemoryCache.set(cacheKey, { data: mapped, timestamp: Date.now() });
+          return mapped;
         }
       }
     } catch {}
@@ -1345,16 +1339,8 @@ export const zigmaaApi = {
               created_at: d.created_at || new Date().toISOString()
             };
           });
-          const mergedMap = new Map<string, Deal>();
-          mapped.forEach((d: Deal) => mergedMap.set(String(d.id), d));
-          localDeals.forEach((ld: Deal) => {
-            if (ld && ld.id && !mergedMap.has(String(ld.id))) {
-              mergedMap.set(String(ld.id), ld);
-            }
-          });
-          const merged = Array.from(mergedMap.values());
-          setStorage("zigmaa_deals", merged);
-          clientMemoryCache.set("deals:all", { data: merged, timestamp: Date.now() });
+          setStorage("zigmaa_deals", mapped);
+          clientMemoryCache.set("deals:all", { data: mapped, timestamp: Date.now() });
         }
       }
     } catch {}
