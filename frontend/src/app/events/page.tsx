@@ -94,7 +94,7 @@ export default function EventsCalendarPage() {
       setEvents((prev) => prev.filter((e) => String(e.id) !== String(id)));
       try {
         await api.deleteEvent(id);
-        toast.success("Meeting Deleted", "The calendar event was removed.");
+        toast.success("Meeting Deleted", "The meeting was removed from CRM and Google Calendar.");
       } catch (e) {
         console.error("Failed to delete event:", e);
       }
@@ -695,8 +695,9 @@ export default function EventsCalendarPage() {
                     {filteredEvents.map((ev) => {
                       const chip = getEventChipBadge(ev.event_type);
                       const BadgeIcon = chip.icon;
-                      const meetLink = ev.meeting_link || ev.meet_url || (ev.location?.includes("http") ? ev.location : "https://meet.google.com/new");
-                      const hasMeet = Boolean(meetLink && meetLink.includes("meet.google.com"));
+                      const meetLink = ev.meet_link || ev.meeting_link || ev.meet_url || (ev.location?.includes("http") ? ev.location : "");
+                      const hasMeet = Boolean(meetLink && (meetLink.includes("meet.google.com") || meetLink.includes("http")));
+                      const isSynced = Boolean(ev.google_calendar_synced || ev.google_event_id);
 
                       return (
                         <div
@@ -749,8 +750,8 @@ export default function EventsCalendarPage() {
                             )}
                           </div>
 
-                          {/* Quick Actions Row with Join Google Meet Button */}
-                          <div className="pt-2 border-t border-slate-200/60 flex items-center gap-2">
+                          {/* Quick Actions Row: Auto-synced Google Calendar & Google Meet */}
+                          <div className="pt-2 border-t border-slate-200/60 flex items-center justify-between gap-2">
                             {hasMeet ? (
                               <button
                                 onClick={() => window.open(meetLink, "_blank")}
@@ -761,26 +762,25 @@ export default function EventsCalendarPage() {
                                 <span>Join Google Meet</span>
                               </button>
                             ) : (
-                              <button
-                                onClick={() => handleOpenGoogleCalendar(ev)}
-                                className="flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 bg-red-600 hover:bg-red-700 text-white text-[11px] font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer"
+                              <div className="flex-1 flex items-center gap-1 text-[11px] font-semibold text-slate-600 px-2.5 py-1.5 bg-slate-100 rounded-lg">
+                                <Clock className="w-3.5 h-3.5 text-slate-400" />
+                                <span>Scheduled Meeting</span>
+                              </div>
+                            )}
+
+                            {isSynced && (
+                              <span
+                                className="px-2 py-1 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1 shrink-0"
+                                title="Synchronized with Google Calendar"
                               >
-                                <CalendarCheck className="w-3.5 h-3.5" />
-                                <span>Add to GCal</span>
-                              </button>
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                <span>Synced</span>
+                              </span>
                             )}
 
                             <button
-                              onClick={() => handleOpenGoogleCalendar(ev)}
-                              className="p-1.5 border border-slate-200 hover:bg-red-50 hover:text-red-700 text-slate-600 rounded-lg text-[11px] transition-colors cursor-pointer"
-                              title="Sync to Google Calendar"
-                            >
-                              <CalendarCheck className="w-3.5 h-3.5" />
-                            </button>
-
-                            <button
                               onClick={() => handleDownloadIcs(ev)}
-                              className="p-1.5 border border-slate-200 hover:bg-slate-100 text-slate-600 rounded-lg text-[11px] transition-colors cursor-pointer"
+                              className="p-1.5 border border-slate-200 hover:bg-slate-100 text-slate-600 rounded-lg text-[11px] transition-colors cursor-pointer shrink-0"
                               title="Download .ics Calendar File"
                             >
                               <Download className="w-3.5 h-3.5" />

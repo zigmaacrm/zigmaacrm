@@ -68,7 +68,6 @@ export default function ScheduleMeetingDrawer({
   const [attendeeName, setAttendeeName] = useState("");
   const [attendeeEmail, setAttendeeEmail] = useState("");
   const [notes, setNotes] = useState("");
-  const [openGCalOnSave, setOpenGCalOnSave] = useState(false);
 
   // Animated close handler
   const handleClose = useCallback(() => {
@@ -139,7 +138,6 @@ export default function ScheduleMeetingDrawer({
       setAttendeeName("");
       setAttendeeEmail("");
       setNotes("");
-      setOpenGCalOnSave(false);
       setSubmitting(false);
 
       // Fetch contacts
@@ -243,12 +241,11 @@ export default function ScheduleMeetingDrawer({
     try {
       const saved = await api.createEvent(payload);
 
-      if (openGCalOnSave) {
-        const gcalUrl = formatGoogleCalendarUrl(saved);
-        window.open(gcalUrl, "_blank", "noopener,noreferrer");
+      if (saved.google_calendar_synced || saved.google_event_id) {
+        toast.success("Meeting Scheduled", "Synced to Google Calendar & Google Meet created!");
+      } else {
+        toast.success("Meeting Scheduled", "Meeting scheduled successfully!");
       }
-
-      toast.success("Meeting Scheduled", "Meeting scheduled successfully!");
       onSuccess(saved);
       handleClose();
     } catch (err) {
@@ -580,18 +577,10 @@ export default function ScheduleMeetingDrawer({
 
         {/* 3. Sticky Bottom Footer Bar */}
         <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/80 flex items-center justify-between shrink-0">
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={openGCalOnSave}
-              onChange={(e) => setOpenGCalOnSave(e.target.checked)}
-              className="w-4 h-4 text-red-600 rounded focus:ring-red-500 border-slate-300"
-            />
-            <span className="text-xs font-semibold text-slate-700 flex items-center gap-1">
-              <span>Open Google Cal on save</span>
-              <ExternalLink className="w-3 h-3 text-slate-400" />
-            </span>
-          </label>
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span>Auto-syncs with Google Calendar</span>
+          </div>
 
           <div className="flex items-center gap-3">
             <button

@@ -123,7 +123,9 @@ export interface CalendarEvent {
   event_type?: "Product Demo" | "Discovery Call" | "Follow-up" | "Closing Meeting" | "Meeting" | "Call" | "Demo" | "Consultation" | string;
   lead_or_deal?: string;
   meet_url?: string;
+  meet_link?: string;
   google_meet_link?: string;
+  google_event_id?: string;
   google_calendar_synced?: boolean;
   status?: string;
   created_at?: string;

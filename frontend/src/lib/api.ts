@@ -2442,8 +2442,12 @@ export const zigmaaApi = {
     try {
       const res = await fetch(`${API_BASE}/calendar/events`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders()
+        },
+        body: JSON.stringify(payload),
+        cache: "no-store"
       });
       if (res.ok) {
         const saved = await res.json();
@@ -2487,7 +2491,11 @@ export const zigmaaApi = {
 
   async deleteEvent(id: number | string): Promise<boolean> {
     try {
-      const res = await fetch(`${API_BASE}/calendar/events/${id}`, { method: "DELETE" });
+      const res = await fetch(`${API_BASE}/calendar/events/${id}`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+        cache: "no-store"
+      });
       if (res.ok) {
         const events = getStorage<CalendarEvent[]>("zigmaa_events", INITIAL_EVENTS);
         const filtered = events.filter(e => String(e.id) !== String(id));

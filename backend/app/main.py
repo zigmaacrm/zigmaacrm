@@ -70,6 +70,8 @@ async def on_startup():
                 await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS google_refresh_token TEXT;"))
                 await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS google_token_expiry TIMESTAMP WITHOUT TIME ZONE;"))
                 await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_google_connected BOOLEAN DEFAULT FALSE;"))
+                await conn.execute(text("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS google_event_id VARCHAR(255);"))
+                await conn.execute(text("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS meet_link VARCHAR(500);"))
             except Exception as e:
                 print(f"[STARTUP MIGRATION] Schema check note: {e}")
     except Exception as e:

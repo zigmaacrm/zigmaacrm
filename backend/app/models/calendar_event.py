@@ -12,6 +12,8 @@ class CalendarEvent(TimeStampedBase):
     start_time = Column(String(50), nullable=False)          # ISO format e.g. "2026-10-16T10:00"
     end_time = Column(String(50), nullable=True)            # ISO format e.g. "2026-10-16T11:00"
     meeting_link = Column(String(500), nullable=True)        # e.g. "https://meet.google.com/..."
+    meet_link = Column(String(500), nullable=True)           # e.g. "https://meet.google.com/..."
+    google_event_id = Column(String(255), nullable=True, index=True) # Remote Google Calendar Event ID
     location = Column(String(500), nullable=True)
     attendee_name = Column(String(255), nullable=True)
     attendee_email = Column(String(255), nullable=True)

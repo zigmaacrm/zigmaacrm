@@ -9,7 +9,9 @@ from app.core.database import get_db
 from app.models.calendar_event import CalendarEvent
 from app.models.contact import Contact
 from app.models.activity import Activity
-from app.models.organization_user import Organization
+from app.models.organization_user import Organization, User
+from app.api.deps import get_optional_current_user
+from app.api.v1.integrations_google import create_google_calendar_event, delete_google_calendar_event
 
 router = APIRouter()
 
@@ -35,6 +37,8 @@ class CalendarEventOut(BaseModel):
     start_time: str
     end_time: Optional[str] = None
     meeting_link: Optional[str] = None
+    meet_link: Optional[str] = None
+    google_event_id: Optional[str] = None
     location: Optional[str] = None
     meet_url: Optional[str] = None
     attendee_name: Optional[str] = None
@@ -50,7 +54,7 @@ class CalendarEventOut(BaseModel):
         from_attributes = True
 
 def _serialize_event(e: CalendarEvent) -> dict:
-    meet = e.meeting_link or (e.location if e.location and "http" in e.location else None)
+    meet = e.meet_link or e.meeting_link or (e.location if e.location and "http" in e.location else None)
     return {
         "id": e.id,
         "title": e.title,
@@ -58,6 +62,8 @@ def _serialize_event(e: CalendarEvent) -> dict:
         "start_time": e.start_time,
         "end_time": e.end_time or e.start_time,
         "meeting_link": meet,
+        "meet_link": meet,
+        "google_event_id": e.google_event_id,
         "location": e.location or meet or "Online Google Meet",
         "meet_url": meet,
         "attendee_name": e.attendee_name or "",
@@ -66,7 +72,7 @@ def _serialize_event(e: CalendarEvent) -> dict:
         "lead_or_deal": e.lead_or_deal or "",
         "notes": e.notes or "",
         "description": e.notes or "",
-        "google_calendar_synced": bool(e.google_calendar_synced),
+        "google_calendar_synced": bool(e.google_calendar_synced or e.google_event_id),
         "created_at": e.created_at
     }
 
@@ -87,6 +93,7 @@ async def get_calendar_events(
 @router.post("/events", response_model=CalendarEventOut, status_code=status.HTTP_201_CREATED)
 async def create_calendar_event(
     payload: CalendarEventCreate,
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     if not payload.title or not payload.title.strip():
@@ -112,9 +119,12 @@ async def create_calendar_event(
             target_org_id = contact.organization_id
 
     if not target_org_id:
-        res = await db.execute(select(Organization))
-        org = res.scalars().first()
-        target_org_id = org.id if org else None
+        if current_user and current_user.organization_id:
+            target_org_id = current_user.organization_id
+        else:
+            res = await db.execute(select(Organization))
+            org = res.scalars().first()
+            target_org_id = org.id if org else None
 
     # Derive attendee name and email if empty and contact exists
     att_name = payload.attendee_name
@@ -129,6 +139,43 @@ async def create_calendar_event(
             company_str = f" ({contact.company_name})" if contact.company_name else ""
             lead_deal = f"[Contact] {contact.full_name}{company_str}"
 
+    # Auto-Sync with Google Calendar if current user or active workspace user has Google connected
+    sync_user = current_user
+    if not sync_user or not sync_user.is_google_connected:
+        u_query = select(User).where(User.is_google_connected == True)
+        if target_org_id:
+            u_query = u_query.where(User.organization_id == target_org_id)
+        u_res = await db.execute(u_query)
+        connected_u = u_res.scalars().first()
+        if connected_u:
+            sync_user = connected_u
+
+    google_event_id = None
+    meet_link = clean_meet or None
+
+    if sync_user and sync_user.is_google_connected:
+        try:
+            gcal_res = await create_google_calendar_event(
+                user=sync_user,
+                event_data={
+                    "title": payload.title.strip(),
+                    "description": combined_notes,
+                    "start_time": payload.start_time,
+                    "end_time": payload.end_time or payload.start_time,
+                    "attendee_name": att_name,
+                    "attendee_email": att_email
+                },
+                db=db
+            )
+            if gcal_res.get("success"):
+                google_event_id = gcal_res.get("google_event_id")
+                if gcal_res.get("meet_link"):
+                    meet_link = gcal_res.get("meet_link")
+                    clean_loc = meet_link
+                clean_meet = meet_link or clean_meet
+        except Exception as ge:
+            print(f"[Google Calendar Sync Warning]: {ge}")
+
     event = CalendarEvent(
         organization_id=target_org_id,
         title=payload.title.strip(),
@@ -136,13 +183,17 @@ async def create_calendar_event(
         start_time=payload.start_time,
         end_time=payload.end_time or payload.start_time,
         meeting_link=clean_meet or None,
+        meet_link=meet_link or clean_meet or None,
+        google_event_id=google_event_id,
         location=clean_loc or "Online Google Meet",
         attendee_name=att_name or None,
         attendee_email=att_email or None,
         contact_id=payload.contact_id or None,
         lead_or_deal=lead_deal or None,
         notes=combined_notes or None,
-        google_calendar_synced=bool(payload.google_calendar_synced)
+        google_calendar_synced=bool(google_event_id or payload.google_calendar_synced),
+        owner_id=sync_user.id if sync_user else None,
+        owner_name=sync_user.full_name if (sync_user and sync_user.full_name) else "Mohamed Thoufiq"
     )
 
     db.add(event)
@@ -167,7 +218,7 @@ async def create_calendar_event(
             contact_id=payload.contact_id,
             lead_id=None,
             deal_id=None,
-            user_id=None,
+            user_id=sync_user.id if sync_user else None,
             type="MEETING",
             notes=activity_text,
             status="SCHEDULED",
@@ -184,12 +235,34 @@ async def create_calendar_event(
 @router.delete("/events/{event_id}")
 async def delete_calendar_event(
     event_id: str,
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     res = await db.execute(select(CalendarEvent).where(CalendarEvent.id == event_id))
     event = res.scalar_one_or_none()
     if not event:
         raise HTTPException(status_code=404, detail="Calendar event not found")
+
+    # If linked to Google Calendar, delete remotely via Google API
+    if event.google_event_id:
+        sync_user = current_user
+        if not sync_user or not sync_user.is_google_connected:
+            if event.owner_id:
+                u_res = await db.execute(select(User).where(User.id == event.owner_id))
+                sync_user = u_res.scalar_one_or_none()
+            if not sync_user or not sync_user.is_google_connected:
+                u_res = await db.execute(select(User).where(User.is_google_connected == True))
+                sync_user = u_res.scalars().first()
+
+        if sync_user and sync_user.is_google_connected:
+            try:
+                await delete_google_calendar_event(
+                    user=sync_user,
+                    google_event_id=event.google_event_id,
+                    db=db
+                )
+            except Exception as ge:
+                print(f"[Google Calendar Delete Warning]: {ge}")
 
     await db.delete(event)
     await db.commit()

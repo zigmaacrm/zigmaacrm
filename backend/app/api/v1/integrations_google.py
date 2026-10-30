@@ -7,6 +7,7 @@ from typing import Optional
 import urllib.parse
 import httpx
 import logging
+import uuid
 
 from app.core.config import settings
 from app.core.database import get_db
@@ -227,3 +228,203 @@ async def disconnect_google(
         await db.rollback()
         logger.error(f"Error disconnecting Google integration: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to disconnect Google account.")
+
+async def ensure_fresh_google_token(user: User, db: AsyncSession) -> Optional[str]:
+    """
+    Returns a valid Google OAuth access token for the given user.
+    If access token is expired or close to expiry (within 60s), refreshes it using refresh_token.
+    """
+    if not user:
+        return None
+
+    # Check User model or fallback to UserIntegration
+    refresh_token = user.google_refresh_token
+    access_token = user.google_access_token
+    token_expiry = user.google_token_expiry
+    is_connected = user.is_google_connected
+
+    if not is_connected and not refresh_token and not access_token:
+        int_res = await db.execute(select(UserIntegration).where(UserIntegration.user_id == user.id))
+        integration = int_res.scalar_one_or_none()
+        if integration and integration.is_google_connected:
+            refresh_token = integration.google_refresh_token
+            access_token = integration.google_access_token
+            token_expiry = integration.google_token_expiry
+            is_connected = True
+
+    if not is_connected or (not access_token and not refresh_token):
+        return None
+
+    now = datetime.utcnow()
+    # Check if token is expired or will expire soon
+    needs_refresh = False
+    if not access_token:
+        needs_refresh = True
+    elif token_expiry and (token_expiry - now).total_seconds() < 60:
+        needs_refresh = True
+
+    if needs_refresh and refresh_token:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                token_resp = await client.post(
+                    GOOGLE_TOKEN_URL,
+                    data={
+                        "client_id": settings.GOOGLE_CLIENT_ID,
+                        "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                        "refresh_token": refresh_token,
+                        "grant_type": "refresh_token"
+                    }
+                )
+                if token_resp.status_code == 200:
+                    token_data = token_resp.json()
+                    access_token = token_data.get("access_token")
+                    expires_in = token_data.get("expires_in", 3600)
+                    token_expiry = datetime.utcnow() + timedelta(seconds=expires_in)
+
+                    user.google_access_token = access_token
+                    user.google_token_expiry = token_expiry
+                    user.is_google_connected = True
+
+                    int_res = await db.execute(select(UserIntegration).where(UserIntegration.user_id == user.id))
+                    integration = int_res.scalar_one_or_none()
+                    if integration:
+                        integration.google_access_token = access_token
+                        integration.google_token_expiry = token_expiry
+                        integration.is_google_connected = True
+
+                    await db.commit()
+                    logger.info(f"Refreshed Google OAuth token for user {user.id}")
+                else:
+                    logger.warning(f"Failed to refresh Google token: {token_resp.text}")
+        except Exception as e:
+            logger.error(f"Error during Google token refresh: {e}")
+
+    return access_token
+
+async def create_google_calendar_event(
+    user: User,
+    event_data: dict,
+    db: AsyncSession
+) -> dict:
+    """
+    Creates an event in the user's primary Google Calendar with Google Meet enabled.
+    Returns: dict with google_event_id, meet_link, html_link, or error details.
+    """
+    token = await ensure_fresh_google_token(user, db)
+    if not token:
+        return {"success": False, "error": "No valid Google OAuth token available for user"}
+
+    title = event_data.get("title") or "Meeting"
+    description = event_data.get("description") or event_data.get("notes") or ""
+    start_time = event_data.get("start_time")
+    end_time = event_data.get("end_time") or start_time
+
+    # Normalize ISO format: Google Calendar requires RFC3339 (e.g. 2026-10-30T10:00:00)
+    def to_rfc3339(ts: Optional[str]) -> str:
+        if not ts:
+            return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+        c = ts.strip().replace(" ", "T")
+        if len(c) == 16:
+            c = f"{c}:00"
+        return c
+
+    start_iso = to_rfc3339(start_time)
+    end_iso = to_rfc3339(end_time)
+
+    body = {
+        "summary": title,
+        "description": description,
+        "start": {
+            "dateTime": start_iso,
+            "timeZone": "Asia/Kolkata"
+        },
+        "end": {
+            "dateTime": end_iso,
+            "timeZone": "Asia/Kolkata"
+        },
+        "conferenceData": {
+            "createRequest": {
+                "requestId": f"zgm-{uuid.uuid4().hex[:12]}",
+                "conferenceSolutionKey": {
+                    "type": "hangoutsMeet"
+                }
+            }
+        }
+    }
+
+    attendee_email = event_data.get("attendee_email")
+    attendee_name = event_data.get("attendee_name")
+    if attendee_email and "@" in attendee_email:
+        body["attendees"] = [{"email": attendee_email, "displayName": attendee_name or attendee_email}]
+
+    url = "https://www.googleapis.com/calendar/v3/calendars/primary/events?conferenceDataVersion=1"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, headers=headers, json=body)
+            if resp.status_code in [200, 201]:
+                data = resp.json()
+                google_id = data.get("id")
+                # Extract Google Meet Link
+                meet_link = data.get("hangoutLink")
+                if not meet_link:
+                    entry_points = data.get("conferenceData", {}).get("entryPoints", [])
+                    for ep in entry_points:
+                        if ep.get("entryPointType") == "video" and ep.get("uri"):
+                            meet_link = ep.get("uri")
+                            break
+                html_link = data.get("htmlLink")
+
+                logger.info(f"Successfully created Google Calendar event {google_id} with meet {meet_link}")
+                return {
+                    "success": True,
+                    "google_event_id": google_id,
+                    "meet_link": meet_link,
+                    "html_link": html_link
+                }
+            else:
+                logger.warning(f"Google Calendar event creation returned status {resp.status_code}: {resp.text}")
+                return {"success": False, "error": resp.text, "status_code": resp.status_code}
+    except Exception as e:
+        logger.error(f"Failed to create Google Calendar event: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
+
+async def delete_google_calendar_event(
+    user: User,
+    google_event_id: str,
+    db: AsyncSession
+) -> bool:
+    """
+    Deletes an event from the user's primary Google Calendar by Google event ID.
+    Ignores 404/410 if already deleted remotely.
+    """
+    if not google_event_id:
+        return False
+
+    token = await ensure_fresh_google_token(user, db)
+    if not token:
+        logger.warning(f"Cannot delete Google event {google_event_id}: user has no valid token")
+        return False
+
+    url = f"https://www.googleapis.com/calendar/v3/calendars/primary/events/{google_event_id}"
+    headers = {"Authorization": f"Bearer {token}"}
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.delete(url, headers=headers)
+            if resp.status_code in [200, 204]:
+                logger.info(f"Successfully deleted Google Calendar event {google_event_id}")
+                return True
+            elif resp.status_code in [404, 410]:
+                logger.info(f"Google event {google_event_id} already deleted remotely (status {resp.status_code})")
+                return True
+            else:
+                logger.warning(f"Google Calendar delete returned status {resp.status_code}: {resp.text}")
+                return False
+    except Exception as e:
+        logger.error(f"Failed to delete Google Calendar event {google_event_id}: {e}", exc_info=True)
+        return False
