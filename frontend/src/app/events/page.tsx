@@ -27,6 +27,24 @@ import { api, formatGoogleCalendarUrl, downloadIcsFile } from "@/lib/api";
 import { CalendarEvent, Lead, Deal } from "@/lib/mockData";
 import { useToast } from "@/components/common/ToastProvider";
 
+function getEventCalendarUrl(googleEventId?: string, googleEmail?: string | null): string {
+  if (!googleEventId) {
+    return googleEmail
+      ? `https://calendar.google.com/calendar/r?authuser=${encodeURIComponent(googleEmail)}`
+      : "https://calendar.google.com";
+  }
+  try {
+    const raw = googleEmail ? `${googleEventId} ${googleEmail}` : googleEventId;
+    const eid = typeof window !== "undefined" ? btoa(raw).replace(/=+$/, "") : "";
+    const authParam = googleEmail ? `&authuser=${encodeURIComponent(googleEmail)}` : "";
+    return `https://calendar.google.com/calendar/event?eid=${eid}${authParam}`;
+  } catch {
+    return googleEmail
+      ? `https://calendar.google.com/calendar/r?authuser=${encodeURIComponent(googleEmail)}`
+      : "https://calendar.google.com";
+  }
+}
+
 export default function EventsCalendarPage() {
   const { toast, confirm } = useToast();
   const [mounted, setMounted] = useState(false);
@@ -806,11 +824,11 @@ export default function EventsCalendarPage() {
 
                             {isSynced && (
                               <a
-                                href={googleEmail ? `https://calendar.google.com/calendar/r?authuser=${encodeURIComponent(googleEmail)}` : "https://calendar.google.com"}
+                                href={getEventCalendarUrl(ev.google_event_id, googleEmail)}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="px-2 py-1 rounded-md text-[10px] font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 flex items-center gap-1 shrink-0 transition-colors"
-                                title={`Synced with Google Calendar (${googleEmail || "Active"}). Click to open in Google Calendar.`}
+                                className="px-2 py-1 rounded-md text-[10px] font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 flex items-center gap-1 shrink-0 transition-colors cursor-pointer"
+                                title={`Synced with Google Calendar (${googleEmail || "Active"}). Click to open this exact event in Google Calendar.`}
                               >
                                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                                 <span>Synced</span>
