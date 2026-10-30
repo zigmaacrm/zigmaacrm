@@ -17,7 +17,8 @@ import {
   CalendarCheck,
   PhoneCall,
   Sparkles,
-  CalendarDays
+  CalendarDays,
+  AlertTriangle
 } from "lucide-react";
 import Sidebar from "@/components/layout/Sidebar";
 import Header from "@/components/layout/Header";
@@ -42,16 +43,35 @@ export default function EventsCalendarPage() {
   const [drawerDate, setDrawerDate] = useState<Date | null>(null);
   const [drawerHour, setDrawerHour] = useState<number>(10);
 
+  // Google Calendar Integration Status
+  const [googleConnected, setGoogleConnected] = useState(false);
+  const [googleEmail, setGoogleEmail] = useState<string | null>(null);
+
   const loadAllData = useCallback(async () => {
     try {
-      const [eventsData, leadsData, dealsData] = await Promise.all([
+      const [eventsData, leadsData, dealsData, gStatus] = await Promise.all([
         api.getEvents(),
         api.getLeads(),
-        api.getDeals()
+        api.getDeals(),
+        api.getGoogleStatus().catch(() => null)
       ]);
       setEvents(eventsData || []);
       setLeads(leadsData || []);
       setDeals(dealsData || []);
+
+      if (gStatus && gStatus.connected) {
+        setGoogleConnected(true);
+        setGoogleEmail(gStatus.email);
+      } else {
+        const u = api.getCurrentUser();
+        if (u?.is_google_connected && u?.google_email) {
+          setGoogleConnected(true);
+          setGoogleEmail(u.google_email);
+        } else {
+          setGoogleConnected(false);
+          setGoogleEmail(null);
+        }
+      }
     } catch (e) {
       console.error("Error loading calendar data", e);
     }
@@ -279,10 +299,21 @@ export default function EventsCalendarPage() {
         <main className="flex-1 overflow-y-auto p-6 lg:p-8 space-y-6 custom-scrollbar bg-[#F8FAFC] dark:bg-[#0b0f19]">
           {/* Controls & Actions Row */}
           <div className="flex items-center justify-between gap-4">
-            <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-semibold shadow-2xs">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              Google Calendar Ready
-            </span>
+            {googleConnected ? (
+              <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-semibold shadow-2xs">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span>Google Calendar Synced: {googleEmail || "Active"}</span>
+              </span>
+            ) : (
+              <a
+                href="/settings?tab=email-sync"
+                className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
+                title="Google Calendar is not synced yet. Click to connect your Google account in Settings."
+              >
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                <span>Google Calendar Not Synced (Click to Connect)</span>
+              </a>
+            )}
 
             <div className="flex items-center gap-2.5">
               <button

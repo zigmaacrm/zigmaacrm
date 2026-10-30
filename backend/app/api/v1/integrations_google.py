@@ -319,13 +319,15 @@ async def create_google_calendar_event(
     start_time = event_data.get("start_time")
     end_time = event_data.get("end_time") or start_time
 
-    # Normalize ISO format: Google Calendar requires RFC3339 (e.g. 2026-10-30T10:00:00)
+    # Normalize ISO format: Google Calendar requires RFC3339 with timezone offset (e.g. 2026-10-30T10:00:00+05:30)
     def to_rfc3339(ts: Optional[str]) -> str:
         if not ts:
-            return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+            return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S+05:30")
         c = ts.strip().replace(" ", "T")
         if len(c) == 16:
             c = f"{c}:00"
+        if not c.endswith("Z") and "+" not in c[10:] and "-" not in c[10:]:
+            c = f"{c}+05:30"
         return c
 
     start_iso = to_rfc3339(start_time)
