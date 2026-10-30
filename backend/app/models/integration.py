@@ -14,3 +14,4 @@ class UserIntegration(TimeStampedBase):
     is_google_connected = Column(Boolean, default=False)
 
     user = relationship("User", backref="user_integration")
+

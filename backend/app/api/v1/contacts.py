@@ -9,7 +9,7 @@ from app.models.contact import Contact
 from app.models.deal import Deal
 from app.models.activity import Activity
 from app.models.organization_user import Organization, User
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_optional_current_user
 from app.schemas.contact_schema import ContactCreate, ContactOut
 
 router = APIRouter()
@@ -598,6 +598,7 @@ class SendEmailRequest(BaseModel):
 async def send_contact_email(
     contact_id: str,
     req: SendEmailRequest,
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     res = await db.execute(select(Contact).where(Contact.id == contact_id))
@@ -611,32 +612,70 @@ async def send_contact_email(
     if not req.subject.strip() or not req.body.strip():
         raise HTTPException(status_code=400, detail="Subject and body cannot be empty")
 
-    # Send email using SMTP service (with graceful local mock fallback if credentials not configured)
+    sender_email = (
+        (current_user.google_email if current_user and current_user.google_email else None)
+        or (current_user.email if current_user and current_user.email else None)
+        or "team@zigmaacrm.com"
+    )
+    sender_name = (current_user.full_name if current_user and current_user.full_name else None) or contact.assigned_user_name or "Team"
+
+    # Send email using Gmail API (if Google OAuth connected) or SMTP service / fallback
     sent_successfully = False
-    from app.core.config import settings
-    if settings.SMTP_USER and settings.SMTP_PASSWORD:
+    if current_user and current_user.is_google_connected and current_user.google_access_token:
         try:
-            from app.core.email import send_email_async
-            html_body = f"""
-            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1e293b; max-width: 600px; padding: 20px;">
-                <p>{req.body.replace(chr(10), '<br/>')}</p>
-                <br/>
-                <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
-                <p style="font-size: 12px; color: #94a3b8;">Sent via Zigmaa CRM by {contact.assigned_user_name or 'Team'}</p>
-            </div>
-            """
-            await asyncio.wait_for(send_email_async(contact.email, req.subject, html_body), timeout=5.0)
+            import base64
+            from email.mime.text import MIMEText
+            from email.mime.multipart import MIMEMultipart
+            import httpx
+
+            message = MIMEMultipart("alternative")
+            message["to"] = contact.email
+            message["from"] = f"{sender_name} <{sender_email}>"
+            message["subject"] = req.subject
+            part = MIMEText(req.body, "plain")
+            message.attach(part)
+            raw = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
+
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                g_res = await client.post(
+                    "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+                    headers={"Authorization": f"Bearer {current_user.google_access_token}"},
+                    json={"raw": raw}
+                )
+                if g_res.status_code in [200, 201]:
+                    sent_successfully = True
+                    print(f"[Gmail API]: Successfully dispatched email to {contact.email} from {sender_email}")
+                else:
+                    print(f"[Gmail API Warning]: status={g_res.status_code}, text={g_res.text}")
+        except Exception as ge:
+            print(f"[Gmail API Error]: {ge}")
+
+    if not sent_successfully:
+        from app.core.config import settings
+        if settings.SMTP_USER and settings.SMTP_PASSWORD:
+            try:
+                import asyncio
+                from app.core.email import send_email_async
+                html_body = f"""
+                <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1e293b; max-width: 600px; padding: 20px;">
+                    <p>{req.body.replace(chr(10), '<br/>')}</p>
+                    <br/>
+                    <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
+                    <p style="font-size: 12px; color: #94a3b8;">Sent via Zigmaa CRM by {sender_name}</p>
+                </div>
+                """
+                await asyncio.wait_for(send_email_async(contact.email, req.subject, html_body), timeout=5.0)
+                sent_successfully = True
+            except Exception as e:
+                print(f"[SMTP Send Warning]: {e}, logged mock interaction cleanly.")
+        else:
+            print(f"[Local Mock Email]: From={sender_email}, To={contact.email}, Subject={req.subject}, Body length={len(req.body)}")
             sent_successfully = True
-        except Exception as e:
-            print(f"[SMTP Send Warning]: {e}, logged mock interaction cleanly.")
-    else:
-        print(f"[Local Mock Email]: To={contact.email}, Subject={req.subject}, Body length={len(req.body)}")
-        sent_successfully = True
 
     # Audit & Record to Activity Timeline
-    activity_note = f"Sent Email: \"{req.subject}\"\n\n{req.body}"
+    activity_note = f"Sent Email from {sender_email}: \"{req.subject}\"\n\n{req.body}"
     activity = Activity(
-        organization_id=contact.organization_id or "default-org",
+        organization_id=contact.organization_id or (current_user.organization_id if current_user else "default-org"),
         contact_id=contact.id,
         lead_id=None,
         type="EMAIL",
@@ -649,6 +688,7 @@ async def send_contact_email(
     return {
         "status": "success",
         "message": f"Email successfully sent to {contact.email}",
+        "sender": sender_email,
         "recipient": contact.email,
         "subject": req.subject,
         "activity": {

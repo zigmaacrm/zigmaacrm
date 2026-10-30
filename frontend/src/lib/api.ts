@@ -1904,7 +1904,10 @@ export const zigmaaApi = {
   async sendContactEmail(id: number | string, data: { subject: string; body: string }): Promise<any> {
     const res = await fetch(`${API_BASE}/contacts/${id}/send-email`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...getAuthHeaders()
+      },
       body: JSON.stringify(data)
     });
 
