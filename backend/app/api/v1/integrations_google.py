@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -8,6 +8,8 @@ import urllib.parse
 import httpx
 import logging
 import uuid
+import json
+import base64
 
 from app.core.config import settings
 from app.core.database import get_db
@@ -32,11 +34,13 @@ SCOPES = [
 
 @router.get("/auth-url")
 async def get_google_auth_url(
+    request: Request,
+    redirect_origin: Optional[str] = Query(None),
     current_user: User = Depends(get_current_user)
 ):
     """
     Generates the Google OAuth authorization URL with required Gmail and Calendar scopes.
-    Embeds current user ID in state for verification on callback.
+    Embeds current user ID and frontend origin in state for verification and accurate return redirect on callback.
     """
     client_id = settings.GOOGLE_CLIENT_ID
     if not client_id:
@@ -45,6 +49,37 @@ async def get_google_auth_url(
             detail="Google Client ID is not configured in backend environment."
         )
 
+    # Determine caller frontend origin dynamically
+    origin = None
+    if redirect_origin and redirect_origin.startswith("http"):
+        origin = redirect_origin.strip().rstrip("/")
+    else:
+        req_origin = request.headers.get("origin")
+        req_referer = request.headers.get("referer")
+        if req_origin and req_origin.startswith("http"):
+            origin = req_origin.strip().rstrip("/")
+        elif req_referer and req_referer.startswith("http"):
+            parsed = urllib.parse.urlparse(req_referer)
+            origin = f"{parsed.scheme}://{parsed.netloc}"
+        elif settings.FRONTEND_URL and settings.FRONTEND_URL != "http://localhost:3000":
+            origin = settings.FRONTEND_URL.strip().rstrip("/")
+        else:
+            host_hdr = request.headers.get("host", "")
+            if "onrender.com" in host_hdr or "vercel" in host_hdr:
+                origin = "https://zigmaacrm.vercel.app"
+            else:
+                origin = settings.FRONTEND_URL or "http://localhost:3000"
+
+    origin = (origin or "http://localhost:3000").rstrip("/")
+
+    # Encode state with user id and origin
+    state_payload = {
+        "uid": str(current_user.id),
+        "origin": origin
+    }
+    state_bytes = json.dumps(state_payload).encode("utf-8")
+    state_token = base64.urlsafe_b64encode(state_bytes).decode("ascii").rstrip("=")
+
     params = {
         "client_id": client_id,
         "redirect_uri": settings.GOOGLE_REDIRECT_URI,
@@ -52,7 +87,7 @@ async def get_google_auth_url(
         "scope": " ".join(SCOPES),
         "access_type": "offline",
         "prompt": "consent",
-        "state": str(current_user.id)
+        "state": state_token
     }
 
     url = f"{GOOGLE_AUTH_BASE}?{urllib.parse.urlencode(params)}"
@@ -60,6 +95,7 @@ async def get_google_auth_url(
 
 @router.get("/callback")
 async def google_oauth_callback(
+    request: Request,
     code: Optional[str] = Query(None),
     state: Optional[str] = Query(None),
     error: Optional[str] = Query(None),
@@ -70,17 +106,41 @@ async def google_oauth_callback(
     Exchanges code for tokens, retrieves user's Google email, and saves credentials.
     Redirects back to frontend Settings page.
     """
-    redirect_fallback = f"{settings.FRONTEND_URL}/settings?tab=email_sync"
+    frontend_origin = None
+    user_id = None
+
+    if state:
+        state_str = state.strip()
+        try:
+            padded = state_str + "=" * ((4 - len(state_str) % 4) % 4)
+            decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+            data = json.loads(decoded)
+            if isinstance(data, dict):
+                user_id = data.get("uid")
+                frontend_origin = data.get("origin")
+        except Exception:
+            user_id = state_str
+
+    if not frontend_origin:
+        if settings.FRONTEND_URL and settings.FRONTEND_URL != "http://localhost:3000":
+            frontend_origin = settings.FRONTEND_URL
+        else:
+            host_hdr = request.headers.get("host", "")
+            if "onrender.com" in host_hdr:
+                frontend_origin = "https://zigmaacrm.vercel.app"
+            else:
+                frontend_origin = settings.FRONTEND_URL or "http://localhost:3000"
+
+    frontend_origin = (frontend_origin or "http://localhost:3000").rstrip("/")
+    redirect_fallback = f"{frontend_origin}/settings?tab=email-sync"
 
     if error or not code:
         logger.warning(f"Google OAuth cancelled or returned error: {error}")
         return RedirectResponse(url=f"{redirect_fallback}&sync=error&message={urllib.parse.quote(error or 'Missing authorization code')}")
 
-    if not state:
+    if not user_id:
         logger.error("Google OAuth callback missing state parameter (user_id)")
         return RedirectResponse(url=f"{redirect_fallback}&sync=error&message=Missing+state+parameter")
-
-    user_id = state.strip()
 
     # Load target user
     res = await db.execute(select(User).where(User.id == user_id))

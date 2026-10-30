@@ -1107,7 +1107,11 @@ export const zigmaaApi = {
 
   // ===== GOOGLE OAUTH INTEGRATION (GMAIL & CALENDAR) =====
   async getGoogleAuthUrl(): Promise<{ url: string }> {
-    const res = await fetch(`${API_BASE}/integrations/google/auth-url`, {
+    const origin = typeof window !== "undefined" && window.location?.origin
+      ? window.location.origin
+      : "";
+    const qs = origin ? `?redirect_origin=${encodeURIComponent(origin)}` : "";
+    const res = await fetch(`${API_BASE}/integrations/google/auth-url${qs}`, {
       headers: getAuthHeaders(),
       cache: "no-store"
     });
