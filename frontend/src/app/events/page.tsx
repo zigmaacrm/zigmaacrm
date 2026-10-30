@@ -317,9 +317,14 @@ export default function EventsCalendarPage() {
 
             <div className="flex items-center gap-2.5">
               <button
-                onClick={() => window.open("https://calendar.google.com", "_blank")}
+                onClick={() => {
+                  const targetUrl = googleEmail
+                    ? `https://calendar.google.com/calendar/r?authuser=${encodeURIComponent(googleEmail)}`
+                    : "https://calendar.google.com";
+                  window.open(targetUrl, "_blank");
+                }}
                 className="flex items-center gap-1.5 px-3.5 py-2 bg-white border border-slate-200 text-slate-700 hover:border-red-500 hover:text-red-600 rounded-xl text-xs font-semibold shadow-xs transition-colors cursor-pointer"
-                title="Open Google Calendar in New Tab"
+                title={`Open Google Calendar (${googleEmail || "Active Account"})`}
               >
                 <ExternalLink className="w-3.5 h-3.5" />
                 <span>Open Google Calendar</span>
@@ -800,13 +805,16 @@ export default function EventsCalendarPage() {
                             )}
 
                             {isSynced && (
-                              <span
-                                className="px-2 py-1 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1 shrink-0"
-                                title="Synchronized with Google Calendar"
+                              <a
+                                href={googleEmail ? `https://calendar.google.com/calendar/r?authuser=${encodeURIComponent(googleEmail)}` : "https://calendar.google.com"}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-2 py-1 rounded-md text-[10px] font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 flex items-center gap-1 shrink-0 transition-colors"
+                                title={`Synced with Google Calendar (${googleEmail || "Active"}). Click to open in Google Calendar.`}
                               >
                                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                                 <span>Synced</span>
-                              </span>
+                              </a>
                             )}
 
                             <button
