@@ -3138,9 +3138,13 @@ export const zigmaaApi = {
     return { status: "success", count: 0, messages: [] };
   },
 
-  async getWhatsAppConversations(limit = 30): Promise<any> {
+  async getWhatsAppConversations(limit = 30, assigned_user_id?: string): Promise<any> {
     try {
-      const res = await fetch(`${API_BASE}/whatsapp/conversations?limit=${limit}`, {
+      let url = `${API_BASE}/whatsapp/conversations?limit=${limit}`;
+      if (assigned_user_id && assigned_user_id !== "all") {
+        url += `&assigned_user_id=${encodeURIComponent(assigned_user_id)}`;
+      }
+      const res = await fetch(url, {
         headers: {
           ...getAuthHeaders()
         }
@@ -3152,6 +3156,41 @@ export const zigmaaApi = {
       console.warn("Failed to fetch WhatsApp conversations", e);
     }
     return { status: "success", conversations: [] };
+  },
+
+  async reassignWhatsAppConversation(phoneNumber: string, assignedUserId: string): Promise<any> {
+    try {
+      const res = await fetch(`${API_BASE}/whatsapp/conversations/${encodeURIComponent(phoneNumber)}/assign`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders()
+        },
+        body: JSON.stringify({ assigned_user_id: assignedUserId })
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn("Failed to reassign WhatsApp conversation", e);
+    }
+    return null;
+  },
+
+  async updateMemberWhatsApp(userId: string, data: { whatsapp_phone_number?: string; whatsapp_phone_number_id?: string }): Promise<any> {
+    const res = await fetch(`${API_BASE}/settings/team/${userId}/whatsapp`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        ...getAuthHeaders()
+      },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Failed to update WhatsApp configuration" }));
+      throw new Error(err.detail || "Failed to update WhatsApp configuration");
+    }
+    return await res.json();
   },
 
   async markWhatsAppConversationRead(phoneNumber: string): Promise<any> {

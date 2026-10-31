@@ -31,7 +31,10 @@ import {
   ChevronUp,
   Share2,
   Users,
-  UserPlus
+  UserPlus,
+  MessageSquare,
+  Edit2,
+  X
 } from "lucide-react";
 import Sidebar from "@/components/layout/Sidebar";
 import Header from "@/components/layout/Header";
@@ -57,6 +60,11 @@ export default function SettingsPage() {
   const [showInviteDrawer, setShowInviteDrawer] = useState(false);
   const [activeRole, setActiveRole] = useState<string>("ADMIN");
   const [teamSearchQuery, setTeamSearchQuery] = useState("");
+  // WhatsApp Configuration Modal State
+  const [editingWhatsAppMember, setEditingWhatsAppMember] = useState<any>(null);
+  const [waPhoneNumberInput, setWaPhoneNumberInput] = useState("");
+  const [waPhoneIdInput, setWaPhoneIdInput] = useState("");
+  const [isSavingWa, setIsSavingWa] = useState(false);
 
   // Role Scoping & Settings Tab Permissions
   const resolvedRole = (currentUser?.role || activeRole || "").toLowerCase();
@@ -178,6 +186,41 @@ export default function SettingsPage() {
       console.error("Failed to load team members:", err);
     } finally {
       setLoadingTeam(false);
+    }
+  };
+
+  const openWhatsAppModal = (member: any) => {
+    setEditingWhatsAppMember(member);
+    setWaPhoneNumberInput(member.whatsapp_phone_number || "");
+    setWaPhoneIdInput(member.whatsapp_phone_number_id || "");
+  };
+
+  const handleSaveWhatsAppConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingWhatsAppMember) return;
+    try {
+      setIsSavingWa(true);
+      await api.updateMemberWhatsApp(editingWhatsAppMember.id, {
+        whatsapp_phone_number: waPhoneNumberInput.trim(),
+        whatsapp_phone_number_id: waPhoneIdInput.trim()
+      });
+      toast.success("WhatsApp Updated", `WhatsApp line configured for ${editingWhatsAppMember.full_name}`);
+      setTeamMembers((prev) =>
+        prev.map((m) =>
+          m.id === editingWhatsAppMember.id
+            ? {
+                ...m,
+                whatsapp_phone_number: waPhoneNumberInput.trim(),
+                whatsapp_phone_number_id: waPhoneIdInput.trim()
+              }
+            : m
+        )
+      );
+      setEditingWhatsAppMember(null);
+    } catch (err: any) {
+      toast.error("Failed to update WhatsApp", err.message || "Failed to update WhatsApp configuration");
+    } finally {
+      setIsSavingWa(false);
     }
   };
 
@@ -1090,6 +1133,7 @@ export default function SettingsPage() {
                           <th className="py-3 px-4">Member</th>
                           <th className="py-3 px-4">Role Badge</th>
                           <th className="py-3 px-4 text-center">Assigned Pipeline</th>
+                          <th className="py-3 px-4">WhatsApp Line</th>
                           <th className="py-3 px-4 text-center">Status</th>
                           <th className="py-3 px-4 text-right">Role & Actions</th>
                         </tr>
@@ -1182,6 +1226,43 @@ export default function SettingsPage() {
                                       {member.assigned_leads_count ?? 0} Leads
                                     </span>
                                   </div>
+                                </td>
+
+                                {/* Dedicated WhatsApp Line */}
+                                <td className="py-3.5 px-4 whitespace-nowrap">
+                                  {member.whatsapp_phone_number ? (
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                        <MessageSquare className="w-3 h-3 text-emerald-600" />
+                                        <span>{member.whatsapp_phone_number}</span>
+                                      </span>
+                                      {isAdmin && (
+                                        <button
+                                          type="button"
+                                          onClick={() => openWhatsAppModal(member)}
+                                          className="p-1 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors cursor-pointer"
+                                          title="Edit WhatsApp Line"
+                                        >
+                                          <Edit2 className="w-3 h-3" />
+                                        </button>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div>
+                                      {isAdmin ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => openWhatsAppModal(member)}
+                                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-slate-50 hover:bg-emerald-50 text-slate-500 hover:text-emerald-700 border border-dashed border-slate-300 hover:border-emerald-300 transition-colors cursor-pointer"
+                                        >
+                                          <Plus className="w-3 h-3 text-slate-400" />
+                                          <span>Assign WhatsApp</span>
+                                        </button>
+                                      ) : (
+                                        <span className="text-[11px] text-slate-400 italic">No line assigned</span>
+                                      )}
+                                    </div>
+                                  )}
                                 </td>
 
                                 {/* Status */}
@@ -1780,6 +1861,80 @@ export default function SettingsPage() {
           toast.success("Team Member Added", `${newMember.full_name} is now part of your organization.`);
         }}
       />
+
+      {/* Configure WhatsApp Modal */}
+      {editingWhatsAppMember && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden">
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-emerald-50/50 to-teal-50/50">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-xs">
+                  <MessageSquare className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm">Assign Dedicated WhatsApp Line</h3>
+                  <p className="text-[11px] text-slate-500">{editingWhatsAppMember.full_name} ({editingWhatsAppMember.role})</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingWhatsAppMember(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveWhatsAppConfig} className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  WhatsApp Phone Number <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={waPhoneNumberInput}
+                  onChange={(e) => setWaPhoneNumberInput(e.target.value)}
+                  placeholder="e.g. +91 98765 43210 or +1 555-207-4359"
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">This phone number will be displayed as the sales rep's dedicated WhatsApp line.</p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Meta Phone Number ID <span className="text-slate-400 font-normal">(From Meta App Dashboard)</span>
+                </label>
+                <input
+                  type="text"
+                  value={waPhoneIdInput}
+                  onChange={(e) => setWaPhoneIdInput(e.target.value)}
+                  placeholder="e.g. 1380013568537358"
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 font-mono"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">Meta Graph API ID for routing inbound messages and sending outbound messages from this specific number.</p>
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingWhatsAppMember(null)}
+                  className="px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingWa}
+                  className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  {isSavingWa ? "Saving..." : "Save WhatsApp Line"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Zigmaa 1-Click Connect Email Modal */}
       <ConnectEmailModal

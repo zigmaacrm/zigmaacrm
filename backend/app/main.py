@@ -72,6 +72,11 @@ async def on_startup():
                 await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_google_connected BOOLEAN DEFAULT FALSE;"))
                 await conn.execute(text("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS google_event_id VARCHAR(255);"))
                 await conn.execute(text("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS meet_link VARCHAR(500);"))
+                # WhatsApp Multi-Number Support
+                await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS whatsapp_phone_number VARCHAR(50);"))
+                await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS whatsapp_phone_number_id VARCHAR(100);"))
+                await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS assigned_user_id VARCHAR(36);"))
+                await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS business_phone_number_id VARCHAR(100);"))
             except Exception as e:
                 print(f"[STARTUP MIGRATION] Schema check note: {e}")
     except Exception as e:
@@ -101,7 +106,6 @@ async def health_check():
 async def debug_db():
     from app.core.database import AsyncSessionLocal, db_url
     from sqlalchemy import text
-    import urllib.parse
     masked_url = db_url
     if "@" in masked_url:
         parts = masked_url.split("@")
@@ -131,4 +135,3 @@ async def global_exception_handler(request: Request, exc: Exception):
     response.headers["Access-Control-Allow-Methods"] = "*"
     response.headers["Access-Control-Allow-Headers"] = "*"
     return response
-

@@ -9,13 +9,14 @@ from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, or_
+from sqlalchemy import select, desc, or_, update
 
 from app.core.config import settings
 from app.core.database import get_db
 from app.api.deps import get_optional_current_user
 from app.models.organization_user import User, Organization
 from app.models.contact import Contact
+from app.models.lead_pipeline import Lead
 from app.models.whatsapp import WhatsAppMessage
 from app.models.activity import Activity
 
@@ -74,14 +75,11 @@ def is_generic_or_placeholder_name(name: Optional[str], phone: str) -> bool:
     ]:
         if lower == prefix or lower.startswith(prefix + " (") or lower.startswith(prefix + " +") or lower.startswith(prefix + " ") or lower.startswith(prefix + "_"):
             return True
-    # UUID, hex or purely numeric strings
     if re.match(r"^[0-9a-fA-F-]{8,}$", cleaned):
         return True
-    # Common keyboard mash walks
     for mash in ["asdf", "qwerty", "zxcv", "qwer", "hjkl", "1234", "abcd"]:
         if mash in lower:
             return True
-    # 5 or more consecutive consonants (e.g., random keyboard mashing)
     if re.search(r"[bcdfghjklmnpqrstvwxyz]{5,}", lower):
         return True
     return False
@@ -101,10 +99,15 @@ class WhatsAppMessageOut(BaseModel):
     meta_message_id: Optional[str] = None
     status: str
     contact_id: Optional[str] = None
+    assigned_user_id: Optional[str] = None
+    business_phone_number_id: Optional[str] = None
     created_at: Any
 
     class Config:
         from_attributes = True
+
+class ReassignConversationRequest(BaseModel):
+    assigned_user_id: str
 
 @router.post("/send", status_code=status.HTTP_201_CREATED)
 @router.post("/messages", status_code=status.HTTP_201_CREATED)
@@ -114,9 +117,9 @@ async def send_whatsapp_message(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Outbound WhatsApp Message Dispatch Endpoint
-    POST /api/v1/whatsapp/send and POST /api/v1/whatsapp/messages
-    Dispatches outbound message to Meta Cloud Graph API and records history in whatsapp_messages.
+    Outbound WhatsApp Message Dispatch Endpoint with Multi-Number Support.
+    Uses the authenticated sales rep's dedicated Meta phone_number_id if configured,
+    otherwise falls back to the default organization WABA phone_number_id.
     """
     clean_phone = normalize_phone(payload.phone_number)
     if not clean_phone or len(clean_phone) < 7:
@@ -131,7 +134,6 @@ async def send_whatsapp_message(
             detail="Message body cannot be empty"
         )
 
-    # Determine organization ID
     org_id = payload.organization_id
     if not org_id and current_user:
         org_id = current_user.organization_id
@@ -140,7 +142,6 @@ async def send_whatsapp_message(
         first_org = org_res.scalars().first()
         org_id = first_org.id if first_org else None
 
-    # Resolve contact ID
     contact_id = payload.contact_id
     if not contact_id:
         search_suffix = clean_phone[-10:] if len(clean_phone) >= 10 else clean_phone
@@ -153,8 +154,11 @@ async def send_whatsapp_message(
     delivery_status = "SENT"
     dispatch_error_msg = None
 
-    # Meta Graph API Call with Dynamic Credential Resolution
-    api_token, phone_number_id = get_whatsapp_credentials()
+    api_token, default_phone_number_id = get_whatsapp_credentials()
+    phone_number_id = (
+        (current_user.whatsapp_phone_number_id if current_user and current_user.whatsapp_phone_number_id else None)
+        or default_phone_number_id
+    )
 
     if api_token and phone_number_id:
         url = f"https://graph.facebook.com/v20.0/{phone_number_id}/messages"
@@ -184,8 +188,7 @@ async def send_whatsapp_message(
                 if res.status_code in [200, 201] and "messages" in data:
                     meta_message_id = data["messages"][0].get("id")
                     delivery_status = "SENT"
-                    logger.info(f"[OUTBOUND DISPATCH SUCCESS] Meta Message ID: {meta_message_id} to recipient {clean_phone}")
-                    print(f"[OUTBOUND DISPATCH SUCCESS] Meta Message ID: {meta_message_id} to recipient {clean_phone}")
+                    logger.info(f"[OUTBOUND DISPATCH SUCCESS] Meta Message ID: {meta_message_id} to recipient {clean_phone} via PhoneID {phone_number_id}")
                 else:
                     delivery_status = "FAILED"
                     meta_message_id = f"wamid.failed_{uuid.uuid4().hex[:18]}"
@@ -197,26 +200,21 @@ async def send_whatsapp_message(
                         f"[OUTBOUND META API ERROR] Status {res.status_code}: {dispatch_error_msg} | "
                         f"Recipient: {clean_phone} | PhoneID: {phone_number_id}"
                     )
-                    print(
-                        f"[OUTBOUND META API ERROR] Status {res.status_code}: {dispatch_error_msg} | "
-                        f"Recipient: {clean_phone} | PhoneID: {phone_number_id}"
-                    )
         except Exception as e:
             delivery_status = "FAILED"
             meta_message_id = f"wamid.sim_{uuid.uuid4().hex[:18]}"
             dispatch_error_msg = str(e)
             logger.error(f"[OUTBOUND CONNECTION ERROR] Failed to connect to Meta Graph API: {e}")
-            print(f"[OUTBOUND CONNECTION ERROR] Failed to connect to Meta Graph API: {e}")
     else:
         logger.warning("[OUTBOUND WARNING] WHATSAPP_ACCESS_TOKEN or WHATSAPP_PHONE_NUMBER_ID not configured.")
-        print("[OUTBOUND WARNING] WHATSAPP_ACCESS_TOKEN or WHATSAPP_PHONE_NUMBER_ID not configured.")
         meta_message_id = f"wamid.sim_{uuid.uuid4().hex[:18]}"
         delivery_status = "SENT"
 
-    # Store record in whatsapp_messages table
     wa_message = WhatsAppMessage(
         organization_id=org_id,
         contact_id=contact_id,
+        assigned_user_id=current_user.id if current_user else None,
+        business_phone_number_id=phone_number_id or None,
         phone_number=clean_phone,
         direction="OUTBOUND",
         message_body=payload.message,
@@ -226,7 +224,6 @@ async def send_whatsapp_message(
     )
     db.add(wa_message)
 
-    # Log CRM Activity
     if contact_id:
         activity = Activity(
             organization_id=org_id,
@@ -257,6 +254,8 @@ async def send_whatsapp_message(
             "meta_message_id": wa_message.meta_message_id,
             "status": wa_message.status,
             "contact_id": wa_message.contact_id,
+            "assigned_user_id": wa_message.assigned_user_id,
+            "business_phone_number_id": wa_message.business_phone_number_id,
             "created_at": wa_message.created_at.isoformat() if wa_message.created_at else None
         }
     }
@@ -296,6 +295,8 @@ async def get_whatsapp_messages(
                 "meta_message_id": m.meta_message_id,
                 "status": m.status,
                 "contact_id": m.contact_id,
+                "assigned_user_id": m.assigned_user_id,
+                "business_phone_number_id": m.business_phone_number_id,
                 "created_at": m.created_at.isoformat() if m.created_at else None
             }
             for m in messages
@@ -304,21 +305,32 @@ async def get_whatsapp_messages(
 
 @router.get("/conversations")
 async def get_whatsapp_conversations(
+    assigned_user_id: Optional[str] = Query(None),
     limit: int = Query(25, le=100),
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Optimized: Retrieve active conversation summaries enriched with contact details using indexed queries.
+    Retrieve active conversation summaries enriched with contact details.
+    Scoped by sales rep / assigned user.
     """
-    # 1. Fetch latest messages ordered by indexed created_at DESC with limit
-    stmt = select(WhatsAppMessage).order_by(desc(WhatsAppMessage.created_at)).limit(limit * 5)
+    stmt = select(WhatsAppMessage)
+
+    # Scoping logic:
+    # 1. If logged in as SALES_REP: only show chats assigned to them
+    if current_user and (current_user.role or "").lower() == "sales_rep":
+        stmt = stmt.where(WhatsAppMessage.assigned_user_id == current_user.id)
+    # 2. If an explicit filter is requested by Admin:
+    elif assigned_user_id and assigned_user_id.lower() != "all":
+        stmt = stmt.where(WhatsAppMessage.assigned_user_id == assigned_user_id)
+
+    stmt = stmt.order_by(desc(WhatsAppMessage.created_at)).limit(limit * 5)
     res = await db.execute(stmt)
     all_msgs = res.scalars().all()
 
     if not all_msgs:
         return {"status": "success", "conversations": []}
 
-    # 2. Extract unique phone numbers and contact IDs to fetch ONLY relevant contacts
     unique_phones = set()
     unique_contact_ids = set()
     for m in all_msgs:
@@ -331,7 +343,6 @@ async def get_whatsapp_conversations(
         if m.contact_id:
             unique_contact_ids.add(m.contact_id)
 
-    # 3. Targeted fetch for contacts matching these conversations
     contact_conditions = []
     if unique_contact_ids:
         contact_conditions.append(Contact.id.in_(list(unique_contact_ids)))
@@ -345,6 +356,13 @@ async def get_whatsapp_conversations(
 
     contacts_by_id = {c.id: c for c in contacts_list}
     contacts_by_phone = {normalize_phone(c.phone): c for c in contacts_list if c.phone}
+
+    # Fetch users for assigned rep metadata
+    rep_ids = {m.assigned_user_id for m in all_msgs if m.assigned_user_id}
+    reps_by_id = {}
+    if rep_ids:
+        u_res = await db.execute(select(User).where(User.id.in_(list(rep_ids))))
+        reps_by_id = {u.id: u for u in u_res.scalars().all()}
 
     conv_map: Dict[str, Any] = {}
     for m in all_msgs:
@@ -360,7 +378,6 @@ async def get_whatsapp_conversations(
                             contact = c_obj
                             break
 
-            # Determine clean contact display name
             prof_name = None
             if contact and isinstance(contact.custom_data, dict):
                 prof_name = contact.custom_data.get("whatsapp_profile_name")
@@ -375,11 +392,20 @@ async def get_whatsapp_conversations(
             company_name = (contact.company_name if contact and contact.company_name else "Direct Prospect")
             email = (contact.email if contact and contact.email else "")
             stage = (contact.lifecycle_stage if contact and contact.lifecycle_stage else "Qualified")
-            assigned_rep = (contact.assigned_user_name if contact and contact.assigned_user_name else "Mohamed Thoufiq")
 
-            # Initials & Color
+            assigned_user_obj = reps_by_id.get(m.assigned_user_id)
+            if assigned_user_obj:
+                rep_name = assigned_user_obj.full_name
+            elif contact and contact.assigned_user_name:
+                rep_name = contact.assigned_user_name
+            else:
+                rep_name = "Unassigned"
+
             parts = contact_name.strip().split()
             initials = (parts[0][0] + (parts[1][0] if len(parts) > 1 else ""))[:2].upper() if parts else "WA"
+
+            rep_parts = rep_name.strip().split()
+            rep_avatar = (rep_parts[0][0] + (rep_parts[1][0] if len(rep_parts) > 1 else ""))[:2].upper() if rep_parts else "SR"
 
             unread_cnt = 1 if m.direction == "INBOUND" and m.status != "READ" else 0
 
@@ -387,6 +413,8 @@ async def get_whatsapp_conversations(
                 "id": f"conv-{m.phone_number}",
                 "phone_number": m.phone_number,
                 "contact_id": contact.id if contact else m.contact_id,
+                "assigned_user_id": m.assigned_user_id,
+                "business_phone_number_id": m.business_phone_number_id,
                 "contact_name": contact_name,
                 "company_name": company_name,
                 "email": email,
@@ -394,9 +422,10 @@ async def get_whatsapp_conversations(
                 "deal_stage": stage,
                 "deal_value": 1480000,
                 "assigned_rep": {
-                    "name": assigned_rep,
-                    "avatar": "MT",
-                    "role": "Platform Owner"
+                    "id": m.assigned_user_id,
+                    "name": rep_name,
+                    "avatar": rep_avatar,
+                    "role": "Sales Representative"
                 },
                 "last_message": m.message_body,
                 "last_message_time": m.created_at.isoformat() if m.created_at else None,
@@ -408,6 +437,54 @@ async def get_whatsapp_conversations(
     return {
         "status": "success",
         "conversations": list(conv_map.values())[:limit]
+    }
+
+@router.patch("/conversations/{phone_number}/assign")
+async def reassign_conversation(
+    phone_number: str,
+    payload: ReassignConversationRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Reassign a WhatsApp conversation and its associated lead/contact to a different team member
+    """
+    clean = normalize_phone(phone_number)
+    search_suffix = clean[-10:] if len(clean) >= 10 else clean
+
+    user_res = await db.execute(select(User).where(User.id == payload.assigned_user_id))
+    user = user_res.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="Target user not found")
+
+    await db.execute(
+        update(WhatsAppMessage)
+        .where(WhatsAppMessage.phone_number.like(f"%{search_suffix}%"))
+        .values(assigned_user_id=user.id)
+    )
+
+    c_res = await db.execute(
+        select(Contact).where(Contact.phone.like(f"%{search_suffix}%")).limit(1)
+    )
+    contact = c_res.scalar_one_or_none()
+    if contact:
+        contact.assigned_user_id = user.id
+        contact.assigned_user_name = user.full_name
+        contact.owner_id = user.id
+        contact.owner_name = user.full_name
+
+    l_res = await db.execute(
+        select(Lead).where(Lead.phone.like(f"%{search_suffix}%")).limit(1)
+    )
+    lead = l_res.scalar_one_or_none()
+    if lead:
+        lead.assigned_user_id = user.id
+
+    await db.commit()
+    return {
+        "status": "success",
+        "message": f"Conversation and lead reassigned to {user.full_name}",
+        "assigned_user_id": user.id,
+        "assigned_user_name": user.full_name
     }
 
 @router.post("/conversations/{phone_number}/read")
@@ -432,4 +509,3 @@ async def mark_conversation_as_read(
         m.status = "READ"
     await db.commit()
     return {"status": "success", "marked_read": len(msgs)}
-

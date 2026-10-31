@@ -1,6 +1,10 @@
 # dependencies
 node_modules/
 **/node_modules/
+.venv/
+venv/
+ENV/
+env/
 /.pnp
 .pnp.*
 .yarn/*

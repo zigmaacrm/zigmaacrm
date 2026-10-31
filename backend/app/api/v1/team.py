@@ -24,6 +24,10 @@ class InviteMemberRequest(BaseModel):
 class UpdateRoleRequest(BaseModel):
     role: str  # admin, sales_rep
 
+class UpdateWhatsAppConfigRequest(BaseModel):
+    whatsapp_phone_number: Optional[str] = None
+    whatsapp_phone_number_id: Optional[str] = None
+
 @router.get("", status_code=status.HTTP_200_OK)
 @router.get("/", status_code=status.HTTP_200_OK)
 async def list_team_members(
@@ -81,12 +85,47 @@ async def list_team_members(
             "email": u.email,
             "role": u.role,
             "is_active": u.is_active,
+            "whatsapp_phone_number": u.whatsapp_phone_number,
+            "whatsapp_phone_number_id": u.whatsapp_phone_number_id,
             "assigned_deals_count": deals_count,
             "assigned_leads_count": contacts_count,
             "created_at": u.created_at.isoformat() if u.created_at else None
         })
 
     return members
+
+@router.put("/{user_id}/whatsapp")
+async def update_member_whatsapp(
+    user_id: str,
+    req: UpdateWhatsAppConfigRequest,
+    db: AsyncSession = Depends(get_db),
+    admin_user: User = Depends(get_current_admin)
+):
+    """
+    Assign/Update WhatsApp configuration (Phone Number & Meta Phone Number ID) for a sales rep
+    """
+    res = await db.execute(
+        select(User).where(
+            User.id == user_id,
+            User.organization_id == admin_user.organization_id
+        )
+    )
+    user = res.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found in your organization.")
+
+    user.whatsapp_phone_number = (req.whatsapp_phone_number or "").strip() or None
+    user.whatsapp_phone_number_id = (req.whatsapp_phone_number_id or "").strip() or None
+    await db.commit()
+    await db.refresh(user)
+
+    return {
+        "status": "success",
+        "message": f"WhatsApp configuration updated for {user.full_name}",
+        "user_id": user.id,
+        "whatsapp_phone_number": user.whatsapp_phone_number,
+        "whatsapp_phone_number_id": user.whatsapp_phone_number_id
+    }
 
 @router.post("/invite", status_code=status.HTTP_201_CREATED)
 async def invite_team_member(
@@ -146,6 +185,8 @@ async def invite_team_member(
                     "email": existing_user.email,
                     "role": existing_user.role,
                     "is_active": existing_user.is_active,
+                    "whatsapp_phone_number": existing_user.whatsapp_phone_number,
+                    "whatsapp_phone_number_id": existing_user.whatsapp_phone_number_id,
                     "assigned_deals_count": 0,
                     "assigned_leads_count": 0,
                     "created_at": existing_user.created_at.isoformat() if existing_user.created_at else None
@@ -209,6 +250,8 @@ async def invite_team_member(
             "email": new_user.email,
             "role": new_user.role,
             "is_active": new_user.is_active,
+            "whatsapp_phone_number": new_user.whatsapp_phone_number,
+            "whatsapp_phone_number_id": new_user.whatsapp_phone_number_id,
             "assigned_deals_count": 0,
             "assigned_leads_count": 0,
             "created_at": new_user.created_at.isoformat() if new_user.created_at else None

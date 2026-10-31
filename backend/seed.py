@@ -5,6 +5,13 @@ from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 from app.core.config import settings
 from app.core.database import Base, AsyncSessionLocal, engine as default_engine
 from app.core.security import get_password_hash

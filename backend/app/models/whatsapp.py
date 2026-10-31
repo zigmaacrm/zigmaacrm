@@ -20,6 +20,8 @@ class WhatsAppMessage(TimeStampedBase):
     id = Column(String(36), primary_key=True, default=generate_uuid)
     organization_id = Column(String(36), ForeignKey("organizations.id"), nullable=True, index=True)
     contact_id = Column(String(36), ForeignKey("contacts.id"), nullable=True, index=True)
+    assigned_user_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
+    business_phone_number_id = Column(String(100), nullable=True, index=True)
     phone_number = Column(String(50), nullable=False, index=True)
     direction = Column(String(20), default="INBOUND", index=True)  # INBOUND, OUTBOUND
     message_body = Column(Text, nullable=False)
@@ -30,3 +32,4 @@ class WhatsAppMessage(TimeStampedBase):
 
     organization = relationship("Organization")
     contact = relationship("Contact")
+    assigned_user = relationship("User")

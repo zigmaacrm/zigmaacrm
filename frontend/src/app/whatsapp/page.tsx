@@ -71,10 +71,12 @@ export interface WhatsAppConversation {
   avatarInitials: string;
   avatarColor: string;
   assignedRep: {
+    id?: string;
     name: string;
     avatar: string;
     role: string;
   };
+  businessPhoneNumberId?: string;
   dealStage: string;
   dealValue: number;
   dealCloseDate: string;
@@ -170,6 +172,17 @@ export default function WhatsAppPage() {
   const [showNewNoteModal, setShowNewNoteModal] = useState(false);
   const [newNoteText, setNewNoteText] = useState("");
 
+  // Multi-Number Rep State
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [teamMembers, setTeamMembers] = useState<any[]>([]);
+  const [selectedRepFilter, setSelectedRepFilter] = useState<string>("ALL");
+  const [isReassigning, setIsReassigning] = useState(false);
+
+  const isAdmin = useMemo(() => {
+    const role = (currentUser?.role || "").toLowerCase();
+    return role.includes("admin") || role.includes("owner");
+  }, [currentUser]);
+
   const [isLoadingConversations, setIsLoadingConversations] = useState(true);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isSending, setIsSending] = useState(false);
@@ -199,6 +212,15 @@ export default function WhatsAppPage() {
     const initials = (parts[0][0] + (parts[1] ? parts[1][0] : "")).toUpperCase();
     const grad = AVATAR_GRADIENTS[index % AVATAR_GRADIENTS.length];
 
+    const repName = raw.assigned_rep?.name || (raw.assigned_user_id ? "Assigned Rep" : "Unassigned");
+    const repParts = repName.trim().split(" ");
+    const repInitials = (repParts[0][0] + (repParts[1] ? repParts[1][0] : "")).toUpperCase();
+
+    const loggedInUser = currentUser || api.getCurrentUser();
+    const isMine = raw.assigned_user_id
+      ? raw.assigned_user_id === loggedInUser?.id
+      : true;
+
     return {
       id: raw.id || `conv-${raw.phone_number}`,
       contact_id: raw.contact_id,
@@ -208,16 +230,18 @@ export default function WhatsAppPage() {
       email: raw.email || "client@whatsapp.crm",
       avatarInitials: initials || "WA",
       avatarColor: grad,
-      assignedRep: raw.assigned_rep || {
-        name: "Mohamed Thoufiq",
-        avatar: "MT",
-        role: "Platform Owner"
+      assignedRep: {
+        id: raw.assigned_user_id || raw.assigned_rep?.id || "",
+        name: repName,
+        avatar: repInitials || "SR",
+        role: raw.assigned_rep?.role || (repName === "Unassigned" ? "Unassigned" : "Sales Rep")
       },
+      businessPhoneNumberId: raw.business_phone_number_id,
       dealStage: raw.deal_stage || "Qualified",
       dealValue: raw.deal_value || 1480000,
       dealCloseDate: "28 Oct 2026",
       unreadCount: raw.unread_count || 0,
-      isAssignedToMe: true,
+      isAssignedToMe: isMine,
       lastMessage: raw.last_message,
       lastMessageTime: raw.last_message_time,
       notes: [
@@ -232,12 +256,14 @@ export default function WhatsAppPage() {
   };
 
   // Load conversations from backend
-  const loadConversations = useCallback(async (isSilent = false) => {
+  const loadConversations = useCallback(async (isSilent = false, repFilter?: string) => {
     if (!isSilent) setIsLoadingConversations(true);
     else setIsRefreshing(true);
 
     try {
-      const data = await api.getWhatsAppConversations(40);
+      const activeFilter = repFilter !== undefined ? repFilter : selectedRepFilter;
+      const repParam = activeFilter === "ALL" ? undefined : activeFilter;
+      const data = await api.getWhatsAppConversations(40, repParam);
       if (data && data.status === "success" && Array.isArray(data.conversations)) {
         const mapped = data.conversations.map(mapBackendConv);
         setConversations(mapped);
@@ -256,6 +282,19 @@ export default function WhatsAppPage() {
       setIsLoadingConversations(false);
       setIsRefreshing(false);
     }
+  }, [selectedRepFilter, currentUser]);
+
+  // Load current user and team members
+  useEffect(() => {
+    const user = api.getCurrentUser();
+    if (user) {
+      setCurrentUser(user);
+    }
+    api.getTeamMembers()
+      .then((members) => {
+        if (Array.isArray(members)) setTeamMembers(members);
+      })
+      .catch((err) => console.warn("Failed to load team members", err));
   }, []);
 
   // Load message stream for active phone
@@ -651,6 +690,59 @@ export default function WhatsAppPage() {
                 </div>
               </div>
 
+              {/* Multi-Line Switcher for Admin / Rep Line Indicator */}
+              {isAdmin ? (
+                <div className="pt-0.5 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className={cn("text-[10px] font-bold uppercase tracking-wider", isDark ? "text-slate-400" : "text-slate-500")}>
+                      WhatsApp Line / Sales Rep
+                    </span>
+                    <span className={cn("text-[10px] font-bold px-1.5 py-0.2 rounded-md", isDark ? "bg-white/10 text-slate-300" : "bg-slate-200 text-slate-700")}>
+                      Admin View
+                    </span>
+                  </div>
+                  <select
+                    value={selectedRepFilter}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setSelectedRepFilter(val);
+                      loadConversations(false, val);
+                    }}
+                    className={cn(
+                      "w-full h-8 text-xs font-semibold rounded-xl px-2.5 border transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-emerald-500/20",
+                      isDark
+                        ? "bg-[#131B2E] border-[#1E293B] text-slate-200"
+                        : "bg-white border-slate-200 text-slate-800"
+                    )}
+                  >
+                    <option value="ALL">🏢 All Sales Reps & Lines</option>
+                    {currentUser && (
+                      <option value={currentUser.id}>
+                        👑 Admin ({currentUser.full_name}) {currentUser.whatsapp_phone_number ? `• ${currentUser.whatsapp_phone_number}` : ""}
+                      </option>
+                    )}
+                    {teamMembers
+                      .filter((m) => m.id !== currentUser?.id)
+                      .map((m) => (
+                        <option key={m.id} value={m.id}>
+                          👤 {m.full_name} {m.whatsapp_phone_number ? `• ${m.whatsapp_phone_number}` : "(No line assigned)"}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              ) : currentUser?.whatsapp_phone_number ? (
+                <div className={cn(
+                  "px-3 py-1.5 rounded-xl border flex items-center justify-between text-xs",
+                  isDark ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-300" : "bg-emerald-50 border-emerald-200 text-emerald-800"
+                )}>
+                  <span className="font-semibold text-[11px] flex items-center gap-1.5">
+                    <MessageSquare className="w-3.5 h-3.5 text-emerald-500" />
+                    <span>Your WhatsApp Line:</span>
+                  </span>
+                  <span className="font-bold font-mono text-[11px]">{currentUser.whatsapp_phone_number}</span>
+                </div>
+              ) : null}
+
               {/* Search Bar */}
               <div className="relative">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -816,11 +908,23 @@ export default function WhatsAppPage() {
                             </span>
                           </div>
 
-                          {conv.unreadCount > 0 && (
-                            <span className="shrink-0 px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-rose-500 text-white shadow-xs shadow-rose-500/50">
-                              {conv.unreadCount}
-                            </span>
-                          )}
+                          <div className="flex items-center gap-1 shrink-0">
+                            {conv.assignedRep?.name && conv.assignedRep.name !== "Unassigned" && (
+                              <span className={cn(
+                                "text-[9px] font-semibold px-1.5 py-0.2 rounded border",
+                                isDark
+                                  ? "bg-white/5 text-slate-400 border-white/5"
+                                  : "bg-slate-100 text-slate-600 border-slate-200"
+                              )}>
+                                {conv.assignedRep.name.split(" ")[0]}
+                              </span>
+                            )}
+                            {conv.unreadCount > 0 && (
+                              <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-rose-500 text-white shadow-xs shadow-rose-500/50">
+                                {conv.unreadCount}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -1411,16 +1515,89 @@ export default function WhatsAppPage() {
                   </div>
                 </div>
 
-                {/* Assigned Sales Rep */}
-                <div className={cn("pt-2 border-t flex items-center justify-between text-xs", isDark ? "border-[#1E293B]/60 text-slate-400" : "border-slate-200 text-slate-500")}>
-                  <span>Assigned Rep:</span>
-                  <div className={cn("flex items-center gap-1.5 font-semibold", isDark ? "text-slate-200" : "text-slate-800")}>
-                    <div className="w-5 h-5 rounded-full bg-emerald-600/20 text-emerald-600 dark:text-emerald-400 font-bold flex items-center justify-center text-[10px] ring-1 ring-emerald-500/30">
-                      {activeChat.assignedRep.avatar}
+                {/* Assigned Sales Rep / Reassign Selector */}
+                {isAdmin ? (
+                  <div className={cn("pt-2.5 border-t space-y-1.5", isDark ? "border-[#1E293B]/60" : "border-slate-200")}>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className={cn("font-semibold", isDark ? "text-slate-400" : "text-slate-600")}>
+                        Assigned Sales Rep:
+                      </span>
+                      {isReassigning ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] text-emerald-600 font-bold">
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          <span>Updating...</span>
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-slate-400">Click to Reassign</span>
+                      )}
                     </div>
-                    <span>{activeChat.assignedRep.name}</span>
+                    <select
+                      value={activeChat.assignedRep?.id || ""}
+                      disabled={isReassigning}
+                      onChange={async (e) => {
+                        const newUserId = e.target.value;
+                        if (!newUserId || !activeChat) return;
+                        try {
+                          setIsReassigning(true);
+                          await api.reassignWhatsAppConversation(activeChat.phone, newUserId);
+                          const repObj = teamMembers.find((m) => m.id === newUserId) || (currentUser?.id === newUserId ? currentUser : null);
+                          const repName = repObj?.full_name || "Sales Rep";
+                          const repRole = repObj?.role || "Sales Rep";
+                          const repInitials = (repName.split(" ")[0][0] + (repName.split(" ")[1] ? repName.split(" ")[1][0] : "")).toUpperCase();
+
+                          setConversations((prev) =>
+                            prev.map((c) =>
+                              c.phone === activeChat.phone
+                                ? {
+                                    ...c,
+                                    assignedRep: {
+                                      id: newUserId,
+                                      name: repName,
+                                      avatar: repInitials,
+                                      role: repRole
+                                    }
+                                  }
+                                : c
+                            )
+                          );
+                          toast.success("Lead Reassigned", `Conversation and Lead routed to ${repName}`);
+                        } catch (err: any) {
+                          toast.error("Reassignment Failed", err.message || "Could not reassign lead");
+                        } finally {
+                          setIsReassigning(false);
+                        }
+                      }}
+                      className={cn(
+                        "w-full h-8 text-xs font-semibold rounded-xl px-2.5 border transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-emerald-500/20",
+                        isDark
+                          ? "bg-[#131B2E] border-[#1E293B] text-slate-200"
+                          : "bg-slate-50 border-slate-200 text-slate-800"
+                      )}
+                    >
+                      <option value="" disabled>Select Team Member</option>
+                      {currentUser && (
+                        <option value={currentUser.id}>👑 {currentUser.full_name} (Admin)</option>
+                      )}
+                      {teamMembers
+                        .filter((m) => m.id !== currentUser?.id)
+                        .map((m) => (
+                          <option key={m.id} value={m.id}>
+                            👤 {m.full_name} ({m.role || "Sales Rep"})
+                          </option>
+                        ))}
+                    </select>
                   </div>
-                </div>
+                ) : (
+                  <div className={cn("pt-2 border-t flex items-center justify-between text-xs", isDark ? "border-[#1E293B]/60 text-slate-400" : "border-slate-200 text-slate-500")}>
+                    <span>Assigned Rep:</span>
+                    <div className={cn("flex items-center gap-1.5 font-semibold", isDark ? "text-slate-200" : "text-slate-800")}>
+                      <div className="w-5 h-5 rounded-full bg-emerald-600/20 text-emerald-600 dark:text-emerald-400 font-bold flex items-center justify-center text-[10px] ring-1 ring-emerald-500/30">
+                        {activeChat.assignedRep.avatar}
+                      </div>
+                      <span>{activeChat.assignedRep.name}</span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Deal Status & Pipeline */}

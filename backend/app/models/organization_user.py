@@ -40,5 +40,8 @@ class User(TimeStampedBase):
     google_token_expiry = Column(DateTime, nullable=True)
     is_google_connected = Column(Boolean, default=False)
 
-    organization = relationship("Organization", back_populates="users")
+    # WhatsApp Specific Configuration (Multi-Number Setup)
+    whatsapp_phone_number = Column(String(50), nullable=True)
+    whatsapp_phone_number_id = Column(String(100), nullable=True, index=True)
 
+    organization = relationship("Organization", back_populates="users")
