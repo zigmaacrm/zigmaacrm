@@ -948,131 +948,62 @@ export default function WhatsAppPage() {
               isDark ? "bg-[#0D0F17]/80 border-[#1E293B]" : "bg-slate-50/90 border-slate-200"
             )}>
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className={cn(
-                    "p-2 rounded-xl border shrink-0 shadow-2xs",
-                    isDark ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" : "bg-emerald-50 border-emerald-200 text-emerald-600"
-                  )}>
-                    <MessageSquare className="w-4 h-4" />
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-[#25D366] text-white flex items-center justify-center shadow-xs shrink-0">
+                    <WhatsAppIcon className="w-4 h-4 fill-white" />
                   </div>
-                  <div className="min-w-0">
-                    <h2 className={cn("font-bold text-sm sm:text-base tracking-tight truncate", isDark ? "text-white" : "text-slate-900")}>
-                      WhatsApp Inbox
-                    </h2>
-                    <div className="flex items-center gap-1.5 text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold truncate">
-                      <span className="relative flex h-2 w-2 shrink-0">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                      </span>
-                      <span>Live • Meta Cloud API</span>
-                    </div>
-                    {/* QR Code Multi-Device Status Button */}
-                    <button
-                      onClick={() => setShowQRModal(true)}
-                      className={cn(
-                        "mt-1.5 w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl border text-[11px] font-semibold transition-all cursor-pointer shadow-2xs hover:scale-[1.01] active:scale-[0.99]",
-                        qrStatus === "CONNECTED"
-                          ? isDark
-                            ? "bg-emerald-950/40 border-emerald-800/60 text-emerald-300 hover:bg-emerald-900/50"
-                            : "bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100"
-                          : isDark
-                            ? "bg-slate-800/80 border-slate-700/80 text-slate-300 hover:border-emerald-500 hover:text-emerald-400"
-                            : "bg-white border-slate-200 text-slate-700 hover:border-emerald-500 hover:text-emerald-700"
-                      )}
-                      title="Link your real phone via QR Code (₹0 Meta charges)"
-                    >
-                      <div className="flex items-center gap-1.5 truncate">
-                        <QrCode className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                        <span className="truncate">
-                          {qrStatus === "CONNECTED"
-                            ? `● Linked: ${qrPhone || "Active"}`
-                            : "Link Phone (QR Scan)"}
-                        </span>
-                      </div>
-                      <span className={cn(
-                        "text-[9px] uppercase px-1.5 py-0.5 rounded-md font-bold tracking-wider shrink-0",
-                        qrStatus === "CONNECTED"
-                          ? "bg-emerald-500 text-white"
-                          : "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300"
-                      )}>
-                        {qrStatus === "CONNECTED" ? "Free" : "QR"}
-                      </span>
-                    </button>
-                  </div>
+                  <h2 className={cn("font-bold text-base tracking-tight", isDark ? "text-white" : "text-slate-900")}>
+                    WhatsApp Inbox
+                  </h2>
                 </div>
 
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <button
-                    onClick={() => loadConversations(false)}
-                    className={cn(
-                      "p-1.5 rounded-lg border transition-all cursor-pointer hover:scale-105 active:scale-95",
-                      isDark ? "text-slate-400 hover:text-white border-white/5 hover:bg-white/5" : "text-slate-500 hover:text-slate-900 border-slate-200/80 hover:bg-slate-100"
-                    )}
-                    title="Refresh conversations"
-                  >
-                    <RefreshCw className={cn("w-3.5 h-3.5", isRefreshing && "animate-spin text-emerald-500")} />
-                  </button>
-                  <span className={cn(
-                    "px-2 py-0.5 text-[10px] uppercase font-bold tracking-wider rounded-full border shadow-2xs",
-                    isDark ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30" : "bg-emerald-50 text-emerald-700 border-emerald-200"
-                  )}>
-                    v20.0
-                  </span>
-                </div>
+                <button
+                  onClick={() => loadConversations(false)}
+                  className={cn(
+                    "p-1.5 rounded-lg border transition-all cursor-pointer hover:scale-105 active:scale-95",
+                    isDark ? "text-slate-400 hover:text-white border-white/5 hover:bg-white/5" : "text-slate-500 hover:text-slate-900 border-slate-200/80 hover:bg-slate-100"
+                  )}
+                  title="Refresh conversations"
+                >
+                  <RefreshCw className={cn("w-3.5 h-3.5", isRefreshing && "animate-spin text-emerald-500")} />
+                </button>
               </div>
 
-              {/* Multi-Line Switcher for Admin / Rep Line Indicator */}
-              {isAdmin ? (
-                <div className="pt-0.5 space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className={cn("text-[10px] font-bold uppercase tracking-wider", isDark ? "text-slate-400" : "text-slate-500")}>
-                      WhatsApp Line / Sales Rep
-                    </span>
-                    <span className={cn("text-[10px] font-bold px-1.5 py-0.2 rounded-md", isDark ? "bg-white/10 text-slate-300" : "bg-slate-200 text-slate-700")}>
-                      Admin View
-                    </span>
-                  </div>
-                  <select
-                    value={selectedRepFilter}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setSelectedRepFilter(val);
-                      loadConversations(false, val);
-                    }}
-                    className={cn(
-                      "w-full h-8 text-xs font-semibold rounded-xl px-2.5 border transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-emerald-500/20",
-                      isDark
-                        ? "bg-[#131B2E] border-[#1E293B] text-slate-200"
-                        : "bg-white border-slate-200 text-slate-800"
-                    )}
-                  >
-                    <option value="ALL">🏢 All Sales Reps & Lines</option>
-                    {currentUser && (
-                      <option value={currentUser.id}>
-                        👑 Admin ({currentUser.full_name}) {currentUser.whatsapp_phone_number ? `• ${currentUser.whatsapp_phone_number}` : ""}
-                      </option>
-                    )}
-                    {teamMembers
-                      .filter((m) => m.id !== currentUser?.id)
-                      .map((m) => (
-                        <option key={m.id} value={m.id}>
-                          👤 {m.full_name} {m.whatsapp_phone_number ? `• ${m.whatsapp_phone_number}` : "(No line assigned)"}
-                        </option>
-                      ))}
-                  </select>
-                </div>
-              ) : currentUser?.whatsapp_phone_number ? (
-                <div className={cn(
-                  "px-3 py-1.5 rounded-xl border flex items-center justify-between text-xs",
-                  isDark ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-300" : "bg-emerald-50 border-emerald-200 text-emerald-800"
-                )}>
-                  <span className="font-semibold text-[11px] flex items-center gap-1.5">
-                    <MessageSquare className="w-3.5 h-3.5 text-emerald-500" />
-                    <span>Your WhatsApp Line:</span>
+              {/* Linked Device Status Button */}
+              <button
+                onClick={() => setShowQRModal(true)}
+                className={cn(
+                  "w-full flex items-center justify-between px-3 py-2 rounded-xl border text-xs font-semibold transition-all cursor-pointer shadow-2xs hover:scale-[1.01] active:scale-[0.99]",
+                  qrStatus === "CONNECTED"
+                    ? isDark
+                      ? "bg-emerald-950/40 border-emerald-800/60 text-emerald-300 hover:bg-emerald-900/50"
+                      : "bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100"
+                    : isDark
+                      ? "bg-slate-800/80 border-slate-700/80 text-slate-300 hover:border-emerald-500 hover:text-emerald-400"
+                      : "bg-white border-slate-200 text-slate-700 hover:border-emerald-500 hover:text-emerald-700"
+                )}
+                title="WhatsApp Linked Device Status"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className={cn(
+                    "w-2 h-2 rounded-full shrink-0",
+                    qrStatus === "CONNECTED" ? "bg-emerald-500 animate-pulse" : "bg-slate-400"
+                  )} />
+                  <span className="font-semibold truncate">
+                    {qrStatus === "CONNECTED"
+                      ? `Linked: ${qrPhone || "+91 96004 71080"}`
+                      : "Link WhatsApp Device (Scan QR)"}
                   </span>
-                  <span className="font-bold font-mono text-[11px]">{currentUser.whatsapp_phone_number}</span>
                 </div>
-              ) : null}
+                <span className={cn(
+                  "text-[10px] font-bold px-2 py-0.5 rounded-lg shrink-0",
+                  qrStatus === "CONNECTED"
+                    ? "bg-emerald-600 text-white"
+                    : "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600"
+                )}>
+                  {qrStatus === "CONNECTED" ? "Connected" : "Scan QR"}
+                </span>
+              </button>
 
               {/* Search Bar & New Chat Button */}
               <div className="flex items-center gap-2">
