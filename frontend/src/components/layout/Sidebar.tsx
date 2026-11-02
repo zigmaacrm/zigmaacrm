@@ -123,7 +123,7 @@ export default function Sidebar() {
       title: "ACTIVITIES",
       items: [
         { name: "Tasks", href: "/tasks", icon: ListTodo },
-        { name: "Quotes & Invoices", href: "/quotes", icon: FileText },
+        { name: "Quotations", href: "/quotes", icon: FileText },
         { name: "Calendar & Schedule", href: "/events", icon: CalendarDays }
       ]
     },

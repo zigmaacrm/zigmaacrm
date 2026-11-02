@@ -129,7 +129,7 @@ export default function Header({ title }: HeaderProps) {
     if (pathname.startsWith("/deals") || pathname.startsWith("/pipeline")) return "Deals";
     if (pathname.startsWith("/tasks")) return "Tasks";
     if (pathname.startsWith("/events") || pathname.startsWith("/calendar")) return "Calendar & Meetings";
-    if (pathname.startsWith("/quotes")) return "Quotes & Invoicing";
+    if (pathname.startsWith("/quotes")) return "Quotations";
     if (pathname.startsWith("/expense")) return "Expense Tracker";
     if (pathname.startsWith("/templates")) return "Sales & Outreach Templates";
     if (pathname.startsWith("/billing")) return "Invoices & Quotations";

@@ -35,12 +35,10 @@ export default function QuotesPage() {
 
   // Filters
   const [search, setSearch] = useState("");
-  const [typeFilter, setTypeFilter] = useState<string>("ALL");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
 
   // Drawer & Modal State
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [drawerDocType, setDrawerDocType] = useState<"QUOTE" | "INVOICE">("QUOTE");
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
@@ -59,8 +57,7 @@ export default function QuotesPage() {
     loadInvoices();
   }, [loadInvoices]);
 
-  const handleOpenCreateDrawer = (type: "QUOTE" | "INVOICE") => {
-    setDrawerDocType(type);
+  const handleOpenCreateDrawer = () => {
     setIsDrawerOpen(true);
   };
 
@@ -77,8 +74,8 @@ export default function QuotesPage() {
   const handleDelete = async (id: number | string) => {
     const inv = invoices.find((i) => String(i.id) === String(id));
     const confirmed = await confirm({
-      title: "Delete Document",
-      message: `Are you sure you want to delete ${inv?.invoice_number || "this document"}?`,
+      title: "Delete Quotation",
+      message: `Are you sure you want to delete ${inv?.invoice_number || "this quotation"}?`,
       confirmText: "Delete",
       cancelText: "Cancel",
       variant: "danger"
@@ -88,19 +85,21 @@ export default function QuotesPage() {
       setInvoices((prev) => prev.filter((i) => String(i.id) !== String(id)));
       try {
         await api.deleteInvoice(id);
-        toast.success("Deleted", "Document removed successfully.");
+        toast.success("Deleted", "Quotation removed successfully.");
       } catch (e) {
         console.error(e);
       }
     }
   };
 
+  // Only Quotations are processed and displayed
+  const quotesList = useMemo(() => {
+    return invoices.filter((i) => (i.type || "QUOTE").toUpperCase() === "QUOTE");
+  }, [invoices]);
+
   // Filtered List
   const filteredInvoices = useMemo(() => {
-    return invoices.filter((inv) => {
-      if (typeFilter !== "ALL" && (inv.type || "QUOTE").toUpperCase() !== typeFilter) {
-        return false;
-      }
+    return quotesList.filter((inv) => {
       if (statusFilter !== "ALL" && (inv.status || "DRAFT").toUpperCase() !== statusFilter) {
         return false;
       }
@@ -113,13 +112,12 @@ export default function QuotesPage() {
       }
       return true;
     });
-  }, [invoices, typeFilter, statusFilter, search]);
+  }, [quotesList, statusFilter, search]);
 
   // Metric Computations
-  const totalCount = invoices.length;
-  const totalValue = invoices.reduce((sum, i) => sum + (Number(i.total_amount) || 0), 0);
-  const quotesCount = invoices.filter((i) => (i.type || "QUOTE").toUpperCase() === "QUOTE").length;
-  const invoicesCount = invoices.filter((i) => (i.type || "").toUpperCase() === "INVOICE").length;
+  const totalCount = quotesList.length;
+  const totalValue = quotesList.reduce((sum, i) => sum + (Number(i.total_amount) || 0), 0);
+  const sentProposalsCount = quotesList.filter((i) => (i.status || "").toUpperCase() === "SENT").length;
 
   return (
     <div className="flex h-screen bg-[#F8FAFC] dark:bg-[#0b0f19] text-slate-900 dark:text-slate-100 font-sans overflow-hidden select-none">
@@ -138,20 +136,11 @@ export default function QuotesPage() {
             <div className="flex items-center gap-2.5">
               <button
                 type="button"
-                onClick={() => handleOpenCreateDrawer("QUOTE")}
+                onClick={handleOpenCreateDrawer}
                 className="flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-semibold shadow-sm transition-all cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
                 <span>Create Quote</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleOpenCreateDrawer("INVOICE")}
-                className="flex items-center gap-1.5 px-3.5 py-2 bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-red-500 hover:text-red-600 dark:hover:text-red-400 rounded-xl text-xs font-semibold shadow-xs transition-colors cursor-pointer"
-              >
-                <Receipt className="w-4 h-4" />
-                <span>+ Tax Invoice</span>
               </button>
             </div>
           </div>
@@ -162,7 +151,7 @@ export default function QuotesPage() {
               <div>
                 <p className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Total Value</p>
                 <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{formatCurrency(totalValue)}</p>
-                <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">{totalCount} total documents</p>
+                <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">{totalCount} total quotations</p>
               </div>
               <div className="p-2.5 rounded-xl bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400">
                 <DollarSign className="w-5 h-5" />
@@ -172,7 +161,7 @@ export default function QuotesPage() {
             <div className="p-4 rounded-xl bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 border-t-[3px] border-t-blue-500 shadow-xs flex items-center justify-between">
               <div>
                 <p className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Quotations</p>
-                <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{quotesCount}</p>
+                <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{totalCount}</p>
                 <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Commercial estimates</p>
               </div>
               <div className="p-2.5 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400">
@@ -182,12 +171,12 @@ export default function QuotesPage() {
 
             <div className="p-4 rounded-xl bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 border-t-[3px] border-t-emerald-500 shadow-xs flex items-center justify-between">
               <div>
-                <p className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Tax Invoices</p>
-                <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{invoicesCount}</p>
-                <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">{invoicesCount} issued bills</p>
+                <p className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Sent Proposals</p>
+                <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{sentProposalsCount}</p>
+                <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Dispatched to clients</p>
               </div>
               <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400">
-                <Receipt className="w-5 h-5" />
+                <CheckCircle2 className="w-5 h-5" />
               </div>
             </div>
 
@@ -198,7 +187,7 @@ export default function QuotesPage() {
                 <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Automated stage sync</p>
               </div>
               <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400">
-                <CheckCircle2 className="w-5 h-5" />
+                <Clock className="w-5 h-5" />
               </div>
             </div>
           </div>
@@ -212,39 +201,25 @@ export default function QuotesPage() {
                   type="text"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search by quote/invoice #, client, or company..."
+                  placeholder="Search by quote #, client, or company..."
                   className="w-full bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 text-xs pl-8 pr-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 font-medium"
                 />
                 <Search className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500 absolute left-2.5 top-2.5" />
               </div>
 
               <div className="flex items-center gap-2">
-                {/* Type Filter */}
-                <CustomDropdown
-                  value={typeFilter}
-                  onChange={(val) => setTypeFilter(String(val))}
-                  size="sm"
-                  variant="input"
-                  className="w-36 text-xs"
-                  options={[
-                    { value: "ALL", label: "All Types" },
-                    { value: "QUOTE", label: "Quotations" },
-                    { value: "INVOICE", label: "Tax Invoices" },
-                  ]}
-                />
-
                 {/* Status Filter */}
                 <CustomDropdown
                   value={statusFilter}
                   onChange={(val) => setStatusFilter(String(val))}
                   size="sm"
                   variant="input"
-                  className="w-40 text-xs"
+                  className="w-44 text-xs"
                   options={[
                     { value: "ALL", label: "All Statuses" },
                     { value: "DRAFT", label: "Draft", dotColor: "bg-slate-400" },
                     { value: "SENT", label: "Sent / Proposal", dotColor: "bg-blue-500" },
-                    { value: "PAID", label: "Paid", dotColor: "bg-emerald-500" },
+                    { value: "PAID", label: "Accepted / Paid", dotColor: "bg-emerald-500" },
                     { value: "OVERDUE", label: "Overdue", dotColor: "bg-rose-500" },
                   ]}
                 />
@@ -258,14 +233,14 @@ export default function QuotesPage() {
                   <FileText className="w-6 h-6" />
                 </div>
                 <div>
-                  <p className="text-xs font-bold text-slate-800">No documents found</p>
+                  <p className="text-xs font-bold text-slate-800 dark:text-slate-200">No quotations found</p>
                   <p className="text-[11px] text-slate-400 mt-0.5">
-                    Create your first quotation or invoice with instant PDF generation.
+                    Create your first quotation with instant PDF generation.
                   </p>
                 </div>
                 <button
                   type="button"
-                  onClick={() => handleOpenCreateDrawer("QUOTE")}
+                  onClick={handleOpenCreateDrawer}
                   className="px-4 py-2 bg-red-600 text-white rounded-xl text-xs font-bold shadow-xs hover:bg-red-700 transition-colors cursor-pointer"
                 >
                   + Create First Quote
@@ -276,9 +251,8 @@ export default function QuotesPage() {
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
                     <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500 font-bold uppercase text-[10px] tracking-wider">
-                      <th className="py-3 px-4">Document #</th>
+                      <th className="py-3 px-4">Quote #</th>
                       <th className="py-3 px-4">Client / Company</th>
-                      <th className="py-3 px-3 text-center">Type</th>
                       <th className="py-3 px-3 text-center">Status</th>
                       <th className="py-3 px-4">Date</th>
                       <th className="py-3 px-4 text-right">Amount (₹)</th>
@@ -287,8 +261,7 @@ export default function QuotesPage() {
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
                     {filteredInvoices.map((inv) => {
-                      const docNo = inv.invoice_number || inv.bill_number || `DOC-${inv.id}`;
-                      const isQuote = (inv.type || "QUOTE").toUpperCase() === "QUOTE";
+                      const docNo = inv.invoice_number || inv.bill_number || `QT-${inv.id}`;
                       return (
                         <tr
                           key={inv.id}
@@ -307,15 +280,6 @@ export default function QuotesPage() {
                                 {inv.client_company}
                               </span>
                             )}
-                          </td>
-                          <td className="py-3.5 px-3 text-center">
-                            <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${
-                              isQuote
-                                ? "bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800/50"
-                                : "bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/50"
-                            }`}>
-                              {isQuote ? "Quote" : "Invoice"}
-                            </span>
                           </td>
                           <td className="py-3.5 px-3 text-center">
                             <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
@@ -380,7 +344,7 @@ export default function QuotesPage() {
         isOpen={isDrawerOpen}
         onClose={() => setIsDrawerOpen(false)}
         onSuccess={handleCreated}
-        initialType={drawerDocType}
+        initialType="QUOTE"
       />
 
       {/* Quote Preview & Print Modal */}

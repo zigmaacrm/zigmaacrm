@@ -101,8 +101,7 @@ export default function QuotationViewer({
 
   // Document details
   const docNumber = invoice.invoice_number || invoice.bill_number || `QT-2026-001`;
-  const isInvoice = (invoice.type || "").toUpperCase() === "INVOICE";
-  const docTitle = isInvoice ? "TAX INVOICE" : "COMMERCIAL QUOTATION";
+  const docTitle = "COMMERCIAL QUOTATION";
   const items = invoice.items || [];
   const subtotal = invoice.subtotal !== undefined ? invoice.subtotal : items.reduce((s, it) => s + (it.qty * it.unit_price), 0);
   const taxAmount = invoice.tax_amount !== undefined ? invoice.tax_amount : items.reduce((s, it) => s + (it.qty * it.unit_price * ((it.tax_rate ?? 18) / 100)), 0);

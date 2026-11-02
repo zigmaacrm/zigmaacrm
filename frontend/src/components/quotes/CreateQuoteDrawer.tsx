@@ -36,7 +36,7 @@ interface CreateQuoteDrawerProps {
   onSuccess?: (invoice: Invoice) => void;
   deal?: Deal | null;
   contact?: Contact | null;
-  initialType?: "QUOTE" | "INVOICE";
+  initialType?: "QUOTE";
 }
 
 interface LineItemState {
@@ -77,7 +77,7 @@ export default function CreateQuoteDrawer({
   const [submitting, setSubmitting] = useState(false);
 
   // Document Settings
-  const [docType, setDocType] = useState<"QUOTE" | "INVOICE">("QUOTE");
+  const docType = "QUOTE";
   const [quoteId, setQuoteId] = useState("QT-2026-001");
   const [issueDate, setIssueDate] = useState("");
   const [dueDate, setDueDate] = useState("");
@@ -124,7 +124,6 @@ export default function CreateQuoteDrawer({
     if (isOpen) {
       const timer = setTimeout(() => setVisible(true), 10);
 
-      setDocType(initialType);
       const today = new Date().toISOString().split("T")[0];
       const due = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
       setIssueDate(today);
@@ -353,7 +352,7 @@ export default function CreateQuoteDrawer({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Create Quote / Invoice"
+      aria-label="Create Quotation"
       className="fixed inset-0 z-50 overflow-hidden"
     >
       {/* 1. Backdrop */}
@@ -379,14 +378,14 @@ export default function CreateQuoteDrawer({
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-base font-bold text-slate-900 leading-tight">
-                  {docType === "QUOTE" ? "Create Official Quote" : "Generate Tax Invoice"}
+                  Create Official Quote
                 </h2>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-50 text-red-700 border border-red-200">
-                  {docType === "QUOTE" ? "Estimation Engine" : "Billing Ready"}
+                  Estimation Engine
                 </span>
               </div>
               <p className="text-xs text-slate-500 font-medium mt-0.5">
-                {deal ? `Linked to Deal: ${deal.title}` : "Auto-calculates GST, line items, and generates printable PDF"}
+                {deal ? `Linked to Deal: ${deal.title}` : "Auto-calculates GST, line items, and generates printable quotation PDF"}
               </p>
             </div>
           </div>
@@ -441,7 +440,7 @@ export default function CreateQuoteDrawer({
             </a>
           </div>
 
-          {/* SECTION 1: DOCUMENT TYPE, QUOTE ID & DATES */}
+          {/* SECTION 1: QUOTE NUMBER & DATES */}
           <div className="p-4 rounded-2xl bg-slate-50/80 border border-slate-200/80 space-y-3.5">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
@@ -449,42 +448,20 @@ export default function CreateQuoteDrawer({
                   1. Document Settings
                 </span>
                 <span className="text-xs font-bold text-slate-800">
-                  Document Type & Metadata
+                  Quotation Details & Validity
                 </span>
               </div>
 
-              {/* Type Toggle */}
-              <div className="inline-flex p-1 bg-white rounded-xl border border-slate-200 shadow-2xs">
-                <button
-                  type="button"
-                  onClick={() => setDocType("QUOTE")}
-                  className={`px-3 py-1.5 rounded-lg font-bold text-xs transition-all cursor-pointer ${
-                    docType === "QUOTE"
-                      ? "bg-red-600 text-white shadow-xs"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
-                >
-                  Quotation / Estimate
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDocType("INVOICE")}
-                  className={`px-3 py-1.5 rounded-lg font-bold text-xs transition-all cursor-pointer ${
-                    docType === "INVOICE"
-                      ? "bg-red-600 text-white shadow-xs"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
-                >
-                  Tax Invoice
-                </button>
-              </div>
+              <span className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white text-slate-700 border border-slate-200 shadow-2xs">
+                Document Type: <span className="text-red-600 font-extrabold">Commercial Quotation</span>
+              </span>
             </div>
 
             {/* Metadata row: Quote ID, Issue Date, Due Date */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1 border-t border-slate-200/60">
               <div>
                 <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  Quote / Invoice ID
+                  Quote Number / ID
                 </label>
                 <input
                   type="text"

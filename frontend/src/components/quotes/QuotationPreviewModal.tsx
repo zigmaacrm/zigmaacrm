@@ -58,8 +58,7 @@ export default function QuotationPreviewModal({
   if (!isOpen || !invoice) return null;
 
   const docNumber = invoice.invoice_number || invoice.bill_number || `QT-2026-001`;
-  const isInvoice = (invoice.type || "").toUpperCase() === "INVOICE";
-  const docTitle = isInvoice ? "TAX INVOICE" : "QUOTATION";
+  const docTitle = "QUOTATION";
   const sellerName = org?.company_name || "Arsath Thoufiq's Workspace";
   const signatoryName = org?.signatory_name || "Arsath Thoufiq";
   const clientName = invoice.client_name || "Client";
