@@ -173,7 +173,7 @@ async def send_whatsapp_message(
     dispatched_via_qr = False
 
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
             st_res = await client.get(f"{gateway_url}/status")
             if st_res.status_code == 200 and st_res.json().get("status") == "CONNECTED":
                 send_payload = {
@@ -732,7 +732,7 @@ async def get_whatsapp_qr_status():
     """
     gateway_url = getattr(settings, "WHATSAPP_GATEWAY_URL", "http://localhost:5001")
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
+        async with httpx.AsyncClient(timeout=4.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
             resp = await client.get(f"{gateway_url}/status")
             if resp.status_code == 200:
                 data = resp.json()
@@ -756,7 +756,7 @@ async def refresh_whatsapp_qr():
     """
     gateway_url = getattr(settings, "WHATSAPP_GATEWAY_URL", "http://localhost:5001")
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=8.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
             resp = await client.post(f"{gateway_url}/refresh-qr")
             return resp.json()
     except Exception as e:
@@ -769,7 +769,7 @@ async def disconnect_whatsapp_qr():
     """
     gateway_url = getattr(settings, "WHATSAPP_GATEWAY_URL", "http://localhost:5001")
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=8.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
             resp = await client.post(f"{gateway_url}/disconnect")
             return resp.json()
     except Exception as e:
