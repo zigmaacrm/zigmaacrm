@@ -26,7 +26,7 @@ import {
   Check,
   Plus,
   ArrowRight,
-  Code2,
+  
   ChevronDown,
   ChevronUp,
   Share2,
@@ -99,7 +99,6 @@ export default function SettingsPage() {
   const [syncingNow, setSyncingNow] = useState(false);
 
   // Lead Sources & Forms Tab state
-  const [showDevGuide, setShowDevGuide] = useState(false);
   const [showMetaModal, setShowMetaModal] = useState(false);
 
 
@@ -133,19 +132,10 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState(false);
   const [copiedMetaUrl, setCopiedMetaUrl] = useState(false);
-  const [copiedJson, setCopiedJson] = useState(false);
 
   // Unified Webhook URL
   const webhookUrl = "http://localhost:8000/api/v1/webhooks/inbound-lead";
 
-  // Sample JSON payload
-  const samplePayload = {
-    full_name: "John Doe",
-    phone: "+919876543210",
-    email: "john@example.com",
-    company_name: "Acme Innovations",
-    source: "META_ADS"
-  };
 
   const loadEmailSync = async () => {
     try {
@@ -370,12 +360,6 @@ export default function SettingsPage() {
     setTimeout(() => setCopiedUrl(false), 2000);
   };
 
-  const handleCopySampleJson = () => {
-    navigator.clipboard.writeText(JSON.stringify(samplePayload, null, 2));
-    setCopiedJson(true);
-    toast.success("Copied to Clipboard", "Sample payload JSON copied!");
-    setTimeout(() => setCopiedJson(false), 2000);
-  };
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1481,63 +1465,6 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                {/* 3. Collapsible Developer / Technical Guide (Collapsed by default) */}
-                <div className="rounded-2xl bg-white border border-slate-200 overflow-hidden shadow-2xs">
-                  <button
-                    type="button"
-                    onClick={() => setShowDevGuide(!showDevGuide)}
-                    className="w-full p-4 flex items-center justify-between text-left hover:bg-slate-50/80 transition-colors cursor-pointer"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm">⚙️</span>
-                      <span className="text-xs font-bold text-slate-700">
-                        Advanced Developer Settings
-                      </span>
-                      <span className="text-[10px] text-slate-400 font-medium">
-                        (JSON Payload Schema for Software Engineers)
-                      </span>
-                    </div>
-                    {showDevGuide ? (
-                      <ChevronUp className="w-4 h-4 text-slate-400" />
-                    ) : (
-                      <ChevronDown className="w-4 h-4 text-slate-400" />
-                    )}
-                  </button>
-
-                  {showDevGuide && (
-                    <div className="p-5 border-t border-slate-100 bg-slate-50/50 space-y-3 animate-in fade-in duration-150">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                          <Code2 className="w-3.5 h-3.5 text-slate-400" />
-                          <span>Standard JSON Request Schema</span>
-                        </span>
-                        <button
-                          type="button"
-                          onClick={handleCopySampleJson}
-                          className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-lg text-[11px] font-semibold transition-colors flex items-center gap-1 cursor-pointer"
-                        >
-                          {copiedJson ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
-                          <span>{copiedJson ? "Copied" : "Copy Payload"}</span>
-                        </button>
-                      </div>
-
-                      <div className="relative rounded-xl bg-slate-900 p-3.5 text-slate-200 font-mono text-[11px] overflow-x-auto shadow-inner">
-                        <pre className="leading-relaxed">
-{`{
-  "full_name": "John Doe",
-  "phone": "+919876543210",
-  "email": "john@example.com",
-  "company_name": "Acme Innovations",
-  "source": "WEBSITE_FORM"
-}`}
-                        </pre>
-                      </div>
-                      <p className="text-[11px] text-slate-400">
-                        Endpoint accepts <code>POST</code> with <code>Content-Type: application/json</code>. Duplicate phone numbers are automatically linked to existing contacts.
-                      </p>
-                    </div>
-                  )}
-                </div>
               </div>
             )}
 
