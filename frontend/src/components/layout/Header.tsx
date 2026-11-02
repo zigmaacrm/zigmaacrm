@@ -38,6 +38,7 @@ export default function Header({ title }: HeaderProps) {
   const router = useRouter();
   const pathname = usePathname();
   const { theme, toggleTheme } = useTheme();
+  const isDark = theme === "dark";
   const [searchQuery, setSearchQuery] = useState("");
   const [showAddLead, setShowAddLead] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -256,7 +257,7 @@ export default function Header({ title }: HeaderProps) {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search records..."
-              className="w-full bg-slate-50 text-slate-900 text-sm pl-10 pr-4 py-2 rounded-full border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white placeholder:text-slate-400 font-medium transition-all"
+              className="w-full bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 text-sm pl-10 pr-4 py-2 rounded-full border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white dark:focus:bg-slate-900 placeholder:text-slate-400 dark:placeholder:text-slate-500 font-medium transition-all"
             />
           </form>
 
@@ -288,8 +289,6 @@ export default function Header({ title }: HeaderProps) {
               </span>
             </Link>
           )}
-
-
 
           {/* AI Copilot Doubt Clearance Button */}
           <button
@@ -323,7 +322,7 @@ export default function Header({ title }: HeaderProps) {
             <div className="relative">
               <button
                 onClick={() => setShowNotifications(!showNotifications)}
-                className="p-1.5 rounded-lg hover:bg-slate-100 hover:text-slate-900 transition-colors relative cursor-pointer"
+                className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition-colors relative cursor-pointer"
                 title="Notifications"
               >
                 <Bell className="w-4 h-4" />
@@ -336,12 +335,12 @@ export default function Header({ title }: HeaderProps) {
                     className="fixed inset-0 z-40"
                     onClick={() => setShowNotifications(false)}
                   />
-                  <div className="absolute right-0 mt-2 w-72 bg-white rounded-xl shadow-xl border border-slate-200 p-3 z-50">
-                    <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                      <span className="font-bold text-xs text-slate-900">Notifications</span>
-                      <span className="text-[10px] text-red-600 font-semibold cursor-pointer">Mark read</span>
+                  <div className="absolute right-0 mt-2 w-72 bg-white dark:bg-[#111827] rounded-xl shadow-xl border border-slate-200 dark:border-slate-800 p-3 z-50">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+                      <span className="font-bold text-xs text-slate-900 dark:text-white">Notifications</span>
+                      <span className="text-[10px] text-red-600 dark:text-red-400 font-semibold cursor-pointer">Mark read</span>
                     </div>
-                    <div className="py-3 text-center text-xs text-slate-500">
+                    <div className="py-3 text-center text-xs text-slate-500 dark:text-slate-400">
                       No unread notifications.
                     </div>
                   </div>
@@ -354,7 +353,7 @@ export default function Header({ title }: HeaderProps) {
           <div className="relative">
             <button
               onClick={() => setShowProfileMenu(!showProfileMenu)}
-              className="w-9 h-9 rounded-full bg-gradient-to-br from-red-600 to-rose-600 text-white font-bold flex items-center justify-center text-xs shadow-xs border-2 border-white ring-2 ring-slate-200/90 shrink-0 cursor-pointer hover:ring-red-500/50 transition-all overflow-hidden"
+              className="w-9 h-9 rounded-full bg-gradient-to-br from-red-600 to-rose-600 text-white font-bold flex items-center justify-center text-xs shadow-xs border-2 border-white dark:border-slate-800 ring-2 ring-slate-200/90 dark:ring-slate-700/80 shrink-0 cursor-pointer hover:ring-red-500/50 transition-all overflow-hidden"
               title={currentUser?.full_name || "User Profile"}
             >
               {currentUser?.picture && !avatarError ? (
@@ -382,11 +381,21 @@ export default function Header({ title }: HeaderProps) {
                 />
 
                 {/* Popover Card */}
-                <div className="absolute right-0 mt-2 w-64 bg-white rounded-2xl shadow-[0_16px_50px_rgba(0,0,0,0.18)] border border-slate-200 z-[60] text-xs overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-                  {/* Top Avatar & Name Section (Only Name & Avatar) */}
-                  <div className="pt-6 pb-4 flex flex-col items-center px-4 bg-gradient-to-b from-slate-50/90 to-white border-b border-slate-100">
+                <div className={`absolute right-0 mt-2 w-64 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.3)] border z-[60] text-xs overflow-hidden animate-in fade-in zoom-in-95 duration-150 ${
+                  isDark
+                    ? "bg-[#111827] border-slate-800 text-slate-100"
+                    : "bg-white border-slate-200 text-slate-900"
+                }`}>
+                  {/* Top Avatar & Name Section */}
+                  <div className={`pt-6 pb-4 flex flex-col items-center px-4 border-b ${
+                    isDark
+                      ? "bg-slate-900/70 border-slate-800/80"
+                      : "bg-gradient-to-b from-slate-50/90 to-white border-slate-100"
+                  }`}>
                     {/* Avatar Display */}
-                    <div className="w-16 h-16 rounded-full bg-gradient-to-br from-red-600 to-rose-600 text-white font-bold text-2xl flex items-center justify-center shadow-md select-none overflow-hidden border-2 border-white ring-4 ring-red-100/90 shrink-0">
+                    <div className={`w-16 h-16 rounded-full bg-gradient-to-br from-red-600 to-rose-600 text-white font-bold text-2xl flex items-center justify-center shadow-md select-none overflow-hidden border-2 shrink-0 ${
+                      isDark ? "border-slate-700 ring-4 ring-red-950/60" : "border-white ring-4 ring-red-100/90"
+                    }`}>
                       {currentUser?.picture && !avatarError ? (
                         <img
                           src={currentUser.picture}
@@ -403,7 +412,9 @@ export default function Header({ title }: HeaderProps) {
                       )}
                     </div>
 
-                    <h3 className="mt-3 text-sm font-bold text-slate-900 tracking-tight select-none text-center leading-snug">
+                    <h3 className={`mt-3 text-sm font-bold tracking-tight select-none text-center leading-snug ${
+                      isDark ? "text-white" : "text-slate-900"
+                    }`}>
                       {currentUser?.full_name || "User Profile"}
                     </h3>
                   </div>
@@ -426,13 +437,17 @@ export default function Header({ title }: HeaderProps) {
                             onMouseEnter={() => setActiveItem(item.label)}
                             className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs transition-colors cursor-pointer text-left ${
                               isHighlighted
-                                ? "bg-red-50 text-red-600 font-semibold"
+                                ? isDark
+                                  ? "bg-red-500/15 text-red-400 font-semibold"
+                                  : "bg-red-50 text-red-600 font-semibold"
+                                : isDark
+                                ? "text-slate-300 hover:bg-slate-800/70 hover:text-white font-medium"
                                 : "text-slate-700 hover:bg-red-50 hover:text-red-600 font-medium"
                             }`}
                           >
                             <Icon
                               className={`w-4 h-4 shrink-0 ${
-                                isHighlighted ? "text-red-600" : "text-slate-500"
+                                isHighlighted ? "text-red-500" : isDark ? "text-slate-400" : "text-slate-500"
                               }`}
                             />
                             <span className="truncate">{item.label} & Support</span>
@@ -451,13 +466,17 @@ export default function Header({ title }: HeaderProps) {
                           onMouseEnter={() => setActiveItem(item.label)}
                           className={`flex items-center gap-3 px-3 py-2 rounded-xl text-xs transition-colors cursor-pointer ${
                             isHighlighted
-                              ? "bg-red-50 text-red-600 font-semibold"
+                              ? isDark
+                                ? "bg-red-500/15 text-red-400 font-semibold"
+                                : "bg-red-50 text-red-600 font-semibold"
+                              : isDark
+                              ? "text-slate-300 hover:bg-slate-800/70 hover:text-white font-medium"
                               : "text-slate-700 hover:bg-red-50 hover:text-red-600 font-medium"
                           }`}
                         >
                           <Icon
                             className={`w-4 h-4 shrink-0 ${
-                              isHighlighted ? "text-red-600" : "text-slate-500"
+                              isHighlighted ? "text-red-500" : isDark ? "text-slate-400" : "text-slate-500"
                             }`}
                           />
                           <span className="truncate">{item.label}</span>
@@ -467,17 +486,25 @@ export default function Header({ title }: HeaderProps) {
                   </div>
 
                   {/* Slider/Separator Track */}
-                  <div className="px-3.5 py-1.5 flex items-center justify-between gap-2 text-slate-400 select-none">
-                    <div className="w-0 h-0 border-y-[4px] border-y-transparent border-r-[5px] border-r-slate-400" />
-                    <div className="flex-1 h-1.5 bg-slate-300 rounded-full" />
-                    <div className="w-0 h-0 border-y-[4px] border-y-transparent border-l-[5px] border-l-slate-400" />
+                  <div className={`px-3.5 py-1.5 flex items-center justify-between gap-2 select-none ${
+                    isDark ? "text-slate-600" : "text-slate-400"
+                  }`}>
+                    <div className={`w-0 h-0 border-y-[4px] border-y-transparent border-r-[5px] ${
+                      isDark ? "border-r-slate-600" : "border-r-slate-400"
+                    }`} />
+                    <div className={`flex-1 h-1.5 rounded-full ${isDark ? "bg-slate-800" : "bg-slate-300"}`} />
+                    <div className={`w-0 h-0 border-y-[4px] border-y-transparent border-l-[5px] ${
+                      isDark ? "border-l-slate-600" : "border-l-slate-400"
+                    }`} />
                   </div>
 
                   {/* Logout Row */}
-                  <div className="p-2 pt-1 border-t border-slate-100">
+                  <div className={`p-2 pt-1 border-t ${isDark ? "border-slate-800/80" : "border-slate-100"}`}>
                     <button
                       onClick={handleLogout}
-                      className="w-full flex items-center gap-3 px-3 py-2 text-[#EF4444] hover:bg-rose-50 rounded-xl font-semibold text-xs transition-colors cursor-pointer text-left"
+                      className={`w-full flex items-center gap-3 px-3 py-2 text-[#EF4444] rounded-xl font-semibold text-xs transition-colors cursor-pointer text-left ${
+                        isDark ? "hover:bg-rose-950/30" : "hover:bg-rose-50"
+                      }`}
                     >
                       <LogOut className="w-4 h-4 shrink-0 text-[#EF4444]" />
                       <span>Logout</span>

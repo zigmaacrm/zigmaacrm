@@ -265,9 +265,12 @@ main {
   }
 
   /* 7. Hover States */
-  .hover\:bg-slate-50:hover {
-    background-color: #1e293b !important;
-  }
+  [class*="hover:bg-slate-50"]:hover,
+  [class*="hover:bg-slate-100"]:hover,
+  .hover\:bg-slate-50\/70:hover,
+  .hover\:bg-slate-50\/80:hover,
+  .hover\:bg-slate-50\/90:hover,
+  .hover\:bg-slate-50:hover,
   .hover\:bg-slate-100:hover {
     background-color: #1e293b !important;
   }

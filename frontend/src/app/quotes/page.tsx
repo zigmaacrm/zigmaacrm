@@ -148,7 +148,7 @@ export default function QuotesPage() {
               <button
                 type="button"
                 onClick={() => handleOpenCreateDrawer("INVOICE")}
-                className="flex items-center gap-1.5 px-3.5 py-2 bg-white border border-slate-200 text-slate-700 hover:border-red-500 hover:text-red-600 rounded-xl text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-red-500 hover:text-red-600 dark:hover:text-red-400 rounded-xl text-xs font-semibold shadow-xs transition-colors cursor-pointer"
               >
                 <Receipt className="w-4 h-4" />
                 <span>+ Tax Invoice</span>
@@ -158,64 +158,64 @@ export default function QuotesPage() {
 
           {/* KPI Summary Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="p-4 rounded-xl bg-white border border-slate-200 border-t-[3px] border-t-red-600 shadow-xs flex items-center justify-between">
+            <div className="p-4 rounded-xl bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 border-t-[3px] border-t-red-600 shadow-xs flex items-center justify-between">
               <div>
-                <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Total Value</p>
-                <p className="text-2xl font-bold text-slate-900 mt-1">{formatCurrency(totalValue)}</p>
-                <p className="text-[10px] text-slate-400 mt-0.5">{totalCount} total documents</p>
+                <p className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Total Value</p>
+                <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{formatCurrency(totalValue)}</p>
+                <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">{totalCount} total documents</p>
               </div>
-              <div className="p-2.5 rounded-xl bg-red-50 text-red-600">
+              <div className="p-2.5 rounded-xl bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400">
                 <DollarSign className="w-5 h-5" />
               </div>
             </div>
 
-            <div className="p-4 rounded-xl bg-white border border-slate-200 border-t-[3px] border-t-blue-500 shadow-xs flex items-center justify-between">
+            <div className="p-4 rounded-xl bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 border-t-[3px] border-t-blue-500 shadow-xs flex items-center justify-between">
               <div>
-                <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Quotations</p>
-                <p className="text-2xl font-bold text-slate-900 mt-1">{quotesCount}</p>
-                <p className="text-[10px] text-slate-400 mt-0.5">Commercial estimates</p>
+                <p className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Quotations</p>
+                <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{quotesCount}</p>
+                <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Commercial estimates</p>
               </div>
-              <div className="p-2.5 rounded-xl bg-blue-50 text-blue-600">
+              <div className="p-2.5 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400">
                 <FileText className="w-5 h-5" />
               </div>
             </div>
 
-            <div className="p-4 rounded-xl bg-white border border-slate-200 border-t-[3px] border-t-emerald-500 shadow-xs flex items-center justify-between">
+            <div className="p-4 rounded-xl bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 border-t-[3px] border-t-emerald-500 shadow-xs flex items-center justify-between">
               <div>
-                <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Tax Invoices</p>
-                <p className="text-2xl font-bold text-slate-900 mt-1">{invoicesCount}</p>
-                <p className="text-[10px] text-slate-400 mt-0.5">Issued bills</p>
+                <p className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Tax Invoices</p>
+                <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{invoicesCount}</p>
+                <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">{invoicesCount} issued bills</p>
               </div>
-              <div className="p-2.5 rounded-xl bg-emerald-50 text-emerald-600">
+              <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400">
                 <Receipt className="w-5 h-5" />
               </div>
             </div>
 
-            <div className="p-4 rounded-xl bg-white border border-slate-200 border-t-[3px] border-t-amber-500 shadow-xs flex items-center justify-between">
+            <div className="p-4 rounded-xl bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 border-t-[3px] border-t-amber-500 shadow-xs flex items-center justify-between">
               <div>
-                <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Active Pipeline Deals</p>
-                <p className="text-2xl font-bold text-slate-900 mt-1">Proposal Stage</p>
-                <p className="text-[10px] text-slate-400 mt-0.5">Automated stage sync</p>
+                <p className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Active Pipeline Deals</p>
+                <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">Proposal Stage</p>
+                <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Automated stage sync</p>
               </div>
-              <div className="p-2.5 rounded-xl bg-amber-50 text-amber-600">
+              <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400">
                 <CheckCircle2 className="w-5 h-5" />
               </div>
             </div>
           </div>
 
           {/* Table Container */}
-          <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-4">
+          <div className="p-6 rounded-2xl bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
             {/* Filter row */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
               <div className="relative flex-1 max-w-sm">
                 <input
                   type="text"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search by quote/invoice #, client, or company..."
-                  className="w-full bg-slate-50 text-slate-900 text-xs pl-8 pr-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 font-medium"
+                  className="w-full bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 text-xs pl-8 pr-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 font-medium"
                 />
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                <Search className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500 absolute left-2.5 top-2.5" />
               </div>
 
               <div className="flex items-center gap-2">
@@ -275,7 +275,7 @@ export default function QuotesPage() {
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
-                    <tr className="border-b border-slate-200 text-slate-400 font-bold uppercase text-[10px] tracking-wider">
+                    <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500 font-bold uppercase text-[10px] tracking-wider">
                       <th className="py-3 px-4">Document #</th>
                       <th className="py-3 px-4">Client / Company</th>
                       <th className="py-3 px-3 text-center">Type</th>
@@ -285,25 +285,25 @@ export default function QuotesPage() {
                       <th className="py-3 px-4 text-right">Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
                     {filteredInvoices.map((inv) => {
                       const docNo = inv.invoice_number || inv.bill_number || `DOC-${inv.id}`;
                       const isQuote = (inv.type || "QUOTE").toUpperCase() === "QUOTE";
                       return (
                         <tr
                           key={inv.id}
-                          className="hover:bg-slate-50/70 transition-colors group cursor-pointer"
+                          className="hover:bg-slate-50/70 dark:hover:bg-slate-800/50 transition-colors group cursor-pointer"
                           onClick={() => handlePreview(inv)}
                         >
-                          <td className="py-3.5 px-4 font-mono font-bold text-slate-900 group-hover:text-red-600">
+                          <td className="py-3.5 px-4 font-mono font-bold text-slate-900 dark:text-slate-100 group-hover:text-red-600 dark:group-hover:text-red-400">
                             {docNo}
                           </td>
                           <td className="py-3.5 px-4">
-                            <span className="font-bold text-slate-900 block truncate max-w-[200px]">
+                            <span className="font-bold text-slate-900 dark:text-slate-100 block truncate max-w-[200px]">
                               {inv.client_name || inv.patient_name || "Client"}
                             </span>
                             {inv.client_company && (
-                              <span className="text-[10px] text-slate-400 block truncate max-w-[200px]">
+                              <span className="text-[10px] text-slate-400 dark:text-slate-500 block truncate max-w-[200px]">
                                 {inv.client_company}
                               </span>
                             )}
@@ -311,8 +311,8 @@ export default function QuotesPage() {
                           <td className="py-3.5 px-3 text-center">
                             <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${
                               isQuote
-                                ? "bg-blue-50 text-blue-700 border border-blue-200"
-                                : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                ? "bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800/50"
+                                : "bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/50"
                             }`}>
                               {isQuote ? "Quote" : "Invoice"}
                             </span>
@@ -320,18 +320,18 @@ export default function QuotesPage() {
                           <td className="py-3.5 px-3 text-center">
                             <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
                               inv.status === "PAID"
-                                ? "bg-emerald-100 text-emerald-800"
+                                ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border dark:border-emerald-800/60"
                                 : inv.status === "SENT"
-                                ? "bg-purple-50 text-purple-700 border border-purple-200"
-                                : "bg-slate-100 text-slate-600"
+                                ? "bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/50 dark:text-purple-300 dark:border-purple-800/60"
+                                : "bg-slate-100 text-slate-600 dark:bg-slate-800/70 dark:text-slate-300 dark:border dark:border-slate-700/60"
                             }`}>
                               {inv.status || "DRAFT"}
                             </span>
                           </td>
-                          <td className="py-3.5 px-4 text-slate-500 font-medium">
+                          <td className="py-3.5 px-4 text-slate-500 dark:text-slate-400 font-medium">
                             {inv.issue_date || (inv.created_at ? formatDate(inv.created_at) : "—")}
                           </td>
-                          <td className="py-3.5 px-4 text-right font-black text-slate-900">
+                          <td className="py-3.5 px-4 text-right font-black text-slate-900 dark:text-white">
                             {formatCurrency(inv.total_amount)}
                           </td>
                           <td className="py-3.5 px-4 text-right" onClick={(e) => e.stopPropagation()}>
@@ -339,7 +339,7 @@ export default function QuotesPage() {
                               <button
                                 type="button"
                                 onClick={() => handlePreview(inv)}
-                                className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-600 transition-colors"
+                                className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700/60 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition-colors"
                                 title="View & Print Preview"
                               >
                                 <Printer className="w-3.5 h-3.5" />
@@ -348,7 +348,7 @@ export default function QuotesPage() {
                               <button
                                 type="button"
                                 onClick={() => window.open(`http://localhost:8000/api/v1/invoices/${inv.id}/pdf`, "_blank")}
-                                className="p-1.5 rounded-lg border border-slate-200 hover:bg-red-50 hover:text-red-600 text-slate-600 transition-colors"
+                                className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700/60 hover:bg-red-50 dark:hover:bg-red-950/30 hover:text-red-600 dark:hover:text-red-400 text-slate-600 dark:text-slate-300 transition-colors"
                                 title="Download PDF View"
                               >
                                 <Download className="w-3.5 h-3.5" />
@@ -357,7 +357,7 @@ export default function QuotesPage() {
                               <button
                                 type="button"
                                 onClick={() => handleDelete(inv.id)}
-                                className="p-1.5 rounded-lg border border-slate-200 hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors"
+                                className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700/60 hover:bg-rose-50 dark:hover:bg-rose-950/30 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 transition-colors"
                                 title="Delete Document"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
