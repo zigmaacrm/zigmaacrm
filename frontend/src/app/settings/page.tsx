@@ -45,7 +45,7 @@ import { api } from "@/lib/api";
 import { useToast } from "@/components/common/ToastProvider";
 import { getPasswordValidationError } from "@/lib/passwordValidation";
 
-type SettingsTab = "profile" | "team" | "modules" | "webhooks" | "email-sync" | "integrations";
+type SettingsTab = "profile" | "team" | "modules" | "webhooks" | "email-sync";
 
 export default function SettingsPage() {
   const { toast, confirm } = useToast();
@@ -650,11 +650,6 @@ export default function SettingsPage() {
             >
               <Sliders className="w-4 h-4" />
               <span>Modules & Fields</span>
-              {!isAdmin && (
-                <span className="ml-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
-                  View Only
-                </span>
-              )}
             </button>
 
             {/* Lead Sources & Forms (System Webhooks) - Admin only */}
@@ -683,23 +678,10 @@ export default function SettingsPage() {
               }`}
             >
               <Mail className="w-4 h-4" />
-              <span>Email Sync</span>
-              {emailSync.is_connected && (
+              <span>Email & Google Calendar Integration</span>
+              {(emailSync.is_connected || googleIntegration.connected) && (
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab("integrations")}
-              className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
-                activeTab === "integrations"
-                  ? "bg-red-600 text-white shadow-xs"
-                  : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200/80"
-              }`}
-            >
-              <Calendar className="w-4 h-4" />
-              <span>Integrations</span>
             </button>
             </div>
 
@@ -1326,7 +1308,7 @@ export default function SettingsPage() {
             {/* TAB: MODULES & CUSTOM FIELDS (TWOZO STYLE)                     */}
             {/* ============================================================== */}
             {activeTab === "modules" && (
-              <ModulesAndFieldsManager readOnly={!isAdmin} />
+              <ModulesAndFieldsManager readOnly={false} />
             )}
 
             {/* ============================================================== */}
@@ -1572,9 +1554,9 @@ export default function SettingsPage() {
                         <Mail className="w-6 h-6" />
                       </div>
                       <div>
-                        <h2 className="text-base font-bold text-slate-900">Email Sync</h2>
+                        <h2 className="text-base font-bold text-slate-900">Email & Google Calendar Integration</h2>
                         <p className="text-xs text-slate-500 font-medium mt-0.5">
-                          Connect your professional mailbox for seamless 1-click email delivery.
+                          Connect your professional mailbox and Google Calendar for seamless 1-click email delivery and live meeting synchronization.
                         </p>
                       </div>
                     </div>
@@ -1728,14 +1710,7 @@ export default function SettingsPage() {
                     </div>
                   )}
                 </div>
-              </div>
-            )}
 
-            {/* ============================================================== */}
-            {/* TAB 4: INTEGRATIONS & WORKSPACE RESET                          */}
-            {/* ============================================================== */}
-            {activeTab === "integrations" && (
-              <div className="space-y-6">
                 {/* Google Calendar & Gmail Integration Card */}
                 <div className={`p-6 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-4 border-l-4 ${googleIntegration.connected ? "border-l-emerald-500" : "border-l-red-600"}`}>
                   <div className="flex items-center justify-between pb-3 border-b border-slate-100">
