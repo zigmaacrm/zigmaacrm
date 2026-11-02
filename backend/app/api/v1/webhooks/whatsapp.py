@@ -494,6 +494,7 @@ class InboundQRMessage(BaseModel):
     message_body: str
     meta_message_id: Optional[str] = None
     timestamp: Optional[int] = None
+    direction: Optional[str] = "INBOUND"
 
 @router.post("/whatsapp/inbound-qr")
 @router.post("/inbound-qr")
@@ -548,15 +549,25 @@ async def receive_whatsapp_qr_inbound(
         await db.flush()
 
     msg_id = payload.meta_message_id or f"wamid.qr_{uuid.uuid4().hex[:16]}"
+    # Deduplicate
+    existing_chk = await db.execute(
+        select(WhatsAppMessage).where(WhatsAppMessage.meta_message_id == msg_id).limit(1)
+    )
+    if existing_chk.scalar_one_or_none():
+        return {"status": "success", "skipped": "duplicate"}
+
+    msg_direction = (payload.direction or "INBOUND").upper()
+    delivery_status = "SENT" if msg_direction == "OUTBOUND" else "DELIVERED"
+
     wa_msg = WhatsAppMessage(
         organization_id=default_org_id,
         contact_id=contact.id if contact else None,
         phone_number=clean_phone,
-        direction="INBOUND",
+        direction=msg_direction,
         message_body=payload.message_body or "[Empty Message]",
         message_type="text",
         meta_message_id=msg_id,
-        status="DELIVERED"
+        status=delivery_status
     )
     db.add(wa_msg)
 

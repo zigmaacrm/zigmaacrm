@@ -34,6 +34,57 @@ const pendingContacts = new Map();
 
 const logger = pino({ level: 'silent' });
 
+function resolvePhoneFromJid(jid) {
+  if (!jid) return null;
+  const str = String(jid).trim();
+  if (str === 'status@broadcast' || str.endsWith('@g.us') || str.endsWith('@broadcast')) {
+    return null;
+  }
+  if (str.endsWith('@s.whatsapp.net') || str.endsWith('@c.us')) {
+    const raw = str.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+    return raw && raw.length >= 7 ? raw : null;
+  }
+  if (str.endsWith('@lid')) {
+    const cleanLid = str.split('@')[0].split(':')[0];
+    const revFile = path.join(AUTH_DIR, `lid-mapping-${cleanLid}_reverse.json`);
+    if (fs.existsSync(revFile)) {
+      try {
+        const pn = JSON.parse(fs.readFileSync(revFile, 'utf8'));
+        if (pn) return pn.toString().replace(/[^0-9]/g, '');
+      } catch (_) {}
+    }
+  }
+  return null;
+}
+
+function extractMessageBody(m) {
+  if (!m) return '';
+  const msg =
+    m.ephemeralMessage?.message ||
+    m.viewOnceMessage?.message ||
+    m.viewOnceMessageV2?.message ||
+    m.documentWithCaptionMessage?.message ||
+    m;
+
+  return (
+    msg.conversation ||
+    msg.extendedTextMessage?.text ||
+    msg.imageMessage?.caption ||
+    msg.videoMessage?.caption ||
+    msg.documentMessage?.caption ||
+    msg.buttonsResponseMessage?.selectedDisplayText ||
+    msg.listResponseMessage?.title ||
+    msg.templateButtonReplyMessage?.selectedId ||
+    (msg.imageMessage ? '[Image Attachment]' : '') ||
+    (msg.documentMessage ? '[Document Attachment]' : '') ||
+    (msg.audioMessage ? '[Voice Note]' : '') ||
+    (msg.stickerMessage ? '[Sticker]' : '') ||
+    (msg.contactMessage ? '[Contact Card]' : '') ||
+    (msg.locationMessage ? '[Location]' : '') ||
+    ''
+  );
+}
+
 function scheduleContactSync() {
   if (syncTimeout) clearTimeout(syncTimeout);
   syncTimeout = setTimeout(async () => {
@@ -185,50 +236,57 @@ async function initWhatsApp(forceClean = false) {
       scheduleContactSync();
     });
 
-    // 2. Inbound Live Messages
+    // 2. Live Messages (Both Inbound from customers and Outbound from web/mobile)
     sock.ev.on('messages.upsert', async (chatUpdate) => {
       try {
-        const { messages, type } = chatUpdate;
-        if (type !== 'notify' || !messages || !messages.length) return;
+        const { messages } = chatUpdate;
+        if (!messages || !messages.length) return;
 
         for (const msg of messages) {
-          if (msg.key.fromMe) continue;
-          const remoteJid = msg.key.remoteJid || '';
-          if (remoteJid === 'status@broadcast' || remoteJid.endsWith('@g.us')) continue;
-          if (!remoteJid.endsWith('@s.whatsapp.net') && !remoteJid.endsWith('@c.us')) continue;
+          const remoteJid = msg.key?.remoteJid || '';
+          if (!remoteJid || remoteJid === 'status@broadcast' || remoteJid.endsWith('@g.us') || remoteJid.endsWith('@broadcast')) {
+            continue;
+          }
 
-          const senderPhone = remoteJid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+          let phone = resolvePhoneFromJid(remoteJid);
+          if (!phone && msg.key?.participant) {
+            phone = resolvePhoneFromJid(msg.key.participant);
+          }
+          if (!phone && msg.key?.remoteJidAlt) {
+            phone = resolvePhoneFromJid(msg.key.remoteJidAlt);
+          }
+
+          if (!phone) {
+            console.log(`[WhatsApp Message Skipped] Cannot resolve phone from JID: ${remoteJid}`);
+            continue;
+          }
+
+          const isFromMe = Boolean(msg.key?.fromMe);
           const contactName = msg.pushName || '';
+          const body = extractMessageBody(msg.message);
 
-          const body =
-            msg.message?.conversation ||
-            msg.message?.extendedTextMessage?.text ||
-            msg.message?.imageMessage?.caption ||
-            msg.message?.videoMessage?.caption ||
-            msg.message?.documentMessage?.caption ||
-            (msg.message?.imageMessage ? '[Image Attachment]' : '') ||
-            (msg.message?.documentMessage ? '[Document Attachment]' : '') ||
-            (msg.message?.audioMessage ? '[Voice Note]' : '') ||
-            '';
+          if (!body && !msg.message?.imageMessage && !msg.message?.documentMessage && !msg.message?.audioMessage) {
+            continue;
+          }
 
-          if (!body && !msg.message?.imageMessage && !msg.message?.documentMessage) continue;
-
-          console.log(`[WhatsApp Inbound] From: ${senderPhone} (${contactName}) - "${body.slice(0, 50)}"`);
+          const direction = isFromMe ? 'OUTBOUND' : 'INBOUND';
+          console.log(`[WhatsApp ${direction}] Phone: ${phone} (${contactName}) - "${body.slice(0, 50)}"`);
 
           try {
             await fetch(FASTAPI_WEBHOOK_URL, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                phone_number: senderPhone,
+                phone_number: phone,
                 contact_name: contactName,
                 message_body: body || '[Attachment Received]',
                 meta_message_id: msg.key.id || `wamid.qr_${Date.now()}`,
-                timestamp: Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000)
+                timestamp: Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000),
+                direction: direction
               })
             });
           } catch (webhookErr) {
-            console.error('[WhatsApp Gateway] Failed to forward inbound message to FastAPI:', webhookErr.message);
+            console.error('[WhatsApp Gateway] Failed to forward message to FastAPI:', webhookErr.message);
           }
         }
       } catch (err) {
