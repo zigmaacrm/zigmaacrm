@@ -123,6 +123,13 @@ const META_TEMPLATES = [
   }
 ];
 
+const EMOJI_LIST = [
+  "😊", "😂", "🤣", "❤️", "👍", "🔥", "🙏", "🎉", 
+  "👏", "✨", "💯", "🎯", "💼", "🤝", "🚀", "📞", 
+  "💬", "💰", "📄", "💡", "😍", "🥰", "😎", "🙌", 
+  "👌", "✌️", "💪", "🌟", "⭐", "✅", "❌", "❓"
+];
+
 const AVATAR_GRADIENTS = [
   "from-blue-600 to-indigo-700",
   "from-emerald-600 to-teal-700",
@@ -259,6 +266,8 @@ export default function WhatsAppPage() {
   const [isLoadingConversations, setIsLoadingConversations] = useState(true);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const emojiPickerRef = useRef<HTMLDivElement | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const [isEditingName, setIsEditingName] = useState(false);
@@ -525,6 +534,21 @@ export default function WhatsAppPage() {
     });
   }, [activeChat?.phone]);
 
+  // Close emoji picker on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (emojiPickerRef.current && !emojiPickerRef.current.contains(e.target as Node)) {
+        setShowEmojiPicker(false);
+      }
+    };
+    if (showEmojiPicker) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [showEmojiPicker]);
+
   // Polling: throttled refresh (8s) with document visibility guard & overlap prevention
   useEffect(() => {
     const poll = async () => {
@@ -783,16 +807,75 @@ export default function WhatsAppPage() {
     );
   };
 
-  // File upload simulation
+  // Real File & Document Upload
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0 || !activeChat) return;
     const file = files[0];
 
-    const fileMsgText = `📎 Shared Document: ${file.name}`;
-    handleSendMessage(fileMsgText);
-    toast.success("Attachment Dispatched", `Sent ${file.name} to ${activeChat.contactName}`);
+    if (file.size > 16 * 1024 * 1024) {
+      toast.error("File Too Large", "Maximum file size for WhatsApp is 16MB.");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const base64Data = reader.result as string;
+      await handleSendAttachment(file, base64Data);
+    };
+    reader.readAsDataURL(file);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleSendAttachment = async (file: File, base64Data: string) => {
+    if (!activeChat) return;
+    const cleanPhone = activeChat.phone.replace(/[^0-9]/g, "");
+
+    const tempId = `temp-${Date.now()}`;
+    const isImg = file.type.startsWith("image/");
+    const optimisticMsg: WhatsAppMessage = {
+      id: tempId,
+      sender: "outbound",
+      text: isImg ? "" : `📎 ${file.name}`,
+      timestamp: "Today",
+      timeLabel: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      dateGroup: "Today",
+      status: "SENT",
+      attachment: {
+        type: isImg ? "image" : "pdf",
+        name: file.name,
+        size: `${Math.round(file.size / 1024)} KB`,
+        url: isImg ? base64Data : undefined
+      }
+    };
+
+    setMessages((prev) => [...prev, optimisticMsg]);
+    setIsSending(true);
+
+    try {
+      const res = await api.sendWhatsAppMessage({
+        phone_number: cleanPhone,
+        message: isImg ? "" : `📎 ${file.name}`,
+        contact_id: activeChat.contact_id,
+        file_base64: base64Data,
+        file_name: file.name,
+        file_type: file.type
+      });
+
+      if (res && res.status === "success") {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === tempId ? { ...m, status: "DELIVERED" } : m))
+        );
+        loadMessages(cleanPhone, true);
+        loadConversations(true);
+        toast.success("Attachment Dispatched", `Sent ${file.name} to ${activeChat.contactName}`);
+      }
+    } catch (err: any) {
+      toast.error("Failed to send attachment", err.message || "Please check WhatsApp connection.");
+    } finally {
+      setIsSending(false);
+    }
   };
 
   return (
@@ -1115,9 +1198,11 @@ export default function WhatsAppPage() {
                           </span>
                         </div>
 
-                        <div className={cn("text-[11px] truncate mb-1", isDark ? "text-slate-400" : "text-slate-500")}>
-                          {conv.companyName}
-                        </div>
+                        {conv.companyName && conv.companyName !== "Direct Prospect" && (
+                          <div className={cn("text-[11px] font-medium truncate mb-0.5 text-emerald-600 dark:text-emerald-400")}>
+                            {conv.companyName}
+                          </div>
+                        )}
 
                         {/* Last message preview + unread pill */}
                         <div className="flex items-center justify-between gap-1">
@@ -1571,18 +1656,57 @@ export default function WhatsAppPage() {
                       )}
                     />
 
-                    {/* Emoji / Trigger */}
-                    <button
-                      type="button"
-                      onClick={() => setMessageInput((prev) => prev + " 👍")}
-                      className={cn(
-                        "h-9 w-9 flex items-center justify-center rounded-xl transition-all cursor-pointer shrink-0 hover:scale-105 active:scale-95",
-                        isDark ? "text-slate-400 hover:text-amber-400 hover:bg-white/5" : "text-slate-500 hover:text-amber-500 hover:bg-slate-200/60"
+                    {/* Add Emoji */}
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                        className={cn(
+                          "h-9 w-9 flex items-center justify-center rounded-xl transition-all cursor-pointer shrink-0 hover:scale-105 active:scale-95",
+                          showEmojiPicker
+                            ? "bg-amber-500/20 text-amber-500"
+                            : isDark ? "text-slate-400 hover:text-amber-400 hover:bg-white/5" : "text-slate-500 hover:text-amber-500 hover:bg-slate-200/60"
+                        )}
+                        title="Add emoji"
+                      >
+                        <Smile className="w-4 h-4" />
+                      </button>
+
+                      {showEmojiPicker && (
+                        <div
+                          ref={emojiPickerRef}
+                          className={cn(
+                            "absolute bottom-12 right-0 z-40 p-3 rounded-2xl shadow-2xl border w-72 backdrop-blur-md animate-in fade-in zoom-in-95 duration-150",
+                            isDark ? "bg-[#131B2E]/95 border-[#1E293B] text-white" : "bg-white/95 border-slate-200 text-slate-900"
+                          )}
+                        >
+                          <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100 dark:border-slate-800">
+                            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">Quick Emojis</span>
+                            <button
+                              type="button"
+                              onClick={() => setShowEmojiPicker(false)}
+                              className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-0.5 cursor-pointer"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                          <div className="grid grid-cols-8 gap-1.5 text-lg select-none">
+                            {EMOJI_LIST.map((emoji) => (
+                              <button
+                                key={emoji}
+                                type="button"
+                                onClick={() => {
+                                  setMessageInput((prev) => prev + emoji);
+                                }}
+                                className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-slate-100 dark:hover:bg-white/10 transition-transform active:scale-125 cursor-pointer text-base"
+                              >
+                                {emoji}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
                       )}
-                      title="Add quick emoji"
-                    >
-                      <Smile className="w-4 h-4" />
-                    </button>
+                    </div>
 
                     {/* Send Button */}
                     <button

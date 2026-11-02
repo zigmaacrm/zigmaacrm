@@ -3070,9 +3070,12 @@ export const zigmaaApi = {
 
   async sendWhatsAppMessage(payload: {
     phone_number: string;
-    message: string;
+    message?: string;
     contact_id?: string;
     organization_id?: string;
+    file_base64?: string;
+    file_name?: string;
+    file_type?: string;
   }): Promise<any> {
     try {
       const cleanPhone = payload.phone_number.replace(/[^0-9]/g, "");

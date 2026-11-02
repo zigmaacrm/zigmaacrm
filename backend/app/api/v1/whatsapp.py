@@ -95,9 +95,12 @@ class WhatsAppBulkSyncRequest(BaseModel):
 
 class SendWhatsAppMessageRequest(BaseModel):
     phone_number: str
-    message: str
+    message: Optional[str] = ""
     contact_id: Optional[str] = None
     organization_id: Optional[str] = None
+    file_base64: Optional[str] = None
+    file_name: Optional[str] = None
+    file_type: Optional[str] = None
 
 class WhatsAppMessageOut(BaseModel):
     id: str
@@ -137,10 +140,12 @@ async def send_whatsapp_message(
             detail="Valid recipient WhatsApp phone number is required"
         )
 
-    if not payload.message.strip():
+    has_text = bool(payload.message and payload.message.strip())
+    has_file = bool(payload.file_base64 and len(payload.file_base64) > 10)
+    if not has_text and not has_file:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Message body cannot be empty"
+            detail="Message body or file attachment is required"
         )
 
     org_id = payload.organization_id
@@ -171,9 +176,16 @@ async def send_whatsapp_message(
         async with httpx.AsyncClient(timeout=3.0) as client:
             st_res = await client.get(f"{gateway_url}/status")
             if st_res.status_code == 200 and st_res.json().get("status") == "CONNECTED":
+                send_payload = {
+                    "phone_number": clean_phone,
+                    "message": payload.message or "",
+                    "file_base64": payload.file_base64,
+                    "file_name": payload.file_name,
+                    "file_type": payload.file_type
+                }
                 send_res = await client.post(
                     f"{gateway_url}/send",
-                    json={"phone_number": clean_phone, "message": payload.message}
+                    json=send_payload
                 )
                 if send_res.status_code == 200 and send_res.json().get("success"):
                     meta_message_id = send_res.json().get("message_id") or f"wamid.qr_out_{uuid.uuid4().hex[:16]}"
@@ -243,6 +255,9 @@ async def send_whatsapp_message(
             meta_message_id = f"wamid.sim_{uuid.uuid4().hex[:18]}"
             delivery_status = "SENT"
 
+    body_text = payload.message.strip() if has_text else f"📎 {payload.file_name or 'Document Attachment'}"
+    msg_type = "image" if (payload.file_type or "").startswith("image/") else ("document" if has_file else "text")
+
     wa_message = WhatsAppMessage(
         organization_id=org_id,
         contact_id=contact_id,
@@ -250,8 +265,8 @@ async def send_whatsapp_message(
         business_phone_number_id=phone_number_id or None,
         phone_number=clean_phone,
         direction="OUTBOUND",
-        message_body=payload.message,
-        message_type="text",
+        message_body=body_text,
+        message_type=msg_type,
         meta_message_id=meta_message_id,
         status=delivery_status
     )

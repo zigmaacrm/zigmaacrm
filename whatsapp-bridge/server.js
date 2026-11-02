@@ -431,9 +431,9 @@ app.post('/disconnect', async (req, res) => {
 
 app.post('/send', async (req, res) => {
   try {
-    const { phone_number, message } = req.body;
-    if (!phone_number || !message) {
-      return res.status(400).json({ success: false, error: 'phone_number and message are required.' });
+    const { phone_number, message, file_base64, file_name, file_type } = req.body;
+    if (!phone_number || (!message && !file_base64)) {
+      return res.status(400).json({ success: false, error: 'phone_number and message or file are required.' });
     }
 
     if (connectionStatus !== 'CONNECTED' || !sock) {
@@ -446,10 +446,39 @@ app.post('/send', async (req, res) => {
     const cleanPhone = phone_number.replace(/[^0-9]/g, '');
     const jid = `${cleanPhone}@s.whatsapp.net`;
 
-    const result = await sock.sendMessage(jid, { text: message.trim() });
+    let result;
+    if (file_base64) {
+      const pureBase64 = file_base64.includes(',') ? file_base64.split(',')[1] : file_base64;
+      const fileBuffer = Buffer.from(pureBase64, 'base64');
+      const mime = file_type || 'application/octet-stream';
+
+      if (mime.startsWith('image/')) {
+        result = await sock.sendMessage(jid, {
+          image: fileBuffer,
+          caption: (message || '').trim(),
+          mimetype: mime
+        });
+      } else if (mime.startsWith('audio/')) {
+        result = await sock.sendMessage(jid, {
+          audio: fileBuffer,
+          mimetype: mime,
+          ptt: true
+        });
+      } else {
+        result = await sock.sendMessage(jid, {
+          document: fileBuffer,
+          mimetype: mime,
+          fileName: file_name || 'document.pdf',
+          caption: (message || '').trim()
+        });
+      }
+    } else {
+      result = await sock.sendMessage(jid, { text: message.trim() });
+    }
+
     const messageId = result?.key?.id || `wamid.qr_out_${Date.now()}`;
 
-    console.log(`[WhatsApp Outbound Success] To: ${cleanPhone}, ID: ${messageId}`);
+    console.log(`[WhatsApp Outbound Success] To: ${cleanPhone}, ID: ${messageId}${file_base64 ? ` (File: ${file_name || 'attachment'})` : ''}`);
     res.json({
       success: true,
       message_id: messageId,
