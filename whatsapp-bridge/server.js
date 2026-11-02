@@ -461,7 +461,7 @@ app.post('/send', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`========================================================`);
   console.log(`Zigmaa WhatsApp QR Gateway running on http://localhost:${PORT}`);
   console.log(`Webhook destination: ${FASTAPI_WEBHOOK_URL}`);
