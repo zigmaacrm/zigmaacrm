@@ -16,9 +16,10 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
 const PORT = process.env.PORT || 5001;
-const FASTAPI_WEBHOOK_URL = process.env.FASTAPI_WEBHOOK_URL || 'http://localhost:8000/api/v1/webhooks/whatsapp/inbound-qr';
-const FASTAPI_BULK_SYNC_URL = process.env.FASTAPI_BULK_SYNC_URL || 'http://localhost:8000/api/v1/whatsapp/contacts/bulk-sync';
-const FASTAPI_STATUS_UPDATE_URL = process.env.FASTAPI_STATUS_UPDATE_URL || 'http://localhost:8000/api/v1/webhooks/whatsapp/status-update';
+const BACKEND_BASE = process.env.FASTAPI_BASE_URL || (process.env.RENDER ? 'https://zigmaacrm-backend.onrender.com' : 'http://localhost:8000');
+const FASTAPI_WEBHOOK_URL = process.env.FASTAPI_WEBHOOK_URL || `${BACKEND_BASE}/api/v1/webhooks/whatsapp/inbound-qr`;
+const FASTAPI_BULK_SYNC_URL = process.env.FASTAPI_BULK_SYNC_URL || `${BACKEND_BASE}/api/v1/whatsapp/contacts/bulk-sync`;
+const FASTAPI_STATUS_UPDATE_URL = process.env.FASTAPI_STATUS_UPDATE_URL || `${BACKEND_BASE}/api/v1/webhooks/whatsapp/status-update`;
 const AUTH_DIR = path.join(__dirname, 'auth_info_baileys');
 
 // State
