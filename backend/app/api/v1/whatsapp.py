@@ -192,55 +192,56 @@ async def send_whatsapp_message(
         or default_phone_number_id
     )
 
-    if not dispatched_via_qr and api_token and phone_number_id:
-        url = f"https://graph.facebook.com/v20.0/{phone_number_id}/messages"
-        headers = {
-            "Authorization": f"Bearer {api_token}",
-            "Content-Type": "application/json"
-        }
-        meta_payload = {
-            "messaging_product": "whatsapp",
-            "recipient_type": "individual",
-            "to": clean_phone,
-            "type": "text",
-            "text": {
-                "preview_url": False,
-                "body": payload.message
+    if not dispatched_via_qr:
+        if api_token and phone_number_id:
+            url = f"https://graph.facebook.com/v20.0/{phone_number_id}/messages"
+            headers = {
+                "Authorization": f"Bearer {api_token}",
+                "Content-Type": "application/json"
             }
-        }
+            meta_payload = {
+                "messaging_product": "whatsapp",
+                "recipient_type": "individual",
+                "to": clean_phone,
+                "type": "text",
+                "text": {
+                    "preview_url": False,
+                    "body": payload.message
+                }
+            }
 
-        try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                res = await client.post(url, json=meta_payload, headers=headers)
-                try:
-                    data = res.json()
-                except Exception:
-                    data = {}
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    res = await client.post(url, json=meta_payload, headers=headers)
+                    try:
+                        data = res.json()
+                    except Exception:
+                        data = {}
 
-                if res.status_code in [200, 201] and "messages" in data:
-                    meta_message_id = data["messages"][0].get("id")
-                    delivery_status = "SENT"
-                    logger.info(f"[OUTBOUND DISPATCH SUCCESS] Meta Message ID: {meta_message_id} to recipient {clean_phone} via PhoneID {phone_number_id}")
-                else:
-                    delivery_status = "FAILED"
-                    meta_message_id = f"wamid.failed_{uuid.uuid4().hex[:18]}"
-                    raw_err = data.get("error", {})
-                    err_msg = raw_err.get("message") or res.text
-                    err_code = raw_err.get("code")
-                    dispatch_error_msg = f"{err_msg} (code: {err_code})" if err_code else err_msg
-                    logger.error(
-                        f"[OUTBOUND META API ERROR] Status {res.status_code}: {dispatch_error_msg} | "
-                        f"Recipient: {clean_phone} | PhoneID: {phone_number_id}"
-                    )
-        except Exception as e:
-            delivery_status = "FAILED"
+                    if res.status_code in [200, 201] and "messages" in data:
+                        meta_message_id = data["messages"][0].get("id")
+                        delivery_status = "SENT"
+                        logger.info(f"[OUTBOUND DISPATCH SUCCESS] Meta Message ID: {meta_message_id} to recipient {clean_phone} via PhoneID {phone_number_id}")
+                    else:
+                        delivery_status = "FAILED"
+                        meta_message_id = f"wamid.failed_{uuid.uuid4().hex[:18]}"
+                        raw_err = data.get("error", {})
+                        err_msg = raw_err.get("message") or res.text
+                        err_code = raw_err.get("code")
+                        dispatch_error_msg = f"{err_msg} (code: {err_code})" if err_code else err_msg
+                        logger.error(
+                            f"[OUTBOUND META API ERROR] Status {res.status_code}: {dispatch_error_msg} | "
+                            f"Recipient: {clean_phone} | PhoneID: {phone_number_id}"
+                        )
+            except Exception as e:
+                delivery_status = "FAILED"
+                meta_message_id = f"wamid.sim_{uuid.uuid4().hex[:18]}"
+                dispatch_error_msg = str(e)
+                logger.error(f"[OUTBOUND CONNECTION ERROR] Failed to connect to Meta Graph API: {e}")
+        else:
+            logger.warning("[OUTBOUND WARNING] WHATSAPP_ACCESS_TOKEN or WHATSAPP_PHONE_NUMBER_ID not configured.")
             meta_message_id = f"wamid.sim_{uuid.uuid4().hex[:18]}"
-            dispatch_error_msg = str(e)
-            logger.error(f"[OUTBOUND CONNECTION ERROR] Failed to connect to Meta Graph API: {e}")
-    else:
-        logger.warning("[OUTBOUND WARNING] WHATSAPP_ACCESS_TOKEN or WHATSAPP_PHONE_NUMBER_ID not configured.")
-        meta_message_id = f"wamid.sim_{uuid.uuid4().hex[:18]}"
-        delivery_status = "SENT"
+            delivery_status = "SENT"
 
     wa_message = WhatsAppMessage(
         organization_id=org_id,

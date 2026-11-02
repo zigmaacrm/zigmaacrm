@@ -243,6 +243,9 @@ async function initWhatsApp(forceClean = false) {
         if (!messages || !messages.length) return;
 
         for (const msg of messages) {
+          // Strictly ignore outbound messages sent by us so CRM messages are never duplicated
+          if (msg.key?.fromMe) continue;
+
           const remoteJid = msg.key?.remoteJid || '';
           if (!remoteJid || remoteJid === 'status@broadcast' || remoteJid.endsWith('@g.us') || remoteJid.endsWith('@broadcast')) {
             continue;
