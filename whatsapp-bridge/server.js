@@ -18,6 +18,7 @@ app.use(express.json({ limit: '10mb' }));
 const PORT = process.env.PORT || 5001;
 const FASTAPI_WEBHOOK_URL = process.env.FASTAPI_WEBHOOK_URL || 'http://localhost:8000/api/v1/webhooks/whatsapp/inbound-qr';
 const FASTAPI_BULK_SYNC_URL = process.env.FASTAPI_BULK_SYNC_URL || 'http://localhost:8000/api/v1/whatsapp/contacts/bulk-sync';
+const FASTAPI_STATUS_UPDATE_URL = process.env.FASTAPI_STATUS_UPDATE_URL || 'http://localhost:8000/api/v1/webhooks/whatsapp/status-update';
 const AUTH_DIR = path.join(__dirname, 'auth_info_baileys');
 
 // State
@@ -294,6 +295,66 @@ async function initWhatsApp(forceClean = false) {
         }
       } catch (err) {
         console.error('[WhatsApp Gateway] Error handling messages.upsert:', err);
+      }
+    });
+
+    // 3. Message Status & Read Receipts (Blue Ticks)
+    sock.ev.on('messages.update', async (updates) => {
+      try {
+        if (!updates || !Array.isArray(updates)) return;
+        for (const u of updates) {
+          const id = u.key?.id;
+          const statusNum = u.update?.status;
+          if (!id || typeof statusNum === 'undefined') continue;
+
+          let statusStr = null;
+          // WAMessageStatus: 2: SERVER_ACK (SENT), 3: DELIVERY_ACK (DELIVERED), 4: READ (READ), 5: PLAYED (READ)
+          if (statusNum === 4 || statusNum === 5) {
+            statusStr = 'READ';
+          } else if (statusNum === 3) {
+            statusStr = 'DELIVERED';
+          } else if (statusNum === 2) {
+            statusStr = 'SENT';
+          }
+
+          if (statusStr) {
+            console.log(`[WhatsApp Receipt] ID: ${id} -> ${statusStr}`);
+            try {
+              await fetch(FASTAPI_STATUS_UPDATE_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ meta_message_id: id, status: statusStr })
+              });
+            } catch (_) {}
+          }
+        }
+      } catch (err) {
+        console.error('[WhatsApp Gateway] Error handling messages.update:', err);
+      }
+    });
+
+    sock.ev.on('message-receipt.update', async (receipts) => {
+      try {
+        if (!receipts || !Array.isArray(receipts)) return;
+        for (const r of receipts) {
+          const id = r.key?.id;
+          if (!id) continue;
+          const isRead = Boolean(r.receipt?.readTimestamp);
+          const isDelivered = Boolean(r.receipt?.receiptTimestamp);
+          const statusStr = isRead ? 'READ' : (isDelivered ? 'DELIVERED' : null);
+          if (statusStr) {
+            console.log(`[WhatsApp Read Receipt] ID: ${id} -> ${statusStr}`);
+            try {
+              await fetch(FASTAPI_STATUS_UPDATE_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ meta_message_id: id, status: statusStr })
+              });
+            } catch (_) {}
+          }
+        }
+      } catch (err) {
+        console.error('[WhatsApp Gateway] Error handling message-receipt.update:', err);
       }
     });
   } catch (err) {

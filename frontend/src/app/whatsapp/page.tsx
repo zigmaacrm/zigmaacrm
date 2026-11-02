@@ -543,7 +543,7 @@ export default function WhatsAppPage() {
       }
     };
 
-    const interval = setInterval(poll, 8000);
+    const interval = setInterval(poll, 3000);
 
     const handleVisibility = () => {
       if (typeof document !== "undefined" && !document.hidden) {
@@ -1369,12 +1369,18 @@ export default function WhatsAppPage() {
                             )}>
                               <span>{msg.timeLabel}</span>
                               {isOutbound && (
-                                <CheckCheck
-                                  className={cn(
-                                    "w-3.5 h-3.5",
-                                    msg.status === "READ" ? "text-cyan-500" : (isDark ? "text-slate-400" : "text-slate-400")
+                                <span title={msg.status === "READ" ? "Read" : msg.status === "DELIVERED" ? "Delivered" : "Sent"}>
+                                  {msg.status === "SENT" ? (
+                                    <Check className={cn("w-3.5 h-3.5", isDark ? "text-slate-400" : "text-slate-400")} />
+                                  ) : (
+                                    <CheckCheck
+                                      className={cn(
+                                        "w-3.5 h-3.5",
+                                        msg.status === "READ" ? "text-[#53bdeb]" : (isDark ? "text-slate-400" : "text-slate-400")
+                                      )}
+                                    />
                                   )}
-                                />
+                                </span>
                               )}
                             </div>
                           </div>

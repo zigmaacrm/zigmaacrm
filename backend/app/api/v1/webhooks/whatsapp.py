@@ -488,6 +488,10 @@ async def receive_whatsapp_webhook(
 
     return {"status": "success", "processed": True}
 
+class WhatsAppStatusUpdateRequest(BaseModel):
+    meta_message_id: str
+    status: str
+
 class InboundQRMessage(BaseModel):
     phone_number: str
     contact_name: Optional[str] = None
@@ -571,6 +575,18 @@ async def receive_whatsapp_qr_inbound(
     )
     db.add(wa_msg)
 
+    # Automatically mark previous outbound messages to this contact as READ since they just replied
+    if msg_direction == "INBOUND":
+        await db.execute(
+            update(WhatsAppMessage)
+            .where(
+                WhatsAppMessage.phone_number.like(f"%{search_suffix}%"),
+                WhatsAppMessage.direction == "OUTBOUND",
+                WhatsAppMessage.status != "READ"
+            )
+            .values(status="READ")
+        )
+
     act = Activity(
         organization_id=default_org_id,
         contact_id=contact.id if contact else None,
@@ -584,3 +600,29 @@ async def receive_whatsapp_qr_inbound(
     await db.commit()
     logger.info(f"[QR INBOUND PROCESSED] From: {clean_phone} ({display_name}) - Msg: {payload.message_body[:40]}")
     return {"status": "success", "contact_id": contact.id, "is_new_lead": is_new_lead}
+
+@router.post("/whatsapp/status-update")
+@router.post("/status-update")
+async def update_whatsapp_message_status(
+    payload: WhatsAppStatusUpdateRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Updates delivery/read status of an outbound WhatsApp message (blue tick).
+    """
+    new_status = payload.status.upper()
+    clean_id = payload.meta_message_id.strip()
+    stmt = (
+        update(WhatsAppMessage)
+        .where(
+            or_(
+                WhatsAppMessage.meta_message_id == clean_id,
+                WhatsAppMessage.meta_message_id == f"wamid.{clean_id}",
+                WhatsAppMessage.meta_message_id.like(f"%{clean_id}%")
+            )
+        )
+        .values(status=new_status)
+    )
+    res = await db.execute(stmt)
+    await db.commit()
+    return {"status": "success", "updated": res.rowcount}
