@@ -36,10 +36,12 @@ import {
   Zap,
   RefreshCw,
   Loader2,
-  Edit2
+  Edit2,
+  QrCode
 } from "lucide-react";
 import Sidebar from "@/components/layout/Sidebar";
 import Header from "@/components/layout/Header";
+import WhatsAppQRModal from "@/components/whatsapp/WhatsAppQRModal";
 import { useToast } from "@/components/common/ToastProvider";
 import { useTheme } from "@/context/ThemeContext";
 import { formatCurrency, cn } from "@/lib/utils";
@@ -173,6 +175,18 @@ export default function WhatsAppPage() {
   const [newNoteText, setNewNoteText] = useState("");
 
   // Multi-Number Rep State
+  // QR WhatsApp State
+  const [showQRModal, setShowQRModal] = useState(false);
+  const [qrStatus, setQrStatus] = useState<"DISCONNECTED" | "SCAN_QR" | "CONNECTED">("DISCONNECTED");
+  const [qrPhone, setQrPhone] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.getWhatsAppQRStatus().then((data) => {
+      setQrStatus(data.status);
+      setQrPhone(data.phone);
+    }).catch(() => {});
+  }, []);
+
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [teamMembers, setTeamMembers] = useState<any[]>([]);
   const [selectedRepFilter, setSelectedRepFilter] = useState<string>("ALL");
@@ -667,6 +681,38 @@ export default function WhatsAppPage() {
                       </span>
                       <span>Live • Meta Cloud API</span>
                     </div>
+                    {/* QR Code Multi-Device Status Button */}
+                    <button
+                      onClick={() => setShowQRModal(true)}
+                      className={cn(
+                        "mt-1.5 w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl border text-[11px] font-semibold transition-all cursor-pointer shadow-2xs hover:scale-[1.01] active:scale-[0.99]",
+                        qrStatus === "CONNECTED"
+                          ? isDark
+                            ? "bg-emerald-950/40 border-emerald-800/60 text-emerald-300 hover:bg-emerald-900/50"
+                            : "bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100"
+                          : isDark
+                            ? "bg-slate-800/80 border-slate-700/80 text-slate-300 hover:border-emerald-500 hover:text-emerald-400"
+                            : "bg-white border-slate-200 text-slate-700 hover:border-emerald-500 hover:text-emerald-700"
+                      )}
+                      title="Link your real phone via QR Code (₹0 Meta charges)"
+                    >
+                      <div className="flex items-center gap-1.5 truncate">
+                        <QrCode className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                        <span className="truncate">
+                          {qrStatus === "CONNECTED"
+                            ? `● Linked: ${qrPhone || "Active"}`
+                            : "Link Phone (QR Scan)"}
+                        </span>
+                      </div>
+                      <span className={cn(
+                        "text-[9px] uppercase px-1.5 py-0.5 rounded-md font-bold tracking-wider shrink-0",
+                        qrStatus === "CONNECTED"
+                          ? "bg-emerald-500 text-white"
+                          : "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300"
+                      )}>
+                        {qrStatus === "CONNECTED" ? "Free" : "QR"}
+                      </span>
+                    </button>
                   </div>
                 </div>
 
@@ -1790,6 +1836,16 @@ export default function WhatsAppPage() {
           </div>
         </div>
       )}
+      {/* WhatsApp QR Scan Modal */}
+      <WhatsAppQRModal
+        isOpen={showQRModal}
+        onClose={() => setShowQRModal(false)}
+        onStatusChange={(status, phone) => {
+          setQrStatus(status);
+          setQrPhone(phone);
+        }}
+      />
+
     </div>
   );
 }

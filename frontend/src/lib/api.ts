@@ -3422,7 +3422,60 @@ export const zigmaaApi = {
       }
     }
     return data;
-  }
+  },
+
+  // ===== WHATSAPP QR GATEWAY (LINKED DEVICE) =====
+  async getWhatsAppQRStatus(): Promise<{
+    status: "DISCONNECTED" | "SCAN_QR" | "CONNECTED";
+    phone: string | null;
+    name: string | null;
+    qr: string | null;
+    gateway_online: boolean;
+  }> {
+    try {
+      const res = await fetch(`${API_BASE}/whatsapp/qr/status`, {
+        headers: getAuthHeaders(),
+        cache: "no-store"
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn("Failed to check WhatsApp QR status", e);
+    }
+    return {
+      status: "DISCONNECTED",
+      phone: null,
+      name: null,
+      qr: null,
+      gateway_online: false
+    };
+  },
+
+  async refreshWhatsAppQR(): Promise<any> {
+    const res = await fetch(`${API_BASE}/whatsapp/qr/refresh`, {
+      method: "POST",
+      headers: getAuthHeaders()
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to refresh QR code");
+    }
+    return await res.json();
+  },
+
+  async disconnectWhatsAppQR(): Promise<any> {
+    const res = await fetch(`${API_BASE}/whatsapp/qr/disconnect`, {
+      method: "POST",
+      headers: getAuthHeaders()
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to disconnect WhatsApp QR");
+    }
+    return await res.json();
+  },
+
 };
 
 export default zigmaaApi;

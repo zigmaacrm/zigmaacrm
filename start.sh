@@ -13,11 +13,14 @@ elif [ -f "./.venv/Scripts/python.exe" ]; then
     PYTHON_BIN="./.venv/Scripts/python.exe"
 fi
 
-echo "[1/3] Running Database Seed Script..."
+echo "[1/4] Running Database Seed Script..."
 "$PYTHON_BIN" backend/seed.py
 
-echo "[2/3] Starting FastAPI Backend on http://localhost:8000 ..."
+echo "[2/4] Starting FastAPI Backend on http://localhost:8000 ..."
 "$PYTHON_BIN" -m uvicorn app.main:app --app-dir backend --reload --port 8000 &
 
-echo "[3/3] Starting Next.js Frontend on http://localhost:3000 ..."
+echo "[3/4] Starting WhatsApp QR Gateway on http://localhost:5001 ..."
+(cd whatsapp-bridge && node server.js) &
+
+echo "[4/4] Starting Next.js Frontend on http://localhost:3000 ..."
 npm run dev --prefix frontend

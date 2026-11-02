@@ -56,3 +56,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# WhatsApp Gateway Baileys Sessions
+auth_info_baileys/
+**/auth_info_baileys/

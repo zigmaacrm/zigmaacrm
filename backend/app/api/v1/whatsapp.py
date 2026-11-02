@@ -154,13 +154,36 @@ async def send_whatsapp_message(
     delivery_status = "SENT"
     dispatch_error_msg = None
 
+    # 1. Attempt dispatch via Baileys QR Gateway if connected
+    gateway_url = getattr(settings, "WHATSAPP_GATEWAY_URL", "http://localhost:5001")
+    dispatched_via_qr = False
+
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            st_res = await client.get(f"{gateway_url}/status")
+            if st_res.status_code == 200 and st_res.json().get("status") == "CONNECTED":
+                send_res = await client.post(
+                    f"{gateway_url}/send",
+                    json={"phone_number": clean_phone, "message": payload.message}
+                )
+                if send_res.status_code == 200 and send_res.json().get("success"):
+                    meta_message_id = send_res.json().get("message_id") or f"wamid.qr_out_{uuid.uuid4().hex[:16]}"
+                    delivery_status = "SENT"
+                    dispatched_via_qr = True
+                    logger.info(f"[OUTBOUND QR DISPATCH SUCCESS] Message {meta_message_id} sent to {clean_phone}")
+                else:
+                    logger.warning(f"[OUTBOUND QR DISPATCH FAILED] {send_res.text}")
+    except Exception as e:
+        logger.debug(f"QR Gateway check skipped or failed: {e}")
+
+    # 2. Fallback to Meta Cloud API if QR Gateway is not connected
     api_token, default_phone_number_id = get_whatsapp_credentials()
     phone_number_id = (
         (current_user.whatsapp_phone_number_id if current_user and current_user.whatsapp_phone_number_id else None)
         or default_phone_number_id
     )
 
-    if api_token and phone_number_id:
+    if not dispatched_via_qr and api_token and phone_number_id:
         url = f"https://graph.facebook.com/v20.0/{phone_number_id}/messages"
         headers = {
             "Authorization": f"Bearer {api_token}",
@@ -509,3 +532,53 @@ async def mark_conversation_as_read(
         m.status = "READ"
     await db.commit()
     return {"status": "success", "marked_read": len(msgs)}
+
+@router.get("/qr/status")
+async def get_whatsapp_qr_status():
+    """
+    Checks connection status, linked phone, and current QR code from Baileys gateway.
+    """
+    gateway_url = getattr(settings, "WHATSAPP_GATEWAY_URL", "http://localhost:5001")
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(f"{gateway_url}/status")
+            if resp.status_code == 200:
+                data = resp.json()
+                data["gateway_online"] = True
+                return data
+    except Exception as e:
+        logger.debug(f"WhatsApp QR Gateway not reachable: {e}")
+
+    return {
+        "status": "DISCONNECTED",
+        "phone": None,
+        "name": None,
+        "qr": None,
+        "gateway_online": False
+    }
+
+@router.post("/qr/refresh")
+async def refresh_whatsapp_qr():
+    """
+    Requests a fresh QR code from the Baileys gateway.
+    """
+    gateway_url = getattr(settings, "WHATSAPP_GATEWAY_URL", "http://localhost:5001")
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(f"{gateway_url}/refresh-qr")
+            return resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Failed to connect to WhatsApp Gateway: {e}")
+
+@router.post("/qr/disconnect")
+async def disconnect_whatsapp_qr():
+    """
+    Disconnects and logs out the Baileys QR session.
+    """
+    gateway_url = getattr(settings, "WHATSAPP_GATEWAY_URL", "http://localhost:5001")
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(f"{gateway_url}/disconnect")
+            return resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Failed to disconnect WhatsApp Gateway: {e}")

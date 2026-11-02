@@ -5,6 +5,7 @@ import httpx
 import datetime
 from datetime import datetime as dt_utcnow
 from typing import Optional, Dict, Any
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, BackgroundTasks, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, or_, desc
@@ -486,3 +487,91 @@ async def receive_whatsapp_webhook(
                     )
 
     return {"status": "success", "processed": True}
+
+class InboundQRMessage(BaseModel):
+    phone_number: str
+    contact_name: Optional[str] = None
+    message_body: str
+    meta_message_id: Optional[str] = None
+    timestamp: Optional[int] = None
+
+@router.post("/whatsapp/inbound-qr")
+@router.post("/inbound-qr")
+async def receive_whatsapp_qr_inbound(
+    payload: InboundQRMessage,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Ingests inbound messages from Baileys WhatsApp QR Gateway.
+    Automatically captures lead/contact, links conversation, and triggers notifications.
+    """
+    clean_phone = normalize_phone(payload.phone_number)
+    if not clean_phone:
+        return {"status": "ignored", "reason": "empty_phone"}
+
+    res_org = await db.execute(select(Organization).limit(1))
+    default_org = res_org.scalars().first()
+    default_org_id = default_org.id if default_org else None
+
+    search_suffix = clean_phone[-10:] if len(clean_phone) >= 10 else clean_phone
+    c_res = await db.execute(select(Contact).where(Contact.phone.like(f"%{search_suffix}%")).limit(1))
+    contact = c_res.scalar_one_or_none()
+
+    lead_res = await db.execute(select(Lead).where(Lead.phone.like(f"%{search_suffix}%")).limit(1))
+    lead = lead_res.scalar_one_or_none()
+
+    display_name = payload.contact_name.strip() if payload.contact_name and payload.contact_name.strip() else format_display_phone(clean_phone)
+
+    is_new_lead = False
+    if not contact:
+        contact = Contact(
+            organization_id=default_org_id,
+            full_name=display_name,
+            phone=f"+{clean_phone}" if not clean_phone.startswith("+") else clean_phone,
+            lead_source="WhatsApp QR",
+            lifecycle_stage="LEAD"
+        )
+        db.add(contact)
+        await db.flush()
+        is_new_lead = True
+
+    if not lead:
+        name_parts = display_name.split(" ", 1)
+        lead = Lead(
+            organization_id=default_org_id,
+            first_name=name_parts[0] if name_parts else "WhatsApp",
+            last_name=name_parts[1] if len(name_parts) > 1 else "Prospect",
+            phone=f"+{clean_phone}" if not clean_phone.startswith("+") else clean_phone,
+            lead_source="WhatsApp QR",
+            status="NEW"
+        )
+        db.add(lead)
+        await db.flush()
+
+    msg_id = payload.meta_message_id or f"wamid.qr_{uuid.uuid4().hex[:16]}"
+    wa_msg = WhatsAppMessage(
+        organization_id=default_org_id,
+        contact_id=contact.id if contact else None,
+        phone_number=clean_phone,
+        direction="INBOUND",
+        message_body=payload.message_body or "[Empty Message]",
+        message_type="text",
+        meta_message_id=msg_id,
+        status="DELIVERED"
+    )
+    db.add(wa_msg)
+
+    act = Activity(
+        organization_id=default_org_id,
+        contact_id=contact.id if contact else None,
+        lead_id=lead.id if lead else None,
+        type="NOTE",
+        notes=f"💬 WhatsApp Inbound (QR Scan): {payload.message_body[:250]}",
+        status="COMPLETED"
+    )
+    db.add(act)
+
+    await db.commit()
+    logger.info(f"[QR INBOUND PROCESSED] From: {clean_phone} ({display_name}) - Msg: {payload.message_body[:40]}")
+    return {"status": "success", "contact_id": contact.id, "is_new_lead": is_new_lead}
