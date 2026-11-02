@@ -17,7 +17,7 @@ import {
   CheckCircle2,
   AlertCircle,
   HelpCircle,
-  Sparkles,
+  
   ChevronRight,
   X
 } from "lucide-react";
@@ -264,33 +264,6 @@ export default function ModulesAndFieldsManager({
   if (!activeModule) {
     return (
       <div className="space-y-6">
-        {/* Banner */}
-        <div className="bg-gradient-to-r from-red-500/10 via-rose-500/5 to-slate-50 border border-red-100 rounded-2xl p-6">
-          <div className="flex items-start justify-between">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <div className="p-2 bg-red-600 text-white rounded-xl shadow-xs">
-                  <Sliders className="w-5 h-5" />
-                </div>
-                <h2 className="text-lg font-bold text-slate-900 tracking-tight">Modules & Custom Fields</h2>
-              </div>
-              <p className="text-sm text-slate-600 max-w-2xl pt-1">
-                Configure administrative data schemas for core CRM entities. Custom fields created here automatically integrate with data tables, column customizers, and contact profiles.
-              </p>
-            </div>
-            {readOnly ? (
-              <div className="flex items-center gap-1.5 bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-600 shadow-2xs">
-                <Lock className="w-3.5 h-3.5 text-slate-500" />
-                <span>View Only (Sales Rep)</span>
-              </div>
-            ) : (
-              <div className="hidden sm:flex items-center gap-2 bg-white/80 border border-slate-200/80 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-700 shadow-2xs">
-                <Sparkles className="w-4 h-4 text-amber-500" />
-                <span>Enterprise Schema Engine</span>
-              </div>
-            )}
-          </div>
-        </div>
 
         {/* Modules Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
