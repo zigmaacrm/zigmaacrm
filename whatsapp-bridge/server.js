@@ -13,10 +13,11 @@ const {
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 const PORT = process.env.PORT || 5001;
 const FASTAPI_WEBHOOK_URL = process.env.FASTAPI_WEBHOOK_URL || 'http://localhost:8000/api/v1/webhooks/whatsapp/inbound-qr';
+const FASTAPI_BULK_SYNC_URL = process.env.FASTAPI_BULK_SYNC_URL || 'http://localhost:8000/api/v1/whatsapp/contacts/bulk-sync';
 const AUTH_DIR = path.join(__dirname, 'auth_info_baileys');
 
 // State
@@ -27,7 +28,36 @@ let connectedPhone = null;
 let connectedName = null;
 let isStarting = false;
 
+// Contacts buffer
+let syncTimeout = null;
+const pendingContacts = new Map();
+
 const logger = pino({ level: 'silent' });
+
+function scheduleContactSync() {
+  if (syncTimeout) clearTimeout(syncTimeout);
+  syncTimeout = setTimeout(async () => {
+    if (pendingContacts.size === 0) return;
+    const list = Array.from(pendingContacts.values());
+    pendingContacts.clear();
+
+    console.log(`[WhatsApp Gateway] Dispatching ${list.length} direct contacts to CRM bulk-sync...`);
+
+    // Batch in chunks of 50
+    for (let i = 0; i < list.length; i += 50) {
+      const batch = list.slice(i, i + 50);
+      try {
+        await fetch(FASTAPI_BULK_SYNC_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contacts: batch })
+        });
+      } catch (err) {
+        console.error('[WhatsApp Gateway] Bulk-sync dispatch failed:', err.message);
+      }
+    }
+  }, 1500);
+}
 
 async function initWhatsApp(forceClean = false) {
   if (isStarting) return;
@@ -47,7 +77,7 @@ async function initWhatsApp(forceClean = false) {
     }
 
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-    const { version, isLatest } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307], isLatest: true }));
+    const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307], isLatest: true }));
 
     sock = makeWASocket({
       version,
@@ -94,7 +124,6 @@ async function initWhatsApp(forceClean = false) {
             } catch (_) {}
           }
           isStarting = false;
-          // Restart clean to allow fresh scan
           setTimeout(() => initWhatsApp(false), 2000);
         } else {
           connectionStatus = 'DISCONNECTED';
@@ -115,41 +144,77 @@ async function initWhatsApp(forceClean = false) {
       }
     });
 
-    // Listen for incoming messages
+    // 1. Direct Contact Sync (Ignore @g.us group chats, only accept direct @c.us and @s.whatsapp.net)
+    sock.ev.on('messaging-history.set', ({ contacts }) => {
+      if (!contacts || !Array.isArray(contacts)) return;
+      for (const c of contacts) {
+        const jid = c.id || '';
+        if (jid.endsWith('@g.us') || jid === 'status@broadcast') continue;
+        if (!jid.endsWith('@c.us') && !jid.endsWith('@s.whatsapp.net')) continue;
+        const phone = jid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+        if (!phone || phone.length < 7) continue;
+
+        const name = c.name || c.notify || c.verifiedName || null;
+        pendingContacts.set(phone, {
+          phone,
+          name,
+          jid,
+          avatar_url: null
+        });
+      }
+      scheduleContactSync();
+    });
+
+    sock.ev.on('contacts.upsert', (contacts) => {
+      if (!contacts || !Array.isArray(contacts)) return;
+      for (const c of contacts) {
+        const jid = c.id || '';
+        if (jid.endsWith('@g.us') || jid === 'status@broadcast') continue;
+        if (!jid.endsWith('@c.us') && !jid.endsWith('@s.whatsapp.net')) continue;
+        const phone = jid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+        if (!phone || phone.length < 7) continue;
+
+        const name = c.name || c.notify || c.verifiedName || null;
+        pendingContacts.set(phone, {
+          phone,
+          name,
+          jid,
+          avatar_url: null
+        });
+      }
+      scheduleContactSync();
+    });
+
+    // 2. Inbound Live Messages
     sock.ev.on('messages.upsert', async (chatUpdate) => {
       try {
         const { messages, type } = chatUpdate;
         if (type !== 'notify' || !messages || !messages.length) return;
 
         for (const msg of messages) {
-          // Ignore messages sent by ourselves or status broadcasts
-          if (msg.key.fromMe || msg.key.remoteJid === 'status@broadcast') continue;
-          if (!msg.message) continue;
-
+          if (msg.key.fromMe) continue;
           const remoteJid = msg.key.remoteJid || '';
-          // Only process standard WhatsApp 1-on-1 chats (or group chats if needed)
-          if (!remoteJid.endsWith('@s.whatsapp.net')) continue;
+          if (remoteJid === 'status@broadcast' || remoteJid.endsWith('@g.us')) continue;
+          if (!remoteJid.endsWith('@s.whatsapp.net') && !remoteJid.endsWith('@c.us')) continue;
 
-          const senderPhone = remoteJid.replace('@s.whatsapp.net', '').replace(/[^0-9]/g, '');
+          const senderPhone = remoteJid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
           const contactName = msg.pushName || '';
 
-          // Extract text
           const body =
-            msg.message.conversation ||
-            msg.message.extendedTextMessage?.text ||
-            msg.message.imageMessage?.caption ||
-            msg.message.videoMessage?.caption ||
-            msg.message.documentMessage?.caption ||
-            (msg.message.imageMessage ? '[Image Attachment]' : '') ||
-            (msg.message.documentMessage ? '[Document Attachment]' : '') ||
-            (msg.message.audioMessage ? '[Voice Note]' : '') ||
+            msg.message?.conversation ||
+            msg.message?.extendedTextMessage?.text ||
+            msg.message?.imageMessage?.caption ||
+            msg.message?.videoMessage?.caption ||
+            msg.message?.documentMessage?.caption ||
+            (msg.message?.imageMessage ? '[Image Attachment]' : '') ||
+            (msg.message?.documentMessage ? '[Document Attachment]' : '') ||
+            (msg.message?.audioMessage ? '[Voice Note]' : '') ||
             '';
 
-          if (!body && !msg.message.imageMessage && !msg.message.documentMessage) continue;
+          if (!body && !msg.message?.imageMessage && !msg.message?.documentMessage) continue;
 
           console.log(`[WhatsApp Inbound] From: ${senderPhone} (${contactName}) - "${body.slice(0, 50)}"`);
 
-          // Forward to FastAPI webhook
           try {
             await fetch(FASTAPI_WEBHOOK_URL, {
               method: 'POST',
@@ -184,6 +249,20 @@ app.get('/status', (req, res) => {
     name: connectedName,
     qr: latestQR
   });
+});
+
+app.get('/avatar/:phone', async (req, res) => {
+  try {
+    const clean = req.params.phone.replace(/[^0-9]/g, '');
+    if (!clean || !sock || connectionStatus !== 'CONNECTED') {
+      return res.json({ phone: clean, avatar_url: null });
+    }
+    const jid = `${clean}@s.whatsapp.net`;
+    const url = await sock.profilePictureUrl(jid, 'image').catch(() => null);
+    res.json({ phone: clean, avatar_url: url || null });
+  } catch (_) {
+    res.json({ phone: req.params.phone, avatar_url: null });
+  }
 });
 
 app.post('/refresh-qr', async (req, res) => {
@@ -264,7 +343,7 @@ app.listen(PORT, () => {
   console.log(`========================================================`);
   console.log(`Zigmaa WhatsApp QR Gateway running on http://localhost:${PORT}`);
   console.log(`Webhook destination: ${FASTAPI_WEBHOOK_URL}`);
+  console.log(`Bulk sync destination: ${FASTAPI_BULK_SYNC_URL}`);
   console.log(`========================================================`);
   initWhatsApp(false);
 });
-

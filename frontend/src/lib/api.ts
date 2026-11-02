@@ -3476,6 +3476,21 @@ export const zigmaaApi = {
     return await res.json();
   },
 
+  async getWhatsAppContactAvatar(phone: string): Promise<{ phone: string; avatar_url: string | null }> {
+    try {
+      const res = await fetch(`${API_BASE}/whatsapp/contacts/${encodeURIComponent(phone)}/avatar`, {
+        headers: getAuthHeaders(),
+        cache: "no-store"
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn("Failed to fetch contact avatar", e);
+    }
+    return { phone, avatar_url: null };
+  },
+
 };
 
 export default zigmaaApi;

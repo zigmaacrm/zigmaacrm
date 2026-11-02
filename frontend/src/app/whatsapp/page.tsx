@@ -71,6 +71,7 @@ export interface WhatsAppConversation {
   companyName: string;
   phone: string;
   email: string;
+  avatar_url?: string | null;
   avatarInitials: string;
   avatarColor: string;
   assignedRep: {
@@ -169,6 +170,51 @@ function format_display_phone(phone: string): string {
     return `+91 ${clean.slice(0, 5)} ${clean.slice(5)}`;
   }
   return `+${clean}`;
+}
+
+function ContactAvatar({
+  avatarUrl,
+  name,
+  initials,
+  color,
+  size = "w-11 h-11",
+  rounded = "rounded-full",
+  textClass = "text-xs"
+}: {
+  avatarUrl?: string | null;
+  name?: string;
+  initials: string;
+  color?: string;
+  size?: string;
+  rounded?: string;
+  textClass?: string;
+}) {
+  const [imgError, setImgError] = useState(false);
+
+  if (avatarUrl && !imgError) {
+    return (
+      <img
+        src={avatarUrl}
+        alt={name || "Contact"}
+        onError={() => setImgError(true)}
+        className={cn(size, rounded, "object-cover shrink-0 shadow-xs")}
+      />
+    );
+  }
+
+  return (
+    <div
+      className={cn(
+        size,
+        rounded,
+        "bg-gradient-to-br flex items-center justify-center font-bold text-white shrink-0 shadow-xs",
+        color || "from-emerald-600 to-teal-700",
+        textClass
+      )}
+    >
+      {initials}
+    </div>
+  );
 }
 
 export default function WhatsAppPage() {
@@ -297,6 +343,7 @@ export default function WhatsAppPage() {
       companyName: raw.company_name || "Direct Prospect",
       phone: raw.phone_number.startsWith("+") ? raw.phone_number : `+${raw.phone_number}`,
       email: raw.email || "client@whatsapp.crm",
+      avatar_url: raw.avatar_url || null,
       avatarInitials: initials || "WA",
       avatarColor: grad,
       assignedRep: {
@@ -458,6 +505,25 @@ export default function WhatsAppPage() {
       api.markWhatsAppConversationRead(activePhone).catch(() => {});
     }
   }, [activePhone, loadMessages]);
+
+  // Lazy load avatar for active contact if missing
+  useEffect(() => {
+    if (!activeChat || activeChat.avatar_url) return;
+    const clean = activeChat.phone.replace(/[^0-9]/g, "");
+    if (!clean) return;
+
+    api.getWhatsAppContactAvatar(clean).then((res) => {
+      if (res?.avatar_url) {
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.phone.replace(/[^0-9]/g, "") === clean
+              ? { ...c, avatar_url: res.avatar_url }
+              : c
+          )
+        );
+      }
+    });
+  }, [activeChat?.phone]);
 
   // Polling: throttled refresh (8s) with document visibility guard & overlap prevention
   useEffect(() => {
@@ -1016,14 +1082,15 @@ export default function WhatsAppPage() {
                     >
                       {/* Avatar */}
                       <div className="relative shrink-0">
-                        <div
-                          className={cn(
-                            "w-11 h-11 rounded-full bg-gradient-to-br flex items-center justify-center font-bold text-xs text-white shadow-xs",
-                            conv.avatarColor
-                          )}
-                        >
-                          {conv.avatarInitials}
-                        </div>
+                        <ContactAvatar
+                          avatarUrl={conv.avatar_url}
+                          name={conv.contactName}
+                          initials={conv.avatarInitials}
+                          color={conv.avatarColor}
+                          size="w-11 h-11"
+                          rounded="rounded-full"
+                          textClass="text-xs"
+                        />
                         <span className={cn(
                           "w-3 h-3 rounded-full bg-emerald-500 border-2 absolute -bottom-0.5 -right-0.5",
                           isDark ? "border-[#090A0F]" : "border-white"
@@ -1105,14 +1172,15 @@ export default function WhatsAppPage() {
                 )}>
                   {/* Contact Identity (Protected from shrinking/overlapping) */}
                   <div className="flex items-center gap-3 min-w-0 flex-1 overflow-hidden">
-                    <div
-                      className={cn(
-                        "w-10 h-10 rounded-full bg-gradient-to-br flex items-center justify-center font-bold text-xs text-white shrink-0 shadow-xs ring-2 ring-emerald-500/20",
-                        activeChat.avatarColor
-                      )}
-                    >
-                      {activeChat.avatarInitials}
-                    </div>
+                    <ContactAvatar
+                      avatarUrl={activeChat.avatar_url}
+                      name={activeChat.contactName}
+                      initials={activeChat.avatarInitials}
+                      color={activeChat.avatarColor}
+                      size="w-10 h-10"
+                      rounded="rounded-full"
+                      textClass="text-xs"
+                    />
                     <div className="min-w-0 flex-1 overflow-hidden">
                       <div className="flex items-center gap-2 min-w-0">
                         <h3 className={cn("font-bold text-sm sm:text-base truncate leading-snug shrink min-w-0", isDark ? "text-white" : "text-slate-900")}>
@@ -1577,14 +1645,15 @@ export default function WhatsAppPage() {
               {/* Customer Profile Card */}
               <div className={cn("p-4 border-b space-y-3.5", isDark ? "border-[#1E293B]/60" : "border-slate-200")}>
                 <div className="flex items-center gap-3">
-                  <div
-                    className={cn(
-                      "w-12 h-12 rounded-2xl bg-gradient-to-br flex items-center justify-center font-bold text-base text-white shadow-md shrink-0 ring-2 ring-emerald-500/20",
-                      activeChat.avatarColor
-                    )}
-                  >
-                    {activeChat.avatarInitials}
-                  </div>
+                  <ContactAvatar
+                    avatarUrl={activeChat.avatar_url}
+                    name={activeChat.contactName}
+                    initials={activeChat.avatarInitials}
+                    color={activeChat.avatarColor}
+                    size="w-12 h-12"
+                    rounded="rounded-2xl"
+                    textClass="text-base"
+                  />
                   <div className="min-w-0 flex-1">
                     {!isEditingName ? (
                       <div className="flex items-center gap-1.5 group/name">

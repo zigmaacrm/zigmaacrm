@@ -529,7 +529,7 @@ async def receive_whatsapp_qr_inbound(
             organization_id=default_org_id,
             full_name=display_name,
             phone=f"+{clean_phone}" if not clean_phone.startswith("+") else clean_phone,
-            lead_source="WhatsApp QR",
+            source="WHATSAPP",
             lifecycle_stage="LEAD"
         )
         db.add(contact)
@@ -537,13 +537,11 @@ async def receive_whatsapp_qr_inbound(
         is_new_lead = True
 
     if not lead:
-        name_parts = display_name.split(" ", 1)
         lead = Lead(
             organization_id=default_org_id,
-            first_name=name_parts[0] if name_parts else "WhatsApp",
-            last_name=name_parts[1] if len(name_parts) > 1 else "Prospect",
+            full_name=display_name,
             phone=f"+{clean_phone}" if not clean_phone.startswith("+") else clean_phone,
-            lead_source="WhatsApp QR",
+            source="WHATSAPP",
             status="NEW"
         )
         db.add(lead)
