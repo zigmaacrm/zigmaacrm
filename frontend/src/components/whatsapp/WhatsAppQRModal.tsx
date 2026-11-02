@@ -255,7 +255,7 @@ export default function WhatsAppQRModal({
                     2
                   </span>
                   <span>
-                    Tap <strong>Menu (⋮)</strong> on Android or <strong>Settings</strong> on iPhone &rarr; select <strong>Linked Devices</strong>.
+                    Tap <strong>Menu (⋮)</strong> on Android or <strong>Settings</strong> on Your Phone &rarr; select <strong>Linked Devices</strong>.
                   </span>
                 </div>
                 <div className="flex items-start gap-2.5">
@@ -270,10 +270,7 @@ export default function WhatsAppQRModal({
 
               {/* Action buttons */}
               <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
-                <div className="flex items-center gap-1.5 text-[11px] text-emerald-600 font-semibold">
-                  <ShieldCheck className="w-3.5 h-3.5" />
-                  <span>₹0 Cost • Personal app stays active</span>
-                </div>
+              
                 <button
                   onClick={handleRefresh}
                   disabled={isRefreshing}
