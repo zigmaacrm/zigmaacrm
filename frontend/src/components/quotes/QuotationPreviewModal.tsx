@@ -59,8 +59,8 @@ export default function QuotationPreviewModal({
 
   const docNumber = invoice.invoice_number || invoice.bill_number || `QT-2026-001`;
   const docTitle = "QUOTATION";
-  const sellerName = org?.company_name || "Arsath Thoufiq's Workspace";
-  const signatoryName = org?.signatory_name || "Arsath Thoufiq";
+  const sellerName = invoice.company_name || org?.company_name || "ZIGMAA TECH";
+  const signatoryName = invoice.company_name || org?.signatory_name || "ZIGMAA TECH";
   const clientName = invoice.client_name || "Client";
   const totalAmount = invoice.total_amount || 0;
   const formattedTotal = `₹${totalAmount.toLocaleString("en-IN")}`;

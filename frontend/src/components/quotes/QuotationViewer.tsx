@@ -85,12 +85,12 @@ export default function QuotationViewer({
     }
   }, [propOrgSettings]);
 
-  // Seller info derived from dynamic settings or defaults
-  const sellerName = org?.company_name || "ZIGMAA TECH";
-  const sellerLogo = org?.logo_url || null;
-  const sellerPhone = org?.phone || "+91 88702 35207";
-  const sellerAddress = org?.address || "3/41A, Ebenezer Castle, Kamaraj Nagar 3rd Street, Thoothukudi";
-  const sellerTagline = org?.tagline || "Empowering Digital Innovation";
+  // Seller info derived from invoice custom fields, dynamic settings, or defaults
+  const sellerName = invoice.company_name || org?.company_name || "ZIGMAA TECH";
+  const sellerLogo = invoice.company_logo || org?.logo_url || null;
+  const sellerPhone = invoice.company_phone || org?.phone || "";
+  const sellerAddress = invoice.company_address || org?.address || "3/41A, Ebenezer Castle, Kamaraj Nagar 3rd Street, Thoothukudi";
+  const sellerTagline = invoice.company_tagline || org?.tagline || "Empowering Digital Innovation";
 
   // Document details
   const clientName = invoice.client_name || invoice.patient_name || "Client";
@@ -262,16 +262,27 @@ export default function QuotationViewer({
         </div>
       </div>
 
-      {/* Footer Notes */}
-      <div className="mt-14 text-xs text-slate-900 space-y-3 leading-relaxed">
-        <p className="font-normal">
-          Make all checks payable to {sellerName}
-        </p>
-        <p className="font-normal">
-          If you have any questions regarding this quotation, please contact us at {sellerPhone}
-        </p>
+      {/* Footer: Terms & Conditions, Question line & Thank you */}
+      <div className="mt-10 text-xs text-slate-900 space-y-3.5 leading-relaxed">
+        {/* User-defined Terms & Conditions */}
+        {invoice.notes && (
+          <div className="space-y-1">
+            <p className="font-bold text-slate-950 uppercase tracking-wider text-[11px]">
+              Terms & Conditions
+            </p>
+            <p className="font-normal text-slate-700 whitespace-pre-line text-xs">
+              {invoice.notes}
+            </p>
+          </div>
+        )}
 
-        <div className="pt-8 text-base font-normal text-slate-900">
+        {sellerPhone && (
+          <p className="font-normal text-slate-800 pt-1">
+            If you have any questions regarding this quotation, please contact us at {sellerPhone}
+          </p>
+        )}
+
+        <div className="pt-6 text-base font-medium text-slate-900">
           Thank you
         </div>
       </div>

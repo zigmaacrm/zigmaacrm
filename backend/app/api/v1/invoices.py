@@ -36,6 +36,11 @@ class InvoiceCreate(BaseModel):
     client_phone: Optional[str] = None
     client_address: Optional[str] = None
     subject: Optional[str] = None
+    company_name: Optional[str] = None
+    company_tagline: Optional[str] = None
+    company_phone: Optional[str] = None
+    company_address: Optional[str] = None
+    company_logo: Optional[str] = None
     type: Optional[str] = "QUOTE"  # QUOTE, INVOICE
     status: Optional[str] = "DRAFT"  # DRAFT, SENT, PAID, OVERDUE
     issue_date: Optional[str] = None  # "YYYY-MM-DD"
@@ -55,6 +60,11 @@ class InvoiceUpdate(BaseModel):
     client_phone: Optional[str] = None
     client_address: Optional[str] = None
     subject: Optional[str] = None
+    company_name: Optional[str] = None
+    company_tagline: Optional[str] = None
+    company_phone: Optional[str] = None
+    company_address: Optional[str] = None
+    company_logo: Optional[str] = None
     due_date: Optional[str] = None
     notes: Optional[str] = None
     discount: Optional[float] = None
@@ -98,13 +108,29 @@ def _serialize_invoice(inv: Invoice) -> dict:
     subject = "Website Design & Development"
     client_address = inv.client_company or ""
     display_notes = inv.notes or ""
+    company_name = "ZIGMAA TECH"
+    company_tagline = "Empowering Digital Innovation"
+    company_phone = "+91 88702 35207"
+    company_address = "3/41A, Ebenezer Castle, Kamaraj Nagar 3rd Street, Thoothukudi"
+    company_logo = "/zigmaa-logo.png"
+
     if inv.notes:
         try:
             parsed = json.loads(inv.notes)
             if isinstance(parsed, dict):
                 subject = parsed.get("subject", subject)
                 client_address = parsed.get("client_address", client_address)
-                display_notes = parsed.get("notes", display_notes)
+                display_notes = parsed.get("text", parsed.get("notes", display_notes))
+                if parsed.get("company_name"):
+                    company_name = parsed["company_name"]
+                if parsed.get("company_tagline"):
+                    company_tagline = parsed["company_tagline"]
+                if parsed.get("company_phone"):
+                    company_phone = parsed["company_phone"]
+                if parsed.get("company_address"):
+                    company_address = parsed["company_address"]
+                if parsed.get("company_logo"):
+                    company_logo = parsed["company_logo"]
         except Exception:
             pass
 
@@ -120,6 +146,11 @@ def _serialize_invoice(inv: Invoice) -> dict:
         "client_phone": inv.client_phone or "",
         "client_address": client_address,
         "subject": subject,
+        "company_name": company_name,
+        "company_tagline": company_tagline,
+        "company_phone": company_phone,
+        "company_address": company_address,
+        "company_logo": company_logo,
         "type": inv.type or "QUOTE",
         "status": inv.status or "DRAFT",
         "issue_date": str(inv.issue_date) if inv.issue_date else str(date.today()),
@@ -282,12 +313,23 @@ async def create_invoice(
         except Exception:
             due_d = None
 
-    default_notes = payload.notes or "Payment terms: 50% advance, balance upon project milestone delivery. Bank Transfer / UPI accepted."
     meta = {}
     if payload.subject:
         meta["subject"] = payload.subject
     if payload.client_address:
         meta["client_address"] = payload.client_address
+    if payload.company_name:
+        meta["company_name"] = payload.company_name
+    if payload.company_tagline:
+        meta["company_tagline"] = payload.company_tagline
+    if payload.company_phone:
+        meta["company_phone"] = payload.company_phone
+    if payload.company_address:
+        meta["company_address"] = payload.company_address
+    if payload.company_logo:
+        meta["company_logo"] = payload.company_logo
+
+    default_notes = payload.notes if payload.notes is not None else "Payment terms: 50% advance, balance upon project milestone delivery. Bank Transfer / UPI accepted."
     if meta:
         meta["text"] = default_notes
         notes_str = json.dumps(meta)
@@ -390,7 +432,16 @@ async def update_invoice(invoice_id: str, payload: InvoiceUpdate, db: AsyncSessi
     if payload.client_address is not None and not payload.client_company:
         inv.client_company = payload.client_address
 
-    if payload.notes is not None or payload.subject is not None or payload.client_address is not None:
+    if (
+        payload.notes is not None
+        or payload.subject is not None
+        or payload.client_address is not None
+        or payload.company_name is not None
+        or payload.company_tagline is not None
+        or payload.company_phone is not None
+        or payload.company_address is not None
+        or payload.company_logo is not None
+    ):
         existing_meta = {}
         try:
             if inv.notes and inv.notes.strip().startswith("{"):
@@ -404,6 +455,16 @@ async def update_invoice(invoice_id: str, payload: InvoiceUpdate, db: AsyncSessi
             existing_meta["subject"] = payload.subject
         if payload.client_address is not None:
             existing_meta["client_address"] = payload.client_address
+        if payload.company_name is not None:
+            existing_meta["company_name"] = payload.company_name
+        if payload.company_tagline is not None:
+            existing_meta["company_tagline"] = payload.company_tagline
+        if payload.company_phone is not None:
+            existing_meta["company_phone"] = payload.company_phone
+        if payload.company_address is not None:
+            existing_meta["company_address"] = payload.company_address
+        if payload.company_logo is not None:
+            existing_meta["company_logo"] = payload.company_logo
         if payload.notes is not None:
             existing_meta["text"] = payload.notes
 
@@ -491,9 +552,16 @@ async def generate_invoice_pdf_view(invoice_id: str, db: AsyncSession = Depends(
     amount_in_words = number_to_words_inr(total_amount)
 
     if inv.type == "QUOTE":
-        # Extract client_address and subject from notes if json
+        # Extract client_address, subject, and sender info from notes if json
         c_addr = inv.client_company or ""
         subj = "Website Design & Development"
+        c_name = "ZIGMAA TECH"
+        c_tagline = "Empowering Digital Innovation"
+        c_phone = ""
+        c_address = "3/41A, Ebenezer Castle, Kamaraj Nagar 3rd Street, Thoothukudi"
+        c_logo = "/zigmaa-logo.png"
+        raw_notes_text = ""
+
         if inv.notes:
             try:
                 parsed_notes = json.loads(inv.notes)
@@ -502,8 +570,21 @@ async def generate_invoice_pdf_view(invoice_id: str, db: AsyncSession = Depends(
                         c_addr = parsed_notes["client_address"]
                     if parsed_notes.get("subject"):
                         subj = parsed_notes["subject"]
+                    if parsed_notes.get("company_name"):
+                        c_name = parsed_notes["company_name"]
+                    if parsed_notes.get("company_tagline"):
+                        c_tagline = parsed_notes["company_tagline"]
+                    if parsed_notes.get("company_phone"):
+                        c_phone = parsed_notes["company_phone"]
+                    if parsed_notes.get("company_address"):
+                        c_address = parsed_notes["company_address"]
+                    if parsed_notes.get("company_logo"):
+                        c_logo = parsed_notes["company_logo"]
+                    raw_notes_text = parsed_notes.get("text", parsed_notes.get("notes", ""))
             except Exception:
-                pass
+                raw_notes_text = inv.notes
+        else:
+            raw_notes_text = ""
 
         # Format date as e.g. "October 26, 2026"
         date_str = ""
@@ -530,6 +611,21 @@ async def generate_invoice_pdf_view(invoice_id: str, db: AsyncSession = Depends(
 
         phone_html = f"<div>{inv.client_phone}</div>" if inv.client_phone else ""
         addr_html = f"<div>{c_addr}</div>" if c_addr else ""
+
+        logo_html = f'<img src="{c_logo}" style="max-height: 80px; max-width: 140px; object-fit: contain;" alt="{c_name}" onerror="this.onerror=null; this.src=\'/zigmaa-logo.png\';" />' if c_logo else f'<span style="font-size: 22px; font-weight: 900; color: #dc2626;">{c_name}</span>'
+
+        terms_block = f"""
+        <div style="margin-top: 32px;">
+            <div style="font-size: 13px; font-weight: 800; color: #000000; text-transform: uppercase; margin-bottom: 6px;">Terms & Conditions</div>
+            <div style="font-size: 13px; color: #374151; line-height: 1.6; white-space: pre-line;">{raw_notes_text}</div>
+        </div>
+        """ if raw_notes_text else ""
+
+        contact_block = f"""
+        <p style="margin: 14px 0 0 0; font-size: 13px; color: #374151;">
+            If you have any questions regarding this quotation, please contact us at <strong>{c_phone}</strong>
+        </p>
+        """ if c_phone else ""
 
         html_content = f"""<!DOCTYPE html>
 <html lang="en">
@@ -619,11 +715,11 @@ async def generate_invoice_pdf_view(invoice_id: str, db: AsyncSession = Depends(
             <table style="width: 100%; border-collapse: collapse; margin-bottom: 40px;">
                 <tr>
                     <td style="vertical-align: middle; width: 70%;">
-                        <h1 style="font-size: 32px; font-weight: 900; letter-spacing: -0.5px; margin: 0; color: #000000; text-transform: uppercase;">ZIGMAA TECH</h1>
-                        <p style="font-size: 15px; color: #374151; font-weight: 500; margin: 6px 0 0 0;">Empowering Digital Innovation</p>
+                        <h1 style="font-size: 32px; font-weight: 900; letter-spacing: -0.5px; margin: 0; color: #000000; text-transform: uppercase;">{c_name}</h1>
+                        <p style="font-size: 15px; color: #374151; font-weight: 500; margin: 6px 0 0 0;">{c_tagline}</p>
                     </td>
                     <td style="vertical-align: middle; text-align: right; width: 30%;">
-                        <img src="/zigmaa-logo.png" style="max-height: 80px; max-width: 90px; object-fit: contain;" alt="Zigmaa Tech" onerror="this.onerror=null; this.src='https://raw.githubusercontent.com/mdthoufiqarsath/zigmaacrm/main/frontend/public/zigmaa-logo.png';" />
+                        {logo_html}
                     </td>
                 </tr>
             </table>
@@ -660,7 +756,7 @@ async def generate_invoice_pdf_view(invoice_id: str, db: AsyncSession = Depends(
                     </td>
                     <td style="vertical-align: top; width: 40%;">
                         <div style="font-size: 13px; font-weight: 800; color: #000000; text-transform: uppercase; margin-bottom: 4px;">ADDRESS</div>
-                        <div style="font-size: 14px; font-weight: 500; color: #1f2937; line-height: 1.4;">3/41A, Ebenezer Castle, Kamaraj Nagar 3rd Street, Thoothukudi</div>
+                        <div style="font-size: 14px; font-weight: 500; color: #1f2937; line-height: 1.4;">{c_address}</div>
                     </td>
                 </tr>
             </table>
@@ -683,15 +779,18 @@ async def generate_invoice_pdf_view(invoice_id: str, db: AsyncSession = Depends(
             </table>
         </div>
 
-        <!-- Footer -->
-        <div style="margin-top: 60px; font-size: 13px; color: #374151; line-height: 1.6;">
-            <p style="margin: 3px 0; font-weight: 600; color: #111827;">Make all checks payable to ZIGMAA TECH</p>
-            <p style="margin: 3px 0;">If you have any questions concerning this invoice, contact {signatory_name}, {seller_phone}</p>
-            <p style="margin: 8px 0 0 0; font-weight: 700; color: #000000;">Thank you for your business!</p>
+        <!-- Footer: Terms, Contact & Thank you -->
+        <div style="margin-top: 40px; font-size: 13px; color: #374151; line-height: 1.6;">
+            {terms_block}
+            {contact_block}
+            <div style="margin-top: 24px; font-size: 16px; font-weight: 500; color: #000000;">
+                Thank you
+            </div>
         </div>
     </div>
 </body>
 </html>"""
+        return HTMLResponse(content=html_content)
         return HTMLResponse(content=html_content)
     doc_title = "TAX INVOICE" if inv.type == "INVOICE" else "OFFICIAL QUOTATION"
     badge_bg = "#dc2626" if inv.type == "INVOICE" else "#2563eb"

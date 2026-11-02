@@ -199,6 +199,11 @@ export interface Invoice {
   recipient_address?: string;
   client_address?: string;
   subject?: string;
+  company_name?: string;
+  company_tagline?: string;
+  company_phone?: string;
+  company_address?: string;
+  company_logo?: string;
   patient_name?: string;
   phone?: string;
   email?: string;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   X,
   FileText,
@@ -21,7 +21,9 @@ import {
   Send,
   Sparkles,
   ShieldCheck,
-  MapPin
+  MapPin,
+  Upload,
+  Image as ImageIcon
 } from "lucide-react";
 import { Deal, Contact, Invoice, OrganizationSettings } from "@/lib/mockData";
 import { api } from "@/lib/api";
@@ -97,11 +99,37 @@ export default function CreateQuoteDrawer({
   const [clientPhone, setClientPhone] = useState("");
   const [clientAddress, setClientAddress] = useState("");
 
+  // Sender / Our Company Details
+  const [companyName, setCompanyName] = useState("ZIGMAA TECH");
+  const [companyTagline, setCompanyTagline] = useState("Empowering Digital Innovation");
+  const [companyPhone, setCompanyPhone] = useState("+91 88702 35207");
+  const [companyAddress, setCompanyAddress] = useState(
+    "3/41A, Ebenezer Castle, Kamaraj Nagar 3rd Street, Thoothukudi"
+  );
+  const [companyLogo, setCompanyLogo] = useState("/zigmaa-logo.png");
+  const logoInputRef = useRef<HTMLInputElement>(null);
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      toast.warning("File Too Large", "Please select an image file under 2MB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const base64 = ev.target?.result as string;
+      setCompanyLogo(base64);
+      toast.success("Logo Updated", "Company logo updated for this quotation.");
+    };
+    reader.readAsDataURL(file);
+  };
+
   // Line items
   const [items, setItems] = useState<LineItemState[]>(DEFAULT_LINE_ITEMS);
   const [discount, setDiscount] = useState<number>(0);
   const [notes, setNotes] = useState(
-    "Make all checks payable to ZIGMAA TECH.\nIf you have any questions regarding this quotation, please contact us at +91 88702 35207."
+    "1. Payment terms: 50% advance, balance upon project milestone delivery.\n2. Validity: 15 days from issue date.\n3. Bank Transfer / UPI accepted."
   );
 
   // Smooth slide-over close
@@ -144,6 +172,19 @@ export default function CreateQuoteDrawer({
         }
       });
 
+      // Load saved sender details from localStorage
+      try {
+        const savedSender = localStorage.getItem("zigmaa_quote_sender_info");
+        if (savedSender) {
+          const parsed = JSON.parse(savedSender);
+          if (parsed.companyName) setCompanyName(parsed.companyName);
+          if (parsed.companyTagline) setCompanyTagline(parsed.companyTagline);
+          if (parsed.companyPhone) setCompanyPhone(parsed.companyPhone);
+          if (parsed.companyAddress) setCompanyAddress(parsed.companyAddress);
+          if (parsed.companyLogo) setCompanyLogo(parsed.companyLogo);
+        }
+      } catch {}
+
       if (editingInvoice) {
         setQuoteId(editingInvoice.invoice_number || generatedNum);
         setClientName(editingInvoice.client_name || editingInvoice.patient_name || "");
@@ -152,6 +193,11 @@ export default function CreateQuoteDrawer({
         setClientPhone(editingInvoice.client_phone || editingInvoice.phone || "");
         setClientAddress(editingInvoice.client_address || editingInvoice.recipient_address || "");
         setSubject(editingInvoice.subject || "Website Design & Development");
+        if (editingInvoice.company_name) setCompanyName(editingInvoice.company_name);
+        if (editingInvoice.company_tagline) setCompanyTagline(editingInvoice.company_tagline);
+        if (editingInvoice.company_phone) setCompanyPhone(editingInvoice.company_phone);
+        if (editingInvoice.company_address) setCompanyAddress(editingInvoice.company_address);
+        if (editingInvoice.company_logo) setCompanyLogo(editingInvoice.company_logo);
         if (editingInvoice.issue_date) setIssueDate(editingInvoice.issue_date);
         if (editingInvoice.items && editingInvoice.items.length > 0) {
           setItems(
@@ -283,6 +329,18 @@ export default function CreateQuoteDrawer({
 
   // Open Live Preview of Current Draft
   const handlePreviewCurrentDraft = () => {
+    if (!companyName.trim()) {
+      toast.warning("Validation", "Company Name is required.");
+      return;
+    }
+    if (!companyPhone.trim()) {
+      toast.warning("Validation", "Company Mobile / Contact Number is required.");
+      return;
+    }
+    if (!companyAddress.trim()) {
+      toast.warning("Validation", "Company Address is required.");
+      return;
+    }
     if (!clientName.trim()) {
       toast.warning("Validation", "Please enter a Client Name to preview.");
       return;
@@ -298,6 +356,11 @@ export default function CreateQuoteDrawer({
       client_phone: clientPhone.trim() ? (clientPhone.trim().startsWith("+") ? clientPhone.trim() : `+91 ${clientPhone.trim()}`) : undefined,
       client_address: clientAddress.trim() || undefined,
       subject: subject.trim() || "Website Design & Development",
+      company_name: companyName.trim(),
+      company_tagline: companyTagline.trim() || undefined,
+      company_phone: companyPhone.trim(),
+      company_address: companyAddress.trim(),
+      company_logo: companyLogo || undefined,
       type: docType,
       status: editingInvoice?.status || "DRAFT",
       issue_date: issueDate || new Date().toISOString().split("T")[0],
@@ -324,6 +387,18 @@ export default function CreateQuoteDrawer({
     status: "DRAFT" | "SENT",
     dispatchAction: "NONE" | "DOWNLOAD_PDF" | "WHATSAPP" | "EMAIL" = "NONE"
   ) => {
+    if (!companyName.trim()) {
+      toast.warning("Validation", "Company Name is required.");
+      return;
+    }
+    if (!companyPhone.trim()) {
+      toast.warning("Validation", "Company Mobile / Contact Number is required.");
+      return;
+    }
+    if (!companyAddress.trim()) {
+      toast.warning("Validation", "Company Address is required.");
+      return;
+    }
     if (!clientName.trim()) {
       toast.warning("Validation", "Client Name is required.");
       return;
@@ -332,6 +407,19 @@ export default function CreateQuoteDrawer({
       toast.warning("Validation", "Please provide a description for all line items.");
       return;
     }
+
+    try {
+      localStorage.setItem(
+        "zigmaa_quote_sender_info",
+        JSON.stringify({
+          companyName: companyName.trim(),
+          companyTagline: companyTagline.trim(),
+          companyPhone: companyPhone.trim(),
+          companyAddress: companyAddress.trim(),
+          companyLogo
+        })
+      );
+    } catch {}
 
     setSubmitting(true);
     try {
@@ -345,6 +433,11 @@ export default function CreateQuoteDrawer({
         client_phone: clientPhone.trim() ? (clientPhone.trim().startsWith("+") ? clientPhone.trim() : `+91 ${clientPhone.trim()}`) : undefined,
         client_address: clientAddress.trim() || undefined,
         subject: subject.trim() || "Website Design & Development",
+        company_name: companyName.trim(),
+        company_tagline: companyTagline.trim() || undefined,
+        company_phone: companyPhone.trim(),
+        company_address: companyAddress.trim(),
+        company_logo: companyLogo || undefined,
         type: docType,
         status: editingInvoice?.status || status,
         issue_date: issueDate || undefined,
@@ -359,7 +452,7 @@ export default function CreateQuoteDrawer({
         tax_amount: Math.round(taxAmount * 100) / 100,
         discount: Math.round((Number(discount) || 0) * 100) / 100,
         total_amount: grandTotal,
-        notes: notes.trim() || undefined
+        notes: notes.trim()
       };
 
       let saved: Invoice;
@@ -464,27 +557,131 @@ export default function CreateQuoteDrawer({
 
         {/* Scrollable Form Body */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6 custom-scrollbar text-xs">
-          {/* Company Brand Logo Only */}
-          <div className="p-3.5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 flex items-center justify-between shadow-2xs">
-            <div className="flex items-center gap-3">
-              {orgSettings?.logo_url ? (
-                <img
-                  src={orgSettings.logo_url}
-                  alt="Logo"
-                  className="h-10 w-auto max-w-[150px] object-contain rounded-lg"
-                />
-              ) : (
-                <div className="w-10 h-10 rounded-xl bg-red-600 text-white font-black text-sm flex items-center justify-center shadow-xs">
-                  {(orgSettings?.company_name || "ZT").slice(0, 2).toUpperCase()}
-                </div>
-              )}
+          {/* SECTION: OUR COMPANY & SENDER INFO (MANDATORY) */}
+          <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4 shadow-2xs">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
               <div>
-                <span className="text-sm font-black text-slate-900 dark:text-white tracking-tight block">
-                  {orgSettings?.company_name || "ZIGMAA TECH"}
+                <span className="text-[10px] font-bold text-red-600 uppercase tracking-wider block">
+                  Sender Details (Our Information)
                 </span>
-                <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                  {orgSettings?.tagline || "Empowering Digital Innovation"}
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                  Company Name, Contact & PDF Logo
                 </span>
+              </div>
+              <span className="text-[10px] font-bold text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
+                Appears on Quotation & PDF
+              </span>
+            </div>
+
+            {/* Logo Upload Box */}
+            <div className="flex items-center gap-4 p-3 bg-slate-50 dark:bg-slate-950/50 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
+              <div className="w-16 h-16 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 flex items-center justify-center overflow-hidden shrink-0 shadow-2xs">
+                {companyLogo ? (
+                  <img
+                    src={companyLogo}
+                    alt="Logo"
+                    className="w-full h-full object-contain p-1"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = "/zigmaa-logo.png";
+                    }}
+                  />
+                ) : (
+                  <Building2 className="w-6 h-6 text-slate-400" />
+                )}
+              </div>
+
+              <div className="flex-1 space-y-1">
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={logoInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleLogoUpload}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => logoInputRef.current?.click()}
+                    className="px-3 py-1.5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-bold text-xs rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>{companyLogo ? "Change Logo" : "Upload Logo"}</span>
+                  </button>
+
+                  {companyLogo && companyLogo !== "/zigmaa-logo.png" && (
+                    <button
+                      type="button"
+                      onClick={() => setCompanyLogo("/zigmaa-logo.png")}
+                      className="px-2.5 py-1.5 text-slate-500 hover:text-rose-600 text-xs font-semibold rounded-lg hover:bg-slate-200/60 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                    >
+                      Reset Default
+                    </button>
+                  )}
+                </div>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                  PNG, JPG or SVG (Max 2MB). Displays on the top-right of your quotation.
+                </p>
+              </div>
+            </div>
+
+            {/* Inputs: Company Name, Mobile Number, Address, Tagline */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Company Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={companyName}
+                  onChange={(e) => setCompanyName(e.target.value)}
+                  placeholder="e.g. ZIGMAA TECH"
+                  className="w-full bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Company Mobile / Phone <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={companyPhone}
+                  onChange={(e) => setCompanyPhone(e.target.value)}
+                  placeholder="e.g. +91 88702 35207"
+                  className="w-full bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 font-semibold font-mono"
+                />
+                <span className="text-[10px] text-slate-400 mt-0.5 block">
+                  Displayed in the contact question line below the total
+                </span>
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Company Address <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={companyAddress}
+                  onChange={(e) => setCompanyAddress(e.target.value)}
+                  placeholder="e.g. 3/41A, Ebenezer Castle, Kamaraj Nagar 3rd Street, Thoothukudi"
+                  className="w-full bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 font-medium"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Tagline / Subtitle
+                </label>
+                <input
+                  type="text"
+                  value={companyTagline}
+                  onChange={(e) => setCompanyTagline(e.target.value)}
+                  placeholder="e.g. Empowering Digital Innovation"
+                  className="w-full bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 font-medium"
+                />
               </div>
             </div>
           </div>
@@ -786,17 +983,22 @@ export default function CreateQuoteDrawer({
             </div>
           </div>
 
-          {/* SECTION 4: NOTES & TERMS */}
+          {/* SECTION 4: TERMS & CONDITIONS */}
           <div>
-            <label className="block text-[11px] font-bold text-slate-700 mb-1">
-              Payment Terms & Commercial Notes
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                Terms & Conditions
+              </label>
+              <span className="text-[10px] text-slate-400">
+                Appears below total bill & above &apos;Thank you&apos;
+              </span>
+            </div>
             <textarea
               rows={3}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Payment terms: 50% advance, balance upon project milestone delivery. Bank Transfer / UPI accepted."
-              className="w-full bg-slate-50 text-slate-900 text-xs p-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white font-medium custom-scrollbar"
+              placeholder="1. Payment terms: 50% advance, balance upon project milestone delivery.&#10;2. Validity: 15 days from issue date.&#10;3. Bank Transfer / UPI accepted."
+              className="w-full bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 text-xs p-3 rounded-xl border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 font-medium custom-scrollbar"
             />
           </div>
         </div>
