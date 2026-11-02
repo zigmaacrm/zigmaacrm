@@ -121,6 +121,14 @@ class WhatsAppMessageOut(BaseModel):
 class ReassignConversationRequest(BaseModel):
     assigned_user_id: str
 
+def get_gateway_url() -> str:
+    url = (os.getenv("WHATSAPP_GATEWAY_URL") or getattr(settings, "WHATSAPP_GATEWAY_URL", "")).strip().rstrip("/")
+    if not url or url in ["http://localhost:5001", "http://127.0.0.1:5001"]:
+        if os.getenv("RENDER") or os.getenv("ENVIRONMENT") == "production":
+            return "https://zigmaa-whatsapp-bridge.onrender.com"
+        return "http://localhost:5001"
+    return url
+
 @router.post("/send", status_code=status.HTTP_201_CREATED)
 @router.post("/messages", status_code=status.HTTP_201_CREATED)
 async def send_whatsapp_message(
@@ -169,7 +177,7 @@ async def send_whatsapp_message(
     dispatch_error_msg = None
 
     # 1. Attempt dispatch via Baileys QR Gateway if connected
-    gateway_url = getattr(settings, "WHATSAPP_GATEWAY_URL", "http://localhost:5001")
+    gateway_url = get_gateway_url()
     dispatched_via_qr = False
 
     try:
@@ -730,9 +738,9 @@ async def get_whatsapp_qr_status():
     """
     Checks connection status, linked phone, and current QR code from Baileys gateway.
     """
-    gateway_url = getattr(settings, "WHATSAPP_GATEWAY_URL", "http://localhost:5001")
+    gateway_url = get_gateway_url()
     try:
-        async with httpx.AsyncClient(timeout=4.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
+        async with httpx.AsyncClient(timeout=8.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
             resp = await client.get(f"{gateway_url}/status")
             if resp.status_code == 200:
                 data = resp.json()
@@ -754,9 +762,9 @@ async def refresh_whatsapp_qr():
     """
     Requests a fresh QR code from the Baileys gateway.
     """
-    gateway_url = getattr(settings, "WHATSAPP_GATEWAY_URL", "http://localhost:5001")
+    gateway_url = get_gateway_url()
     try:
-        async with httpx.AsyncClient(timeout=8.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
+        async with httpx.AsyncClient(timeout=10.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
             resp = await client.post(f"{gateway_url}/refresh-qr")
             return resp.json()
     except Exception as e:
@@ -767,7 +775,7 @@ async def disconnect_whatsapp_qr():
     """
     Disconnects and logs out the Baileys QR session.
     """
-    gateway_url = getattr(settings, "WHATSAPP_GATEWAY_URL", "http://localhost:5001")
+    gateway_url = get_gateway_url()
     try:
         async with httpx.AsyncClient(timeout=8.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
             resp = await client.post(f"{gateway_url}/disconnect")

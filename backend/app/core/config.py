@@ -52,7 +52,10 @@ class Settings(BaseSettings):
     WHATSAPP_ACCESS_TOKEN: str = os.getenv("WHATSAPP_ACCESS_TOKEN", "") or os.getenv("WHATSAPP_API_TOKEN", "")
     WHATSAPP_API_TOKEN: str = os.getenv("WHATSAPP_ACCESS_TOKEN", "") or os.getenv("WHATSAPP_API_TOKEN", "")
     WHATSAPP_PHONE_NUMBER_ID: str = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "1445856311935813")
-    WHATSAPP_GATEWAY_URL: str = os.getenv("WHATSAPP_GATEWAY_URL", "http://localhost:5001")
+    WHATSAPP_GATEWAY_URL: str = os.getenv(
+        "WHATSAPP_GATEWAY_URL",
+        "https://zigmaa-whatsapp-bridge.onrender.com" if (os.getenv("RENDER") or os.getenv("ENVIRONMENT") == "production") else "http://localhost:5001"
+    )
 
     # Google OAuth & Integrations (Gmail & Google Calendar)
     GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "") or os.getenv("NEXT_PUBLIC_GOOGLE_CLIENT_ID", "")
