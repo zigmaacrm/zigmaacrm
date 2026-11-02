@@ -20,7 +20,8 @@ import {
   Share2,
   Send,
   Sparkles,
-  ShieldCheck
+  ShieldCheck,
+  MapPin
 } from "lucide-react";
 import { Deal, Contact, Invoice, OrganizationSettings } from "@/lib/mockData";
 import { api } from "@/lib/api";
@@ -36,6 +37,7 @@ interface CreateQuoteDrawerProps {
   onSuccess?: (invoice: Invoice) => void;
   deal?: Deal | null;
   contact?: Contact | null;
+  editingInvoice?: Invoice | null;
   initialType?: "QUOTE";
 }
 
@@ -70,6 +72,7 @@ export default function CreateQuoteDrawer({
   onSuccess,
   deal,
   contact,
+  editingInvoice,
   initialType = "QUOTE"
 }: CreateQuoteDrawerProps) {
   const { toast } = useToast();
@@ -80,7 +83,7 @@ export default function CreateQuoteDrawer({
   const docType = "QUOTE";
   const [quoteId, setQuoteId] = useState("QT-2026-001");
   const [issueDate, setIssueDate] = useState("");
-  const [dueDate, setDueDate] = useState("");
+  const [subject, setSubject] = useState("Website Design & Development");
   const [orgSettings, setOrgSettings] = useState<OrganizationSettings | null>(null);
 
   // Live preview modal state
@@ -92,12 +95,13 @@ export default function CreateQuoteDrawer({
   const [clientCompany, setClientCompany] = useState("");
   const [clientEmail, setClientEmail] = useState("");
   const [clientPhone, setClientPhone] = useState("");
+  const [clientAddress, setClientAddress] = useState("");
 
   // Line items
   const [items, setItems] = useState<LineItemState[]>(DEFAULT_LINE_ITEMS);
   const [discount, setDiscount] = useState<number>(0);
   const [notes, setNotes] = useState(
-    "Payment terms: 50% advance, balance upon project milestone delivery. Bank Transfer / UPI accepted."
+    "Make all checks payable to ZIGMAA TECH.\nIf you have any questions regarding this quotation, please contact us at +91 88702 35207."
   );
 
   // Smooth slide-over close
@@ -125,9 +129,7 @@ export default function CreateQuoteDrawer({
       const timer = setTimeout(() => setVisible(true), 10);
 
       const today = new Date().toISOString().split("T")[0];
-      const due = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
       setIssueDate(today);
-      setDueDate(due);
 
       const generatedNum = `QT-2026-${String(Math.floor(Math.random() * 899) + 101)}`;
       setQuoteId(generatedNum);
@@ -142,12 +144,35 @@ export default function CreateQuoteDrawer({
         }
       });
 
-      // Pre-fill client info from active deal / contact
-      if (deal) {
+      if (editingInvoice) {
+        setQuoteId(editingInvoice.invoice_number || generatedNum);
+        setClientName(editingInvoice.client_name || editingInvoice.patient_name || "");
+        setClientCompany(editingInvoice.client_company || "");
+        setClientEmail(editingInvoice.client_email || editingInvoice.email || "");
+        setClientPhone(editingInvoice.client_phone || editingInvoice.phone || "");
+        setClientAddress(editingInvoice.client_address || editingInvoice.recipient_address || "");
+        setSubject(editingInvoice.subject || "Website Design & Development");
+        if (editingInvoice.issue_date) setIssueDate(editingInvoice.issue_date);
+        if (editingInvoice.items && editingInvoice.items.length > 0) {
+          setItems(
+            editingInvoice.items.map((it, idx) => ({
+              id: `item-${idx}-${Date.now()}`,
+              description: it.description || "",
+              qty: it.qty || 1,
+              unit_price: it.unit_price || 0,
+              tax_rate: it.tax_rate ?? 0
+            }))
+          );
+        }
+        if (editingInvoice.notes) setNotes(editingInvoice.notes);
+        if (editingInvoice.discount) setDiscount(editingInvoice.discount);
+      } else if (deal) {
         setClientName(deal.contact_name || deal.title || "Valued Client");
         setClientCompany(deal.company_name || "");
         setClientEmail(deal.contact_email || "");
         setClientPhone(deal.contact_phone || "");
+        setClientAddress("");
+        setSubject(deal.title || "Website Design & Development");
 
         // If deal has an existing value, preset first line item
         if (deal.deal_value || deal.value) {
@@ -159,7 +184,7 @@ export default function CreateQuoteDrawer({
                 description: `${deal.title} - Scope Deliverables`,
                 qty: 1,
                 unit_price: val,
-                tax_rate: 18
+                tax_rate: 0
               }
             ]);
           }
@@ -169,12 +194,38 @@ export default function CreateQuoteDrawer({
         setClientCompany(contact.company_name || "");
         setClientEmail(contact.email || "");
         setClientPhone(contact.phone || "");
+        setClientAddress("");
+        setSubject("Website Design & Development");
       } else {
         setClientName("");
         setClientCompany("");
         setClientEmail("");
         setClientPhone("");
-        setItems(DEFAULT_LINE_ITEMS);
+        setClientAddress("");
+        setSubject("Website Design & Development");
+        setItems([
+          {
+            id: "item-1",
+            description: "5-Page Static Website (Hosting 1Year Free)",
+            qty: 1,
+            unit_price: 4999,
+            tax_rate: 0
+          },
+          {
+            id: "item-2",
+            description: "Additional Per Page",
+            qty: 1,
+            unit_price: 699,
+            tax_rate: 0
+          },
+          {
+            id: "item-3",
+            description: "Domain 1Year Plan",
+            qty: 1,
+            unit_price: 1081,
+            tax_rate: 0
+          }
+        ]);
       }
 
       setDiscount(0);
@@ -184,7 +235,7 @@ export default function CreateQuoteDrawer({
     } else {
       setVisible(false);
     }
-  }, [isOpen, deal, contact, initialType]);
+  }, [isOpen, deal, contact, editingInvoice, initialType]);
 
   // Auto-calculation logic
   const subtotal = useMemo(() => {
@@ -237,7 +288,7 @@ export default function CreateQuoteDrawer({
       return;
     }
     const draftInvoice: Invoice = {
-      id: "preview-temp",
+      id: editingInvoice?.id || "preview-temp",
       invoice_number: quoteId,
       deal_id: deal?.id ? String(deal.id) : undefined,
       contact_id: contact?.id ? String(contact.id) : undefined,
@@ -245,10 +296,11 @@ export default function CreateQuoteDrawer({
       client_company: clientCompany.trim() || undefined,
       client_email: clientEmail.trim() || undefined,
       client_phone: clientPhone.trim() ? (clientPhone.trim().startsWith("+") ? clientPhone.trim() : `+91 ${clientPhone.trim()}`) : undefined,
+      client_address: clientAddress.trim() || undefined,
+      subject: subject.trim() || "Website Design & Development",
       type: docType,
-      status: "DRAFT",
+      status: editingInvoice?.status || "DRAFT",
       issue_date: issueDate || new Date().toISOString().split("T")[0],
-      due_date: dueDate || undefined,
       items: items.map((it) => ({
         description: it.description.trim() || "Scope Deliverables",
         qty: Number(it.qty) || 1,
@@ -291,10 +343,11 @@ export default function CreateQuoteDrawer({
         client_company: clientCompany.trim() || undefined,
         client_email: clientEmail.trim() || undefined,
         client_phone: clientPhone.trim() ? (clientPhone.trim().startsWith("+") ? clientPhone.trim() : `+91 ${clientPhone.trim()}`) : undefined,
+        client_address: clientAddress.trim() || undefined,
+        subject: subject.trim() || "Website Design & Development",
         type: docType,
-        status: status,
+        status: editingInvoice?.status || status,
         issue_date: issueDate || undefined,
-        due_date: dueDate || undefined,
         items: items.map((it) => ({
           description: it.description.trim(),
           qty: Number(it.qty) || 1,
@@ -309,12 +362,21 @@ export default function CreateQuoteDrawer({
         notes: notes.trim() || undefined
       };
 
-      const saved = await api.createInvoice(payload);
-
-      toast.success(
-        `${docType === "QUOTE" ? "Quote" : "Invoice"} Created`,
-        `${saved.invoice_number || saved.bill_number} generated successfully for ₹${grandTotal.toLocaleString("en-IN")}`
-      );
+      let saved: Invoice;
+      if (editingInvoice?.id) {
+        const updated = await api.updateInvoice(editingInvoice.id, payload);
+        saved = (updated || { ...editingInvoice, ...payload }) as Invoice;
+        toast.success(
+          "Quotation Updated",
+          `Quotation updated successfully for ₹${grandTotal.toLocaleString("en-IN")}`
+        );
+      } else {
+        saved = await api.createInvoice(payload);
+        toast.success(
+          "Quotation Created",
+          `Quotation generated successfully for ₹${grandTotal.toLocaleString("en-IN")}`
+        );
+      }
 
       if (onSuccess) {
         onSuccess(saved);
@@ -370,22 +432,22 @@ export default function CreateQuoteDrawer({
         }`}
       >
         {/* Sticky Top Header */}
-        <div className="px-6 py-4 border-b border-slate-200/80 bg-slate-50/80 flex items-center justify-between shrink-0">
+        <div className="px-6 py-4 border-b border-slate-200/80 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/80 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-red-100 text-red-600 flex items-center justify-center shadow-xs">
+            <div className="w-10 h-10 rounded-xl bg-red-100 dark:bg-red-950/60 text-red-600 dark:text-red-400 flex items-center justify-center shadow-xs">
               <FileText className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-slate-900 leading-tight">
-                  Create Official Quote
+                <h2 className="text-base font-bold text-slate-900 dark:text-white leading-tight">
+                  {editingInvoice ? "Edit Quotation" : "Create Official Quote"}
                 </h2>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-50 text-red-700 border border-red-200">
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800/60">
                   Estimation Engine
                 </span>
               </div>
-              <p className="text-xs text-slate-500 font-medium mt-0.5">
-                {deal ? `Linked to Deal: ${deal.title}` : "Auto-calculates GST, line items, and generates printable quotation PDF"}
+              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">
+                {deal ? `Linked to Deal: ${deal.title}` : "Auto-calculates line items, and generates printable quotation PDF"}
               </p>
             </div>
           </div>
@@ -393,7 +455,7 @@ export default function CreateQuoteDrawer({
           <button
             type="button"
             onClick={handleClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-colors cursor-pointer"
+            className="p-2 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-800 transition-colors cursor-pointer"
             title="Close Drawer (Esc)"
           >
             <X className="w-5 h-5" />
@@ -402,99 +464,72 @@ export default function CreateQuoteDrawer({
 
         {/* Scrollable Form Body */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6 custom-scrollbar text-xs">
-          {/* Dynamic Organization Branding Indicator */}
-          <div className="p-3 bg-red-50/70 rounded-2xl border border-red-200/80 flex items-center justify-between">
+          {/* Company Brand Logo Only */}
+          <div className="p-3.5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 flex items-center justify-between shadow-2xs">
             <div className="flex items-center gap-3">
               {orgSettings?.logo_url ? (
                 <img
                   src={orgSettings.logo_url}
                   alt="Logo"
-                  className="w-8 h-8 rounded-lg object-contain bg-white p-0.5 border border-red-200"
+                  className="h-10 w-auto max-w-[150px] object-contain rounded-lg"
                 />
               ) : (
-                <div className="w-8 h-8 rounded-lg bg-red-600 text-white font-black text-xs flex items-center justify-center shadow-xs">
-                  {(orgSettings?.company_name || "AT").slice(0, 2).toUpperCase()}
+                <div className="w-10 h-10 rounded-xl bg-red-600 text-white font-black text-sm flex items-center justify-center shadow-xs">
+                  {(orgSettings?.company_name || "ZT").slice(0, 2).toUpperCase()}
                 </div>
               )}
               <div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-bold text-slate-900 leading-tight">
-                    {orgSettings?.company_name || "Arsath Thoufiq's Workspace"}
-                  </span>
-                  <span className="text-[10px] font-semibold text-red-700 bg-red-100/80 px-1.5 py-0.2 rounded">
-                    Seller
-                  </span>
-                </div>
-                <span className="text-[11px] text-slate-500 font-medium block mt-0.5">
-                  Signatory: {orgSettings?.signatory_name || "Arsath Thoufiq"} • GSTIN: {orgSettings?.gstin || "33AAECZ9920K1ZX"}
+                <span className="text-sm font-black text-slate-900 dark:text-white tracking-tight block">
+                  {orgSettings?.company_name || "ZIGMAA TECH"}
+                </span>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                  {orgSettings?.tagline || "Empowering Digital Innovation"}
                 </span>
               </div>
             </div>
-            <a
-              href="/settings"
-              target="_blank"
-              rel="noreferrer"
-              className="text-[11px] font-bold text-red-600 hover:text-red-700 hover:underline px-2 py-1 rounded-lg hover:bg-red-100/50 transition-colors"
-            >
-              Edit Branding ↗
-            </a>
           </div>
 
-          {/* SECTION 1: QUOTE NUMBER & DATES */}
-          <div className="p-4 rounded-2xl bg-slate-50/80 border border-slate-200/80 space-y-3.5">
+          {/* SECTION 1: DATE & SUBJECT */}
+          <div className="p-4 rounded-2xl bg-slate-50/80 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 space-y-3.5">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
                   1. Document Settings
                 </span>
-                <span className="text-xs font-bold text-slate-800">
-                  Quotation Details & Validity
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                  Quotation Date & Subject
                 </span>
               </div>
 
-              <span className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white text-slate-700 border border-slate-200 shadow-2xs">
-                Document Type: <span className="text-red-600 font-extrabold">Commercial Quotation</span>
+              <span className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 shadow-2xs">
+                Document: <span className="text-red-600 font-extrabold">Quotation</span>
               </span>
             </div>
 
-            {/* Metadata row: Quote ID, Issue Date, Due Date */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1 border-t border-slate-200/60">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-slate-200/60 dark:border-slate-800">
               <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  Quote Number / ID
-                </label>
-                <input
-                  type="text"
-                  value={quoteId}
-                  onChange={(e) => setQuoteId(e.target.value)}
-                  placeholder="e.g. QT-2026-001"
-                  className="w-full bg-white text-slate-900 text-xs px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 font-mono font-bold"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  Issue Date <span className="text-red-500">*</span>
+                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Date <span className="text-red-500">*</span>
                 </label>
                 <CustomDatePicker
                   value={issueDate}
                   onChange={(d) => setIssueDate(d)}
                   size="sm"
-                  placeholder="Select issue date"
+                  placeholder="Select date"
                   className="w-full text-xs"
                 />
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  Valid Until date (15 days)
+                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Subject
                 </label>
-                <CustomDatePicker
-                  value={dueDate}
-                  onChange={(d) => setDueDate(d)}
-                  size="sm"
-                  placeholder="Select valid date"
-                  className="w-full text-xs"
+                <input
+                  type="text"
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                  placeholder="e.g. Website Design & Development"
+                  className="w-full bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 font-medium"
                 />
               </div>
             </div>
@@ -502,7 +537,7 @@ export default function CreateQuoteDrawer({
 
           {/* SECTION 2: CLIENT INFORMATION */}
           <div className="space-y-3">
-            <div className="flex items-center justify-between pb-1 border-b border-slate-100">
+            <div className="flex items-center justify-between pb-1 border-b border-slate-100 dark:border-slate-800">
               <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
                 2. Billed To (Client Info)
               </span>
@@ -515,7 +550,7 @@ export default function CreateQuoteDrawer({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Client / Contact Name <span className="text-red-500">*</span>
                 </label>
                 <div className="relative">
@@ -524,54 +559,22 @@ export default function CreateQuoteDrawer({
                     required
                     value={clientName}
                     onChange={(e) => setClientName(e.target.value)}
-                    placeholder="e.g. Vikramaditya Sharma"
-                    className="w-full bg-slate-50 text-slate-900 text-xs pl-8 pr-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white font-medium"
+                    placeholder="e.g. Praveen"
+                    className="w-full bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 text-xs pl-8 pr-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 font-medium"
                   />
                   <User className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-3" />
                 </div>
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  Company / Organization
-                </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={clientCompany}
-                    onChange={(e) => setClientCompany(e.target.value)}
-                    placeholder="e.g. CloudScale Innovations Ltd"
-                    className="w-full bg-slate-50 text-slate-900 text-xs pl-8 pr-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white font-medium"
-                  />
-                  <Building2 className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-3" />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  Email Address
-                </label>
-                <div className="relative">
-                  <input
-                    type="email"
-                    value={clientEmail}
-                    onChange={(e) => setClientEmail(e.target.value)}
-                    placeholder="e.g. vikram@cloudscale.in"
-                    className="w-full bg-slate-50 text-slate-900 text-xs pl-8 pr-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white font-medium"
-                  />
-                  <Mail className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-3" />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Phone Number
                 </label>
                 <div className="flex items-center gap-2">
                   <select
                     value="+91"
                     disabled
-                    className="bg-slate-50 border border-slate-200 rounded-xl text-xs px-2.5 py-2.5 text-slate-800 font-semibold focus:outline-none cursor-default"
+                    className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs px-2.5 py-2.5 text-slate-800 dark:text-slate-200 font-semibold focus:outline-none cursor-default"
                   >
                     <option value="+91">IN +91</option>
                   </select>
@@ -580,11 +583,59 @@ export default function CreateQuoteDrawer({
                       type="tel"
                       value={clientPhone.replace(/^\+91\s*/, "")}
                       onChange={(e) => setClientPhone(e.target.value)}
-                      placeholder="e.g. 98765 43210"
-                      className="w-full bg-slate-50 text-slate-900 text-xs pl-8 pr-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white font-medium font-mono"
+                      placeholder="e.g. 8489002159"
+                      className="w-full bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 text-xs pl-8 pr-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 font-medium font-mono"
                     />
                     <Phone className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-3" />
                   </div>
+                </div>
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Client Address / City <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={clientAddress}
+                    onChange={(e) => setClientAddress(e.target.value)}
+                    placeholder="e.g. Tirupur"
+                    className="w-full bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 text-xs pl-8 pr-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 font-medium"
+                  />
+                  <MapPin className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-3" />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Company / Organization (Optional)
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={clientCompany}
+                    onChange={(e) => setClientCompany(e.target.value)}
+                    placeholder="e.g. CloudScale Innovations Ltd"
+                    className="w-full bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 text-xs pl-8 pr-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 font-medium"
+                  />
+                  <Building2 className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-3" />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Email Address (Optional)
+                </label>
+                <div className="relative">
+                  <input
+                    type="email"
+                    value={clientEmail}
+                    onChange={(e) => setClientEmail(e.target.value)}
+                    placeholder="e.g. praveen@example.com"
+                    className="w-full bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 text-xs pl-8 pr-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 font-medium"
+                  />
+                  <Mail className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-3" />
                 </div>
               </div>
             </div>

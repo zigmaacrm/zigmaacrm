@@ -16,7 +16,8 @@ import {
   Clock,
   Building2,
   User,
-  Filter
+  Filter,
+  Pencil
 } from "lucide-react";
 import Sidebar from "@/components/layout/Sidebar";
 import Header from "@/components/layout/Header";
@@ -39,6 +40,7 @@ export default function QuotesPage() {
 
   // Drawer & Modal State
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
@@ -58,12 +60,36 @@ export default function QuotesPage() {
   }, [loadInvoices]);
 
   const handleOpenCreateDrawer = () => {
+    setEditingInvoice(null);
+    setIsDrawerOpen(true);
+  };
+
+  const handleEdit = (inv: Invoice) => {
+    setEditingInvoice(inv);
     setIsDrawerOpen(true);
   };
 
   const handleCreated = (saved: Invoice) => {
     setInvoices((prev) => [saved, ...prev.filter((i) => String(i.id) !== String(saved.id))]);
+    setEditingInvoice(null);
     loadInvoices();
+  };
+
+  const handleUpdateStatus = async (id: number | string, newStatus: string) => {
+    try {
+      // Optimistic update
+      setInvoices((prev) =>
+        prev.map((inv) => (String(inv.id) === String(id) ? { ...inv, status: newStatus } : inv))
+      );
+      await api.updateInvoice(id, { status: newStatus });
+      toast.success(
+        "Status Updated",
+        `Quotation marked as ${newStatus === "PAID" ? "Accepted / Paid" : newStatus}.`
+      );
+      loadInvoices();
+    } catch {
+      toast.error("Error", "Could not update quotation status.");
+    }
   };
 
   const handlePreview = (inv: Invoice) => {
@@ -118,6 +144,9 @@ export default function QuotesPage() {
   const totalCount = quotesList.length;
   const totalValue = quotesList.reduce((sum, i) => sum + (Number(i.total_amount) || 0), 0);
   const sentProposalsCount = quotesList.filter((i) => (i.status || "").toUpperCase() === "SENT").length;
+  const acceptedQuotes = quotesList.filter((i) => (i.status || "").toUpperCase() === "PAID");
+  const acceptedCount = acceptedQuotes.length;
+  const acceptedValue = acceptedQuotes.reduce((sum, i) => sum + (Number(i.total_amount) || 0), 0);
 
   return (
     <div className="flex h-screen bg-[#F8FAFC] dark:bg-[#0b0f19] text-slate-900 dark:text-slate-100 font-sans overflow-hidden select-none">
@@ -180,14 +209,14 @@ export default function QuotesPage() {
               </div>
             </div>
 
-            <div className="p-4 rounded-xl bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 border-t-[3px] border-t-amber-500 shadow-xs flex items-center justify-between">
+            <div className="p-4 rounded-xl bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 border-t-[3px] border-t-emerald-600 shadow-xs flex items-center justify-between">
               <div>
-                <p className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Active Pipeline Deals</p>
-                <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">Proposal Stage</p>
-                <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Automated stage sync</p>
+                <p className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Accepted / Paid</p>
+                <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{acceptedCount}</p>
+                <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">{formatCurrency(acceptedValue)} revenue</p>
               </div>
-              <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400">
-                <Clock className="w-5 h-5" />
+              <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400">
+                <CheckCircle2 className="w-5 h-5" />
               </div>
             </div>
           </div>
@@ -262,6 +291,7 @@ export default function QuotesPage() {
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
                     {filteredInvoices.map((inv) => {
                       const docNo = inv.invoice_number || inv.bill_number || `QT-${inv.id}`;
+                      const curStatus = (inv.status || "DRAFT").toUpperCase();
                       return (
                         <tr
                           key={inv.id}
@@ -281,16 +311,26 @@ export default function QuotesPage() {
                               </span>
                             )}
                           </td>
-                          <td className="py-3.5 px-3 text-center">
-                            <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                              inv.status === "PAID"
-                                ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border dark:border-emerald-800/60"
-                                : inv.status === "SENT"
-                                ? "bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/50 dark:text-purple-300 dark:border-purple-800/60"
-                                : "bg-slate-100 text-slate-600 dark:bg-slate-800/70 dark:text-slate-300 dark:border dark:border-slate-700/60"
-                            }`}>
-                              {inv.status || "DRAFT"}
-                            </span>
+                          <td className="py-3.5 px-3 text-center" onClick={(e) => e.stopPropagation()}>
+                            {/* Interactive Status Changer Dropdown */}
+                            <select
+                              value={curStatus}
+                              onChange={(e) => handleUpdateStatus(inv.id, e.target.value)}
+                              className={`text-[10px] font-bold uppercase rounded-lg px-2 py-1 border cursor-pointer focus:outline-none focus:ring-1 focus:ring-red-500 transition-all ${
+                                curStatus === "PAID"
+                                  ? "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800/80"
+                                  : curStatus === "SENT"
+                                  ? "bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 border-purple-300 dark:border-purple-800/80"
+                                  : curStatus === "OVERDUE"
+                                  ? "bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-800/80"
+                                  : "bg-slate-100 dark:bg-slate-800/70 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700/80"
+                              }`}
+                            >
+                              <option value="DRAFT" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">Draft</option>
+                              <option value="SENT" className="bg-white dark:bg-slate-900 text-purple-600 dark:text-purple-400 font-semibold">Sent / Proposal</option>
+                              <option value="PAID" className="bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 font-bold">✓ Paid / Accepted</option>
+                              <option value="OVERDUE" className="bg-white dark:bg-slate-900 text-rose-600 dark:text-rose-400">Overdue</option>
+                            </select>
                           </td>
                           <td className="py-3.5 px-4 text-slate-500 dark:text-slate-400 font-medium">
                             {inv.issue_date || (inv.created_at ? formatDate(inv.created_at) : "—")}
@@ -300,6 +340,29 @@ export default function QuotesPage() {
                           </td>
                           <td className="py-3.5 px-4 text-right" onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-center justify-end gap-1.5">
+                              {/* 1-Click Quick Mark as Paid Button */}
+                              {curStatus !== "PAID" && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateStatus(inv.id, "PAID")}
+                                  className="p-1.5 rounded-lg border border-emerald-300 dark:border-emerald-800/60 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors"
+                                  title="Mark as Paid / Accepted"
+                                >
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+
+                              {/* Edit Button */}
+                              <button
+                                type="button"
+                                onClick={() => handleEdit(inv)}
+                                className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700/60 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition-colors"
+                                title="Edit Quotation"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+
+                              {/* View & Print Preview */}
                               <button
                                 type="button"
                                 onClick={() => handlePreview(inv)}
@@ -339,11 +402,15 @@ export default function QuotesPage() {
         </main>
       </div>
 
-      {/* Slide-over Create Quote Drawer */}
+      {/* Slide-over Create / Edit Quote Drawer */}
       <CreateQuoteDrawer
         isOpen={isDrawerOpen}
-        onClose={() => setIsDrawerOpen(false)}
+        onClose={() => {
+          setIsDrawerOpen(false);
+          setEditingInvoice(null);
+        }}
         onSuccess={handleCreated}
+        editingInvoice={editingInvoice}
         initialType="QUOTE"
       />
 

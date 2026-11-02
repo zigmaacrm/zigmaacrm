@@ -83,7 +83,7 @@ export default function QuotationPreviewModal({
       toast.warning("Phone Number Missing", "Client phone number is not available for WhatsApp sharing.");
     }
     const targetPhone = rawPhone.length === 10 ? `91${rawPhone}` : rawPhone;
-    const msg = `Hello ${clientName},\n\nHere is your official ${docTitle} ${docNumber} for ${formattedTotal} from ${sellerName}.\n\nPlease review the deliverables and let us know your approval.\n\nBest regards,\n${signatoryName}\n${sellerName}`;
+    const msg = `Hello ${clientName},\n\nHere is your official Quotation for ${formattedTotal} from ${sellerName}.\n\nPlease review the deliverables and let us know your approval.\n\nBest regards,\n${signatoryName}\n${sellerName}`;
     const waUrl = `https://wa.me/${targetPhone}?text=${encodeURIComponent(msg)}`;
     window.open(waUrl, "_blank", "noopener,noreferrer");
   };
@@ -91,8 +91,8 @@ export default function QuotationPreviewModal({
   // Synced Email Dispatcher
   const handleSendEmail = () => {
     const targetEmail = invoice.client_email || invoice.email || "";
-    const subject = `Quotation ${docNumber} for ${clientName} - ${sellerName}`;
-    const body = `Dear ${clientName},\n\nPlease find details for your commercial quotation ${docNumber} amounting to ${formattedTotal}.\n\nPayment terms: ${invoice.notes || "50% advance, balance upon milestone delivery"}\n\nBank Transfer & UPI details are included in the quotation.\n\nBest regards,\n${signatoryName}\n${sellerName}`;
+    const subject = `Quotation for ${clientName} - ${sellerName}`;
+    const body = `Dear ${clientName},\n\nPlease find details for your commercial quotation amounting to ${formattedTotal}.\n\nPayment terms: ${invoice.notes || "50% advance, balance upon milestone delivery"}\n\nBest regards,\n${signatoryName}\n${sellerName}`;
     const mailto = `mailto:${targetEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     window.location.href = mailto;
     toast.success("Email Dispatcher Opened", `Drafted quotation email to ${targetEmail || "client"}`);
@@ -105,16 +105,13 @@ export default function QuotationPreviewModal({
       aria-label="Quotation Preview"
       className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-6 print:p-0 print:bg-white animate-in fade-in duration-200"
     >
-      <div className="relative w-full max-w-4xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[94vh] print:max-h-none print:shadow-none print:border-none print:rounded-none">
+      <div className="relative w-full max-w-3xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[94vh] print:max-h-none print:shadow-none print:border-none print:rounded-none">
         
         {/* Top Control Bar (Hidden on print) */}
         <div className="px-5 py-3.5 bg-slate-900 text-white flex flex-wrap items-center justify-between gap-3 shrink-0 print:hidden select-none">
           <div className="flex items-center gap-2.5">
-            <span className="font-mono font-bold text-sm text-white">
-              {docNumber}
-            </span>
-            <span className="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase bg-red-600 text-white">
-              {docTitle}
+            <span className="font-bold text-sm text-white">
+              Quotation Preview
             </span>
             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-white/10 text-slate-300">
               {invoice.status || "DRAFT"}

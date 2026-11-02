@@ -160,6 +160,7 @@ export interface OrganizationSettings {
   id?: string | number;
   organization_id?: string;
   company_name: string;
+  tagline?: string;
   logo_url?: string | null;
   email?: string;
   phone?: string;
@@ -196,6 +197,8 @@ export interface Invoice {
   client_phone?: string;
   recipient_phone?: string;
   recipient_address?: string;
+  client_address?: string;
+  subject?: string;
   patient_name?: string;
   phone?: string;
   email?: string;

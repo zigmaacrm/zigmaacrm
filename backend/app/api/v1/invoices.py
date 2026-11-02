@@ -34,6 +34,8 @@ class InvoiceCreate(BaseModel):
     client_company: Optional[str] = None
     client_email: Optional[str] = None
     client_phone: Optional[str] = None
+    client_address: Optional[str] = None
+    subject: Optional[str] = None
     type: Optional[str] = "QUOTE"  # QUOTE, INVOICE
     status: Optional[str] = "DRAFT"  # DRAFT, SENT, PAID, OVERDUE
     issue_date: Optional[str] = None  # "YYYY-MM-DD"
@@ -51,9 +53,15 @@ class InvoiceUpdate(BaseModel):
     client_company: Optional[str] = None
     client_email: Optional[str] = None
     client_phone: Optional[str] = None
+    client_address: Optional[str] = None
+    subject: Optional[str] = None
     due_date: Optional[str] = None
     notes: Optional[str] = None
     discount: Optional[float] = None
+    items: Optional[List[InvoiceItemSchema]] = None
+    subtotal: Optional[float] = None
+    tax_amount: Optional[float] = None
+    total_amount: Optional[float] = None
 
 def _serialize_invoice(inv: Invoice) -> dict:
     items_data = inv.items
@@ -75,7 +83,7 @@ def _serialize_invoice(inv: Invoice) -> dict:
                 "description": it.get("description") or it.get("name") or "Item",
                 "qty": q,
                 "unit_price": p,
-                "tax_rate": float(it.get("tax_rate", 18.0)),
+                "tax_rate": float(it.get("tax_rate", 0.0)),
                 "amount": amt
             })
 
@@ -87,6 +95,19 @@ def _serialize_invoice(inv: Invoice) -> dict:
     if inv.updated_at:
         updated_str = inv.updated_at.isoformat() if hasattr(inv.updated_at, "isoformat") else str(inv.updated_at)
 
+    subject = "Website Design & Development"
+    client_address = inv.client_company or ""
+    display_notes = inv.notes or ""
+    if inv.notes:
+        try:
+            parsed = json.loads(inv.notes)
+            if isinstance(parsed, dict):
+                subject = parsed.get("subject", subject)
+                client_address = parsed.get("client_address", client_address)
+                display_notes = parsed.get("notes", display_notes)
+        except Exception:
+            pass
+
     return {
         "id": inv.id,
         "organization_id": inv.organization_id,
@@ -97,6 +118,8 @@ def _serialize_invoice(inv: Invoice) -> dict:
         "client_company": inv.client_company or "",
         "client_email": inv.client_email or "",
         "client_phone": inv.client_phone or "",
+        "client_address": client_address,
+        "subject": subject,
         "type": inv.type or "QUOTE",
         "status": inv.status or "DRAFT",
         "issue_date": str(inv.issue_date) if inv.issue_date else str(date.today()),
@@ -106,7 +129,7 @@ def _serialize_invoice(inv: Invoice) -> dict:
         "tax_amount": float(inv.tax_amount or 0.0),
         "discount": float(inv.discount or 0.0),
         "total_amount": float(inv.total_amount or 0.0),
-        "notes": inv.notes or "",
+        "notes": display_notes,
         "created_at": created_str,
         "updated_at": updated_str
     }
@@ -260,6 +283,18 @@ async def create_invoice(
             due_d = None
 
     default_notes = payload.notes or "Payment terms: 50% advance, balance upon project milestone delivery. Bank Transfer / UPI accepted."
+    meta = {}
+    if payload.subject:
+        meta["subject"] = payload.subject
+    if payload.client_address:
+        meta["client_address"] = payload.client_address
+    if meta:
+        meta["text"] = default_notes
+        notes_str = json.dumps(meta)
+    else:
+        notes_str = default_notes
+
+    client_company_val = payload.client_company.strip() if payload.client_company else (payload.client_address.strip() if payload.client_address else None)
 
     invoice = Invoice(
         organization_id=target_org_id,
@@ -267,7 +302,7 @@ async def create_invoice(
         deal_id=payload.deal_id or None,
         contact_id=payload.contact_id or None,
         client_name=payload.client_name.strip(),
-        client_company=payload.client_company.strip() if payload.client_company else None,
+        client_company=client_company_val,
         client_email=payload.client_email.strip() if payload.client_email else None,
         client_phone=payload.client_phone.strip() if payload.client_phone else None,
         type=doc_type,
@@ -279,7 +314,7 @@ async def create_invoice(
         tax_amount=tax_total,
         discount=discount,
         total_amount=grand_total,
-        notes=default_notes
+        notes=notes_str
     )
 
     db.add(invoice)
@@ -351,8 +386,51 @@ async def update_invoice(invoice_id: str, payload: InvoiceUpdate, db: AsyncSessi
         inv.client_email = payload.client_email
     if payload.client_phone is not None:
         inv.client_phone = payload.client_phone
-    if payload.notes is not None:
-        inv.notes = payload.notes
+
+    if payload.client_address is not None and not payload.client_company:
+        inv.client_company = payload.client_address
+
+    if payload.notes is not None or payload.subject is not None or payload.client_address is not None:
+        existing_meta = {}
+        try:
+            if inv.notes and inv.notes.strip().startswith("{"):
+                existing_meta = json.loads(inv.notes)
+            elif inv.notes:
+                existing_meta = {"text": inv.notes}
+        except Exception:
+            existing_meta = {"text": inv.notes or ""}
+
+        if payload.subject is not None:
+            existing_meta["subject"] = payload.subject
+        if payload.client_address is not None:
+            existing_meta["client_address"] = payload.client_address
+        if payload.notes is not None:
+            existing_meta["text"] = payload.notes
+
+        inv.notes = json.dumps(existing_meta)
+
+    if payload.items is not None:
+        computed_items = []
+        calc_subtotal = 0.0
+        calc_tax = 0.0
+        for it in payload.items:
+            amt = round(it.qty * it.unit_price, 2)
+            calc_subtotal += amt
+            rate = it.tax_rate if it.tax_rate is not None else 0.0
+            calc_tax += round(amt * (rate / 100.0), 2)
+            computed_items.append({
+                "description": it.description,
+                "qty": it.qty,
+                "unit_price": it.unit_price,
+                "tax_rate": rate,
+                "amount": amt
+            })
+        inv.items = computed_items
+        inv.subtotal = payload.subtotal if payload.subtotal is not None else calc_subtotal
+        inv.tax_amount = payload.tax_amount if payload.tax_amount is not None else calc_tax
+        inv.discount = payload.discount if payload.discount is not None else (inv.discount or 0.0)
+        inv.total_amount = payload.total_amount if payload.total_amount is not None else (inv.subtotal + inv.tax_amount - inv.discount)
+
     if payload.due_date is not None:
         try:
             inv.due_date = datetime.strptime(payload.due_date[:10], "%Y-%m-%d").date()
@@ -411,6 +489,210 @@ async def generate_invoice_pdf_view(invoice_id: str, db: AsyncSession = Depends(
     discount = float(inv.discount or 0.0)
     total_amount = float(inv.total_amount or 0.0)
     amount_in_words = number_to_words_inr(total_amount)
+
+    if inv.type == "QUOTE":
+        # Extract client_address and subject from notes if json
+        c_addr = inv.client_company or ""
+        subj = "Website Design & Development"
+        if inv.notes:
+            try:
+                parsed_notes = json.loads(inv.notes)
+                if isinstance(parsed_notes, dict):
+                    if parsed_notes.get("client_address"):
+                        c_addr = parsed_notes["client_address"]
+                    if parsed_notes.get("subject"):
+                        subj = parsed_notes["subject"]
+            except Exception:
+                pass
+
+        # Format date as e.g. "October 26, 2026"
+        date_str = ""
+        if inv.issue_date:
+            try:
+                date_str = inv.issue_date.strftime("%B %d, %Y")
+            except Exception:
+                date_str = str(inv.issue_date)
+        else:
+            date_str = datetime.now().strftime("%B %d, %Y")
+
+        quote_item_rows = ""
+        for it in items:
+            d = it.get("description") or it.get("name") or "Service"
+            q = it.get("qty", 1)
+            p = float(it.get("unit_price", 0.0))
+            a = float(it.get("amount") or (q * p))
+            quote_item_rows += f"""
+            <tr>
+                <td style="padding: 14px 6px; font-size: 14px; color: #1e293b; border-bottom: 1px solid #f1f5f9;">{d}</td>
+                <td style="padding: 14px 6px; text-align: right; font-size: 14px; font-weight: 500; color: #1e293b; border-bottom: 1px solid #f1f5f9;">{a:,.2f}</td>
+            </tr>
+            """
+
+        phone_html = f"<div>{inv.client_phone}</div>" if inv.client_phone else ""
+        addr_html = f"<div>{c_addr}</div>" if c_addr else ""
+
+        html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quotation - {inv.client_name}</title>
+    <style>
+        @page {{
+            size: A4;
+            margin: 15mm;
+        }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            color: #000000;
+            background: #f8fafc;
+            margin: 0;
+            padding: 30px;
+        }}
+        .quote-sheet {{
+            max-width: 820px;
+            margin: auto;
+            background: #ffffff;
+            padding: 50px 60px;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+            border: 1px solid #e2e8f0;
+            min-height: 950px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            box-sizing: border-box;
+        }}
+        .print-btn {{
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #dc2626;
+            color: #ffffff;
+            border: none;
+            padding: 10px 18px;
+            font-size: 13px;
+            font-weight: 700;
+            border-radius: 10px;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(220, 38, 38, 0.25);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            z-index: 999;
+        }}
+        .print-btn:hover {{
+            background: #b91c1c;
+        }}
+        @media print {{
+            body {{
+                background: #ffffff;
+                padding: 0;
+            }}
+            .print-btn {{
+                display: none;
+            }}
+            .quote-sheet {{
+                box-shadow: none;
+                border: none;
+                padding: 20px 30px;
+                width: 100%;
+                max-width: 100%;
+                min-height: auto;
+            }}
+        }}
+    </style>
+</head>
+<body>
+    <button class="print-btn" onclick="window.print()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 6 2 18 2 18 9"></polyline>
+            <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+            <rect x="6" y="14" width="12" height="8"></rect>
+        </svg>
+        Print / Save PDF
+    </button>
+
+    <div class="quote-sheet">
+        <div>
+            <!-- Header -->
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 40px;">
+                <tr>
+                    <td style="vertical-align: middle; width: 70%;">
+                        <h1 style="font-size: 32px; font-weight: 900; letter-spacing: -0.5px; margin: 0; color: #000000; text-transform: uppercase;">ZIGMAA TECH</h1>
+                        <p style="font-size: 15px; color: #374151; font-weight: 500; margin: 6px 0 0 0;">Empowering Digital Innovation</p>
+                    </td>
+                    <td style="vertical-align: middle; text-align: right; width: 30%;">
+                        <img src="/zigmaa-logo.png" style="max-height: 80px; max-width: 90px; object-fit: contain;" alt="Zigmaa Tech" onerror="this.onerror=null; this.src='https://raw.githubusercontent.com/mdthoufiqarsath/zigmaacrm/main/frontend/public/zigmaa-logo.png';" />
+                    </td>
+                </tr>
+            </table>
+
+            <!-- Title -->
+            <div style="text-align: center; margin-bottom: 40px;">
+                <h2 style="font-size: 24px; font-weight: 800; color: #000000; margin: 0; letter-spacing: 0.5px;">Quotation</h2>
+            </div>
+
+            <!-- Client & Date Row -->
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px;">
+                <tr>
+                    <td style="vertical-align: top; width: 60%;">
+                        <div style="font-size: 13px; font-weight: 800; color: #000000; text-transform: uppercase; margin-bottom: 4px;">BILL TO</div>
+                        <div style="font-size: 14px; font-weight: 500; color: #1f2937; line-height: 1.5;">
+                            <div>{inv.client_name}</div>
+                            {phone_html}
+                            {addr_html}
+                        </div>
+                    </td>
+                    <td style="vertical-align: top; width: 40%; text-align: left;">
+                        <div style="font-size: 13px; font-weight: 800; color: #000000; text-transform: uppercase; margin-bottom: 4px;">DATE</div>
+                        <div style="font-size: 14px; font-weight: 500; color: #1f2937;">{date_str}</div>
+                    </td>
+                </tr>
+            </table>
+
+            <!-- Subject & Address Row -->
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 45px;">
+                <tr>
+                    <td style="vertical-align: top; width: 60%; padding-right: 20px;">
+                        <div style="font-size: 13px; font-weight: 800; color: #000000; text-transform: uppercase; margin-bottom: 4px;">SUBJECT</div>
+                        <div style="font-size: 14px; font-weight: 500; color: #1f2937;">{subj}</div>
+                    </td>
+                    <td style="vertical-align: top; width: 40%;">
+                        <div style="font-size: 13px; font-weight: 800; color: #000000; text-transform: uppercase; margin-bottom: 4px;">ADDRESS</div>
+                        <div style="font-size: 14px; font-weight: 500; color: #1f2937; line-height: 1.4;">3/41A, Ebenezer Castle, Kamaraj Nagar 3rd Street, Thoothukudi</div>
+                    </td>
+                </tr>
+            </table>
+
+            <!-- Table -->
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px;">
+                <thead>
+                    <tr style="border-top: 2.5px solid #0f172a; border-bottom: 1.5px solid #0f172a;">
+                        <th style="padding: 12px 6px; text-align: left; font-size: 14px; font-weight: 700; color: #000000;">Description</th>
+                        <th style="padding: 12px 6px; text-align: right; font-size: 14px; font-weight: 700; color: #000000;">Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {quote_item_rows}
+                    <tr style="border-top: 1.5px solid #0f172a; border-bottom: 2.5px solid #0f172a;">
+                        <td style="padding: 14px 6px; font-size: 15px; font-weight: 800; color: #000000;">Total</td>
+                        <td style="padding: 14px 6px; text-align: right; font-size: 15px; font-weight: 800; color: #000000;">₹ {total_amount:,.2f}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Footer -->
+        <div style="margin-top: 60px; font-size: 13px; color: #374151; line-height: 1.6;">
+            <p style="margin: 3px 0; font-weight: 600; color: #111827;">Make all checks payable to ZIGMAA TECH</p>
+            <p style="margin: 3px 0;">If you have any questions concerning this invoice, contact {signatory_name}, {seller_phone}</p>
+            <p style="margin: 8px 0 0 0; font-weight: 700; color: #000000;">Thank you for your business!</p>
+        </div>
+    </div>
+</body>
+</html>"""
+        return HTMLResponse(content=html_content)
     doc_title = "TAX INVOICE" if inv.type == "INVOICE" else "OFFICIAL QUOTATION"
     badge_bg = "#dc2626" if inv.type == "INVOICE" else "#2563eb"
 

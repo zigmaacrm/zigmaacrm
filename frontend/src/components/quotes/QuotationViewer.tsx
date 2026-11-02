@@ -86,49 +86,47 @@ export default function QuotationViewer({
   }, [propOrgSettings]);
 
   // Seller info derived from dynamic settings or defaults
-  const sellerName = org?.company_name || "Arsath Thoufiq's Workspace";
+  const sellerName = org?.company_name || "ZIGMAA TECH";
   const sellerLogo = org?.logo_url || null;
-  const sellerEmail = org?.email || "thoufiqarsath84@gmail.com";
-  const sellerPhone = org?.phone || "+91 98765 43210";
-  const sellerAddress = org?.address || "Chennai Tech Park, Guindy, Chennai, Tamil Nadu 600032";
-  const sellerGstin = org?.gstin || "33AAECZ9920K1ZX";
-  const signatoryName = org?.signatory_name || "Arsath Thoufiq";
-  const signatoryDesig = org?.signatory_designation || "Authorized Signatory";
-  const bankName = org?.bank_name || "HDFC Bank Ltd";
-  const accountNumber = org?.account_number || "50200084729104";
-  const ifscCode = org?.ifsc_code || "HDFC0001244";
-  const upiId = org?.upi_id || "zigmaa@hdfcbank";
+  const sellerPhone = org?.phone || "+91 88702 35207";
+  const sellerAddress = org?.address || "3/41A, Ebenezer Castle, Kamaraj Nagar 3rd Street, Thoothukudi";
+  const sellerTagline = org?.tagline || "Empowering Digital Innovation";
 
   // Document details
-  const docNumber = invoice.invoice_number || invoice.bill_number || `QT-2026-001`;
-  const docTitle = "COMMERCIAL QUOTATION";
-  const items = invoice.items || [];
-  const subtotal = invoice.subtotal !== undefined ? invoice.subtotal : items.reduce((s, it) => s + (it.qty * it.unit_price), 0);
-  const taxAmount = invoice.tax_amount !== undefined ? invoice.tax_amount : items.reduce((s, it) => s + (it.qty * it.unit_price * ((it.tax_rate ?? 18) / 100)), 0);
-  const discount = invoice.discount || 0;
-  const grandTotal = invoice.total_amount !== undefined ? invoice.total_amount : Math.max(0, subtotal + taxAmount - discount);
-  const amountWords = getAmountInWords(grandTotal);
+  const clientName = invoice.client_name || invoice.patient_name || "Client";
+  const clientPhone = invoice.client_phone || invoice.phone || "";
+  const clientAddress = invoice.client_address || invoice.recipient_address || (invoice.client_company ? invoice.client_company : "");
+  const subject = invoice.subject || (invoice.notes && !invoice.notes.includes("Payment terms") ? invoice.notes : "Website Design & Development");
 
-  // Avatar initials fallback
-  const companyInitials = sellerName
-    ? sellerName
-        .split(" ")
-        .map((w) => w[0])
-        .filter(Boolean)
-        .slice(0, 2)
-        .join("")
-        .toUpperCase()
-    : "AT";
+  // Date formatting (e.g. October 26, 2026)
+  const dateObj = invoice.issue_date
+    ? new Date(invoice.issue_date)
+    : invoice.created_at
+    ? new Date(invoice.created_at)
+    : new Date();
+  const formattedDate = dateObj.toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric"
+  });
+
+  const items = invoice.items || [];
+  const discount = Number(invoice.discount || 0);
+  const subtotal = items.reduce(
+    (s, it) => s + (it.amount !== undefined ? Number(it.amount) : (Number(it.qty) || 1) * (Number(it.unit_price) || 0)),
+    0
+  );
+  const grandTotal = invoice.total_amount !== undefined ? Number(invoice.total_amount) : Math.max(0, subtotal - discount);
 
   return (
     <div
-      className={`quotation-a4-sheet max-w-3xl mx-auto p-8 sm:p-10 bg-white shadow-xl border border-slate-200 text-slate-800 print:shadow-none print:border-none print:p-0 print:m-0 print:max-w-none print:w-full ${className}`}
+      className={`quotation-a4-sheet max-w-2xl mx-auto p-10 sm:p-14 bg-white shadow-xl border border-slate-200 text-slate-900 print:shadow-none print:border-none print:p-0 print:m-0 print:max-w-none print:w-full font-sans ${className}`}
     >
       <style jsx global>{`
         @media print {
           @page {
             size: A4 portrait;
-            margin: 12mm;
+            margin: 15mm;
           }
           body {
             background: #ffffff !important;
@@ -149,261 +147,133 @@ export default function QuotationViewer({
         }
       `}</style>
 
-      {/* 1. Header: Seller Branding (Left) + Document Metadata (Right) */}
-      <div className="flex flex-col sm:flex-row items-start justify-between gap-6 pb-6 border-b border-slate-200">
-        <div className="space-y-1.5 max-w-md">
-          {/* Logo or Brand Avatar */}
-          <div className="flex items-center gap-3">
-            {sellerLogo ? (
-              <img
-                src={sellerLogo}
-                alt={sellerName}
-                className="h-12 w-auto max-w-[190px] object-contain rounded-lg"
-              />
-            ) : (
-              <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-red-600 to-rose-700 text-white font-black text-base flex items-center justify-center shadow-xs select-none">
-                {companyInitials}
-              </div>
-            )}
-            <div>
-              <span className="text-lg font-black text-slate-900 tracking-tight leading-tight block">
-                {sellerName}
-              </span>
-              <span className="inline-block px-2 py-0.5 rounded text-[10px] font-extrabold uppercase tracking-wider bg-slate-900 text-white">
-                {docTitle}
-              </span>
-            </div>
-          </div>
-
-          <p className="text-xs text-slate-600 font-medium pt-1 leading-relaxed">
-            {sellerAddress}
-          </p>
-          <p className="text-[11px] text-slate-500 font-mono">
-            GSTIN: <span className="font-semibold text-slate-700">{sellerGstin}</span> • {sellerEmail} • {sellerPhone}
-          </p>
-        </div>
-
-        {/* Right Column: Quote Number, Dates & Status */}
-        <div className="text-left sm:text-right space-y-1 sm:self-start">
-          <div className="font-mono text-xl font-black text-slate-900 tracking-tight">
-            {docNumber}
-          </div>
-          <p className="text-xs text-slate-600">
-            <span className="font-semibold text-slate-400">Issue Date: </span>
-            <span className="font-medium text-slate-800">
-              {invoice.issue_date || (invoice.created_at ? formatDate(invoice.created_at) : new Date().toISOString().split("T")[0])}
-            </span>
-          </p>
-          {invoice.due_date && (
-            <p className="text-xs text-slate-600">
-              <span className="font-semibold text-slate-400">Valid Until: </span>
-              <span className="font-medium text-slate-800">{invoice.due_date}</span>
-            </p>
-          )}
-          <div className="pt-1.5">
-            <span
-              className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wide border ${
-                invoice.status === "PAID"
-                  ? "bg-emerald-50 text-emerald-800 border-emerald-200"
-                  : invoice.status === "SENT"
-                  ? "bg-blue-50 text-blue-800 border-blue-200"
-                  : "bg-slate-100 text-slate-700 border-slate-200"
-              }`}
-            >
-              Status: {invoice.status || "DRAFT"}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* 2. Bill To (Client) & Issued By (Seller) Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-6">
-        <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/90 space-y-1">
-          <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest block">
-            PROPOSAL PREPARED FOR
-          </span>
-          <p className="text-sm font-bold text-slate-900">
-            {invoice.client_name || invoice.patient_name || "Valued Client"}
-          </p>
-          {invoice.client_company && (
-            <p className="text-xs font-semibold text-slate-700">
-              {invoice.client_company}
-            </p>
-          )}
-          {invoice.client_email && (
-            <p className="text-xs text-slate-500 font-medium">
-              {invoice.client_email}
-            </p>
-          )}
-          {(invoice.client_phone || invoice.phone) && (
-            <p className="text-xs text-slate-500 font-mono">
-              {invoice.client_phone || invoice.phone}
-            </p>
-          )}
-        </div>
-
-        <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/90 space-y-1">
-          <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest block">
-            ISSUED & MANAGED BY
-          </span>
-          <p className="text-sm font-bold text-slate-900 truncate">
+      {/* Top Header: Company Name & Tagline (Left) + Logo (Right) */}
+      <div className="flex items-start justify-between gap-6 pb-2">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight leading-none uppercase">
             {sellerName}
-          </p>
-          <p className="text-xs text-slate-600 line-clamp-1">
-            {sellerAddress}
-          </p>
-          <p className="text-xs text-slate-500">
-            Helpline: {sellerPhone}
-          </p>
-          <p className="text-xs text-slate-500">
-            Support: {sellerEmail}
+          </h1>
+          <p className="text-xs sm:text-sm font-semibold text-slate-700 mt-2">
+            {sellerTagline}
           </p>
         </div>
-      </div>
 
-      {/* 3. Dynamic Line Items Table */}
-      <div className="border border-slate-200 rounded-xl overflow-hidden mb-6">
-        <table className="w-full text-left border-collapse text-xs">
-          <thead>
-            <tr className="bg-slate-100/90 text-slate-700 font-extrabold uppercase text-[10px] tracking-wider border-b border-slate-200">
-              <th className="py-3 px-3 text-center w-10">#</th>
-              <th className="py-3 px-4">ITEM & DESCRIPTION</th>
-              <th className="py-3 px-3 text-center w-16">QTY</th>
-              <th className="py-3 px-4 text-right w-28">RATE (₹)</th>
-              <th className="py-3 px-3 text-center w-16">TAX</th>
-              <th className="py-3 px-4 text-right w-32">AMOUNT (₹)</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {items.length > 0 ? (
-              items.map((it, idx) => {
-                const lineAmt = it.amount !== undefined ? it.amount : (it.qty * it.unit_price);
-                return (
-                  <tr key={idx} className="hover:bg-slate-50/60 transition-colors">
-                    <td className="py-3.5 px-3 text-center text-slate-400 font-medium">
-                      {idx + 1}
-                    </td>
-                    <td className="py-3.5 px-4 font-semibold text-slate-900">
-                      {it.description || it.name || "Scope Item"}
-                    </td>
-                    <td className="py-3.5 px-3 text-center text-slate-700 font-medium">
-                      {it.qty}
-                    </td>
-                    <td className="py-3.5 px-4 text-right font-medium text-slate-700 font-mono">
-                      {formatCurrency(it.unit_price)}
-                    </td>
-                    <td className="py-3.5 px-3 text-center text-slate-500 font-medium">
-                      {it.tax_rate !== undefined ? `${it.tax_rate}%` : "18%"}
-                    </td>
-                    <td className="py-3.5 px-4 text-right font-bold text-slate-900 font-mono">
-                      {formatCurrency(lineAmt)}
-                    </td>
-                  </tr>
-                );
-              })
-            ) : (
-              <tr>
-                <td colSpan={6} className="py-6 text-center text-slate-400">
-                  No line items found in this document.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {/* 4. Financial Summary Card & Amount in Words */}
-      <div className="grid grid-cols-1 sm:grid-cols-12 gap-6 items-start pb-6">
-        <div className="sm:col-span-7 space-y-3">
-          {/* Amount In Words Banner */}
-          <div className="p-3.5 rounded-xl bg-purple-50/80 border border-purple-200 text-xs">
-            <span className="text-[10px] font-extrabold text-purple-700 uppercase tracking-widest block mb-0.5">
-              AMOUNT IN WORDS
-            </span>
-            <span className="font-bold text-purple-950 block leading-snug">
-              {amountWords}
-            </span>
-          </div>
-
-          {/* Bank Settlement & UPI Details */}
-          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-600 space-y-1">
-            <span className="font-bold text-slate-800 block text-xs">
-              Direct Payment Instructions:
-            </span>
-            <p className="font-mono text-[11px]">
-              Bank: <strong className="text-slate-800">{bankName}</strong> | A/C: <strong className="text-slate-800">{accountNumber}</strong>
-            </p>
-            <p className="font-mono text-[11px]">
-              IFSC: <strong className="text-slate-800">{ifscCode}</strong> | UPI ID: <strong className="text-red-600">{upiId}</strong>
-            </p>
-          </div>
-        </div>
-
-        {/* Totals Breakdown */}
-        <div className="sm:col-span-5 space-y-2 text-xs">
-          <div className="flex justify-between text-slate-600">
-            <span>Subtotal:</span>
-            <span className="font-semibold text-slate-900 font-mono">{formatCurrency(subtotal)}</span>
-          </div>
-          <div className="flex justify-between text-slate-600">
-            <span>GST / Tax:</span>
-            <span className="font-semibold text-slate-900 font-mono">{formatCurrency(taxAmount)}</span>
-          </div>
-          {discount > 0 && (
-            <div className="flex justify-between text-emerald-700 font-semibold">
-              <span>Commercial Discount:</span>
-              <span className="font-mono">- {formatCurrency(discount)}</span>
-            </div>
-          )}
-          <div className="pt-2.5 border-t-2 border-slate-900 flex justify-between items-baseline">
-            <span className="text-sm font-black text-slate-900 uppercase">Grand Total:</span>
-            <span className="text-2xl font-black text-red-600 font-mono">
-              {formatCurrency(grandTotal)}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* 5. Terms & Authorized Signatory Footer */}
-      <div className="pt-4 border-t border-slate-200 grid grid-cols-1 sm:grid-cols-12 gap-6 items-end">
-        {/* Left: Terms and Conditions */}
-        <div className="sm:col-span-7">
-          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600 space-y-1">
-            <span className="font-extrabold text-slate-800 block text-[10px] uppercase tracking-wider">
-              Terms & Conditions
-            </span>
-            <p className="text-[11px] leading-relaxed">
-              {invoice.notes ||
-                "Payment terms: 50% advance, balance upon project milestone delivery. Bank Transfer / UPI accepted."}
-            </p>
-          </div>
-        </div>
-
-        {/* Right: Authorized Signatory Block with Clean Signature Line */}
-        <div className="sm:col-span-5 flex flex-col items-center sm:items-end text-center sm:text-right">
-          <div className="w-56 text-center">
-            {/* Signature Underline */}
-            <div className="h-12 border-b-2 border-slate-400 mb-2 flex items-end justify-center">
-              <span className="text-[10px] italic text-slate-400 select-none pb-0.5">
-                Digitally verified signatory
+        <div>
+          {sellerLogo ? (
+            <img
+              src={sellerLogo}
+              alt={sellerName}
+              className="h-16 w-auto max-w-[170px] object-contain"
+            />
+          ) : (
+            <div className="w-16 h-16 bg-[#E11D48] text-white flex flex-col items-center justify-center rounded-sm shadow-2xs p-1 select-none">
+              <svg className="w-7 h-7 text-white fill-current" viewBox="0 0 24 24">
+                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+              </svg>
+              <span className="text-[9px] font-black tracking-tighter uppercase mt-0.5 leading-none">
+                ZIGMAA
+              </span>
+              <span className="text-[7px] font-bold tracking-widest uppercase leading-none">
+                TECH
               </span>
             </div>
-            <div className="font-bold text-slate-900 text-xs">
-              {signatoryName}
+          )}
+        </div>
+      </div>
+
+      {/* Centered Document Title */}
+      <div className="text-center my-8">
+        <h2 className="text-xl font-bold text-slate-900 tracking-normal">
+          Quotation
+        </h2>
+      </div>
+
+      {/* BILL TO (Left) & DATE (Right) */}
+      <div className="grid grid-cols-2 gap-6 items-start text-xs text-slate-900">
+        <div className="space-y-1">
+          <p className="font-bold text-slate-900 tracking-wider text-xs uppercase">
+            BILL TO
+          </p>
+          <p className="text-sm font-normal text-slate-900 pt-0.5">{clientName}</p>
+          {clientPhone && <p className="text-xs text-slate-800">{clientPhone}</p>}
+          {clientAddress && <p className="text-xs text-slate-800">{clientAddress}</p>}
+        </div>
+
+        <div className="space-y-1">
+          <p className="font-bold text-slate-900 tracking-wider text-xs uppercase">
+            DATE
+          </p>
+          <p className="text-xs text-slate-900 pt-0.5">{formattedDate}</p>
+        </div>
+      </div>
+
+      {/* SUBJECT (Left) & ADDRESS (Right) */}
+      <div className="grid grid-cols-2 gap-6 items-start text-xs text-slate-900 mt-6 pb-2">
+        <div className="space-y-1">
+          <p className="font-bold text-slate-900 tracking-wider text-xs uppercase">
+            SUBJECT
+          </p>
+          <p className="text-xs text-slate-900 pt-0.5">{subject}</p>
+        </div>
+
+        <div className="space-y-1">
+          <p className="font-bold text-slate-900 tracking-wider text-xs uppercase">
+            ADDRESS
+          </p>
+          <p className="text-xs text-slate-900 pt-0.5 leading-relaxed">{sellerAddress}</p>
+        </div>
+      </div>
+
+      {/* Line Items Table */}
+      <div className="mt-8 border-t-2 border-slate-950 pt-2">
+        <div className="flex justify-between items-center text-xs font-bold text-slate-950 pb-2 border-b border-slate-950">
+          <span>Description</span>
+          <span className="text-right">Amount</span>
+        </div>
+
+        <div className="divide-y divide-slate-200">
+          {items.map((it, idx) => {
+            const lineAmt =
+              it.amount !== undefined
+                ? Number(it.amount)
+                : (Number(it.qty) || 1) * (Number(it.unit_price) || 0);
+            return (
+              <div
+                key={idx}
+                className="flex justify-between items-center py-3 text-xs text-slate-900"
+              >
+                <span className="font-normal">{it.description || "Service"}</span>
+                <span className="font-medium font-mono text-right">
+                  ₹ &nbsp; {lineAmt.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Total Row */}
+        <div className="border-t-2 border-slate-950 pt-4 flex justify-end">
+          <div className="text-right">
+            <div className="text-base font-bold text-slate-950">
+              Total ₹ &nbsp; {grandTotal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
-            <div className="text-[11px] font-semibold text-slate-600">
-              {signatoryDesig}
-            </div>
-            <div className="text-[10px] text-slate-400 truncate mt-0.5">
-              {sellerName}
-            </div>
+            <div className="border-b-2 border-slate-950 mt-1"></div>
           </div>
         </div>
       </div>
 
-      {/* 6. Footer Disclaimer */}
-      <div className="pt-6 text-center text-[10px] text-slate-400">
-        This quotation is an official electronic commercial offer issued by {sellerName}.
+      {/* Footer Notes */}
+      <div className="mt-14 text-xs text-slate-900 space-y-3 leading-relaxed">
+        <p className="font-normal">
+          Make all checks payable to {sellerName}
+        </p>
+        <p className="font-normal">
+          If you have any questions regarding this quotation, please contact us at {sellerPhone}
+        </p>
+
+        <div className="pt-8 text-base font-normal text-slate-900">
+          Thank you
+        </div>
       </div>
     </div>
   );
