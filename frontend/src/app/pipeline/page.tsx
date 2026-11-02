@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import {
   Handshake,
   Plus,
@@ -53,6 +54,7 @@ const DEALS_MORE_VIEWS = [
 ];
 
 export default function PipelineDealsPage() {
+  const router = useRouter();
   const { toast, confirm } = useToast();
   const [deals, setDeals] = useState<Deal[]>([]);
 
@@ -157,8 +159,7 @@ export default function PipelineDealsPage() {
     }
     const cleanPhone = phone.replace(/[^0-9]/g, "");
     const waPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
-    const msg = encodeURIComponent(`Hello ${name || deal.company_name || "there"},\n\nFollowing up regarding your deal "${deal.title}" with Zigmaa CRM.`);
-    window.open(`https://wa.me/${waPhone}?text=${msg}`, "_blank", "noopener,noreferrer");
+    router.push(`/whatsapp?phone=${waPhone}&name=${encodeURIComponent(name || deal.company_name || "")}`);
   };
 
   const handleDealCall = (e: React.MouseEvent, deal: Deal) => {

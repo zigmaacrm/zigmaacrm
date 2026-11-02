@@ -1495,15 +1495,14 @@ export default function ContactsPage() {
                                     </a>
                                   )}
                                   {contact.phone && (
-                                    <a
-                                      href={`https://wa.me/${contact.phone.replace(/[^0-9]/g, "")}`}
-                                      target="_blank"
-                                      rel="noreferrer"
+                                    <Link
+                                      href={`/whatsapp?phone=${contact.phone.replace(/[^0-9]/g, "")}&name=${encodeURIComponent(contact.full_name || "")}`}
+                                      onClick={(e) => e.stopPropagation()}
                                       className="p-1 rounded text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors cursor-pointer"
-                                      title="Chat on WhatsApp"
+                                      title="Open in WhatsApp Suite"
                                     >
                                       <WhatsAppIcon className="w-3.5 h-3.5 fill-current text-slate-400 hover:text-emerald-600" />
-                                    </a>
+                                    </Link>
                                   )}
                                   {contact.email && (
                                     <a

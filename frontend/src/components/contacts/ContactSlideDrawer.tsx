@@ -425,10 +425,9 @@ export default function ContactSlideDrawer({
 
             {currentContact.phone && (
               <a
-                href={`https://wa.me/${currentContact.phone.replace(/[^0-9]/g, "")}`}
-                target="_blank"
-                rel="noreferrer"
-                className="px-3.5 py-1.5 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 text-emerald-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-2xs"
+                href={`/whatsapp?phone=${currentContact.phone.replace(/[^0-9]/g, "")}&name=${encodeURIComponent(currentContact.full_name || "")}`}
+                className="px-3.5 py-1.5 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 text-emerald-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                title="Open in WhatsApp Suite"
               >
                 <WhatsAppIcon className="w-3.5 h-3.5 fill-current text-emerald-600" />
                 <span>WhatsApp</span>

@@ -42,6 +42,7 @@ import {
 import Sidebar from "@/components/layout/Sidebar";
 import Header from "@/components/layout/Header";
 import WhatsAppQRModal from "@/components/whatsapp/WhatsAppQRModal";
+import NewWhatsAppChatModal from "@/components/whatsapp/NewWhatsAppChatModal";
 import { useToast } from "@/components/common/ToastProvider";
 import { useTheme } from "@/context/ThemeContext";
 import { formatCurrency, cn } from "@/lib/utils";
@@ -159,6 +160,17 @@ function formatTime(isoStr?: string | number): string {
   }
 }
 
+function format_display_phone(phone: string): string {
+  const clean = phone.replace(/[^0-9]/g, "");
+  if (!clean) return "Unknown Prospect";
+  if (clean.length === 12 && clean.startsWith("91")) {
+    return `+91 ${clean.slice(2, 7)} ${clean.slice(7)}`;
+  } else if (clean.length === 10) {
+    return `+91 ${clean.slice(0, 5)} ${clean.slice(5)}`;
+  }
+  return `+${clean}`;
+}
+
 export default function WhatsAppPage() {
   const { toast } = useToast();
   const { theme } = useTheme();
@@ -177,6 +189,7 @@ export default function WhatsAppPage() {
   // Multi-Number Rep State
   // QR WhatsApp State
   const [showQRModal, setShowQRModal] = useState(false);
+  const [showNewChatModal, setShowNewChatModal] = useState(false);
   const [qrStatus, setQrStatus] = useState<"DISCONNECTED" | "SCAN_QR" | "CONNECTED">("DISCONNECTED");
   const [qrPhone, setQrPhone] = useState<string | null>(null);
 
@@ -209,6 +222,48 @@ export default function WhatsAppPage() {
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isPollingRef = useRef(false);
+
+  const handleChatInitiated = useCallback((phone: string, name?: string, initialMsg?: string) => {
+    const cleanPhone = phone.replace(/[^0-9]/g, "");
+    setConversations((prev) => {
+      const exists = prev.find((c) => c.phone.replace(/[^0-9]/g, "") === cleanPhone);
+      if (exists) {
+        if (name && (!exists.contactName || exists.contactName.includes("+"))) {
+          exists.contactName = name;
+        }
+        if (initialMsg) {
+          exists.lastMessage = initialMsg;
+          exists.lastMessageTime = new Date().toISOString();
+        }
+        return [...prev];
+      }
+      const newConv: WhatsAppConversation = {
+        id: `conv_${cleanPhone}`,
+        contactName: name || format_display_phone(cleanPhone),
+        companyName: "Direct Prospect",
+        phone: cleanPhone,
+        email: "",
+        avatarInitials: (name || "WA").slice(0, 2).toUpperCase(),
+        avatarColor: AVATAR_GRADIENTS[Math.floor(Math.random() * AVATAR_GRADIENTS.length)],
+        assignedRep: {
+          name: currentUser?.full_name || "Sales Rep",
+          avatar: currentUser?.avatar_url || "",
+          role: currentUser?.role || "Sales Rep"
+        },
+        dealStage: "New Prospect",
+        dealValue: 0,
+        dealCloseDate: "",
+        unreadCount: 0,
+        isAssignedToMe: true,
+        notes: [],
+        lastMessage: initialMsg || "Conversation started",
+        lastMessageTime: new Date().toISOString()
+      };
+      return [newConv, ...prev];
+    });
+
+    setActivePhone(cleanPhone);
+  }, [currentUser]);
 
   // Active conversation object
   const activeChat = useMemo(() => {
@@ -282,13 +337,56 @@ export default function WhatsAppPage() {
         const mapped = data.conversations.map(mapBackendConv);
         setConversations(mapped);
 
-        // If no active phone yet, pick the first conversation
-        setActivePhone((prev) => {
-          if (!prev && mapped.length > 0) {
-            return mapped[0].phone;
+        // Check if a specific contact/phone was requested via URL query params
+        const urlParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+        const targetPhone = urlParams?.get("phone")?.replace(/[^0-9]/g, "");
+        const targetName = urlParams?.get("name");
+        const targetText = urlParams?.get("text");
+
+        if (targetText) {
+          setMessageInput(decodeURIComponent(targetText));
+        }
+
+        if (targetPhone) {
+          const match = mapped.find((c: any) => c.phone.replace(/[^0-9]/g, "") === targetPhone);
+          if (match) {
+            setActivePhone(match.phone);
+          } else {
+            // Auto-create on-the-fly conversation card so user can chat immediately
+            const newConv: WhatsAppConversation = {
+              id: `nav_${targetPhone}`,
+              contactName: targetName ? decodeURIComponent(targetName) : format_display_phone(targetPhone),
+              companyName: "CRM Contact",
+              phone: targetPhone,
+              email: "",
+              avatarInitials: (targetName || "WA").slice(0, 2).toUpperCase(),
+              avatarColor: AVATAR_GRADIENTS[0],
+              assignedRep: {
+                name: currentUser?.full_name || "Sales Rep",
+                avatar: currentUser?.avatar_url || "",
+                role: currentUser?.role || "Sales Rep"
+              },
+              dealStage: "Lead",
+              dealValue: 0,
+              dealCloseDate: "",
+              unreadCount: 0,
+              isAssignedToMe: true,
+              notes: [],
+              lastMessage: targetText ? decodeURIComponent(targetText) : "Start of conversation",
+              lastMessageTime: new Date().toISOString()
+            };
+            setConversations([newConv, ...mapped]);
+            setActivePhone(targetPhone);
           }
-          return prev;
-        });
+        } else {
+          // If no active phone yet, pick the first conversation
+          setActivePhone((prev) => {
+            if (!prev && mapped.length > 0) {
+              return mapped[0].phone;
+            }
+            return prev;
+          });
+        }
       }
     } catch (e: any) {
       console.warn("Could not fetch conversations", e);
@@ -1844,6 +1942,13 @@ export default function WhatsAppPage() {
           setQrStatus(status);
           setQrPhone(phone);
         }}
+      />
+
+      {/* Start New WhatsApp Chat Modal */}
+      <NewWhatsAppChatModal
+        isOpen={showNewChatModal}
+        onClose={() => setShowNewChatModal(false)}
+        onChatInitiated={handleChatInitiated}
       />
 
     </div>

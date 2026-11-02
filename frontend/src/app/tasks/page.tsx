@@ -1,3 +1,4 @@
+import Link from "next/link";
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
@@ -896,15 +897,13 @@ export default function TasksPage() {
                                   >
                                     <Phone className="w-3.5 h-3.5" />
                                   </a>
-                                  <a
-                                    href={`https://wa.me/${task.contact_phone.replace(/[^0-9]/g, "")}`}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
-                                    title={`WhatsApp ${task.contact_name || ""}`}
+                                  <Link
+                                    href={`/whatsapp?phone=${task.contact_phone.replace(/[^0-9]/g, "")}&name=${encodeURIComponent(task.contact_name || "")}`}
+                                    className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                                    title={`Open WhatsApp Suite for ${task.contact_name || ""}`}
                                   >
                                     <MessageSquare className="w-3.5 h-3.5" />
-                                  </a>
+                                  </Link>
                                 </>
                               )}
 

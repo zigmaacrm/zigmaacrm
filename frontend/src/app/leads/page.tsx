@@ -654,15 +654,13 @@ export default function LeadsPage() {
 
                                   {/* WhatsApp */}
                                   {lead.phone && (
-                                    <a
-                                      href={`https://wa.me/${lead.phone.replace(/[^0-9]/g, "")}`}
-                                      target="_blank"
-                                      rel="noreferrer"
+                                    <Link
+                                      href={`/whatsapp?phone=${lead.phone.replace(/[^0-9]/g, "")}&name=${encodeURIComponent(lead.name || "")}`}
                                       className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
-                                      title="WhatsApp"
+                                      title="Open in WhatsApp Suite"
                                     >
                                       <MessageSquare className="w-3.5 h-3.5" />
-                                    </a>
+                                    </Link>
                                   )}
 
                                   {/* Convert to Deal */}

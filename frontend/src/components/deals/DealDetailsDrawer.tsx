@@ -216,17 +216,15 @@ export default function DealDetailsDrawer({
                   <a
                     href={
                       (deal.contact_phone || (deal.custom_data && (deal.custom_data.contact_phone || deal.custom_data.phone)))
-                        ? `https://wa.me/${(deal.contact_phone || (deal.custom_data && (deal.custom_data.contact_phone || deal.custom_data.phone)) || "").replace(/[^0-9]/g, "")}?text=${encodeURIComponent(`Hello ${deal.contact_name || "there"}, following up regarding "${deal.title}" with Zigmaa CRM...`)}`
+                        ? `/whatsapp?phone=${(deal.contact_phone || (deal.custom_data && (deal.custom_data.contact_phone || deal.custom_data.phone)) || "").replace(/[^0-9]/g, "")}&name=${encodeURIComponent(deal.contact_name || "")}`
                         : undefined
                     }
-                    target="_blank"
-                    rel="noreferrer"
                     className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
                       (deal.contact_phone || (deal.custom_data && (deal.custom_data.contact_phone || deal.custom_data.phone)))
                         ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-600 hover:text-white border border-emerald-200 cursor-pointer"
                         : "bg-slate-100 text-slate-400 pointer-events-none opacity-50"
                     }`}
-                    title="Open WhatsApp"
+                    title="Open in WhatsApp Suite"
                   >
                     <WhatsAppIcon className="w-3.5 h-3.5 fill-current" />
                     <span>WhatsApp</span>
