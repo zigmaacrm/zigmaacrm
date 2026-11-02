@@ -887,29 +887,40 @@ export default function WhatsAppPage() {
                 </div>
               ) : null}
 
-              {/* Search Bar */}
-              <div className="relative">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Filter by name or phone..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className={cn(
-                    "w-full rounded-xl pl-9 pr-8 py-2 text-xs focus:outline-none transition-all border shadow-2xs",
-                    isDark
-                      ? "bg-[#131B2E]/90 border-[#1E293B] text-white placeholder-slate-400 focus:border-emerald-500/60"
-                      : "bg-white border-slate-200 text-slate-900 placeholder-slate-400 focus:border-emerald-500"
+              {/* Search Bar & New Chat Button */}
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Filter by name or phone..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className={cn(
+                      "w-full rounded-xl pl-9 pr-8 py-2 text-xs focus:outline-none transition-all border shadow-2xs",
+                      isDark
+                        ? "bg-[#131B2E]/90 border-[#1E293B] text-white placeholder-slate-400 focus:border-emerald-500/60"
+                        : "bg-white border-slate-200 text-slate-900 placeholder-slate-400 focus:border-emerald-500"
+                    )}
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery("")}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-white"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
                   )}
-                />
-                {searchQuery && (
-                  <button
-                    onClick={() => setSearchQuery("")}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-white"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowNewChatModal(true)}
+                  className="h-8.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all hover:scale-105 active:scale-95 shrink-0 cursor-pointer"
+                  title="Start a new WhatsApp chat with any phone number"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>New Chat</span>
+                </button>
               </div>
 
               {/* Segmented Filter Control */}
