@@ -41,6 +41,8 @@ import {
 } from "lucide-react";
 import Sidebar from "@/components/layout/Sidebar";
 import Header from "@/components/layout/Header";
+import WhatsAppIcon from "@/components/common/WhatsAppIcon";
+import type { Invoice } from "@/types";
 import WhatsAppQRModal from "@/components/whatsapp/WhatsAppQRModal";
 import NewWhatsAppChatModal from "@/components/whatsapp/NewWhatsAppChatModal";
 import { useToast } from "@/components/common/ToastProvider";
@@ -55,7 +57,7 @@ export interface WhatsAppMessage {
   timestamp: string;
   timeLabel: string;
   dateGroup: "Today" | "Yesterday" | "Earlier";
-  status?: "SENT" | "DELIVERED" | "READ" | "FAILED";
+  status?: "SENT" | "DELIVERED" | "READ" | "FAILED" | "PENDING";
   attachment?: {
     type: "pdf" | "image";
     name: string;
@@ -107,7 +109,7 @@ const META_TEMPLATES = [
     id: "gst_quote_link",
     name: "Quotation PDF Link",
     tag: "Marketing",
-    content: "Hi {{name}}, here is your GST quotation: https://zigmaa.crm/quotes/view/INV-2026-089. Please review the itemized proposal and payment terms."
+    content: "Hi {{name}}, please find your official quotation from our team. Please review the itemized proposal and let us know if you have any questions."
   },
   {
     id: "sales_followup",
@@ -238,6 +240,33 @@ export default function WhatsAppPage() {
   const [showRightDrawer, setShowRightDrawer] = useState(true);
   const [showNewNoteModal, setShowNewNoteModal] = useState(false);
   const [newNoteText, setNewNoteText] = useState("");
+  const [showQuotePickerModal, setShowQuotePickerModal] = useState(false);
+  const [availableQuotes, setAvailableQuotes] = useState<Invoice[]>([]);
+  const [loadingQuotes, setLoadingQuotes] = useState(false);
+
+  const handleOpenQuotePicker = async () => {
+    setShowQuotePickerModal(true);
+    setLoadingQuotes(true);
+    try {
+      const quotes = await api.getInvoices();
+      setAvailableQuotes(Array.isArray(quotes) ? quotes : []);
+    } catch (err) {
+      console.error("Failed to load quotations:", err);
+    } finally {
+      setLoadingQuotes(false);
+    }
+  };
+
+  const handleSendSelectedQuote = (quote: Invoice) => {
+    if (!activeChat) return;
+    const firstName = activeChat.contactName.split(" ")[0] || "there";
+    const quoteNumber = quote.invoice_number || quote.bill_number || `QT-${quote.id}`;
+    const amountStr = formatCurrency(quote.total_amount || 0);
+    const quoteMsg = `Hi ${firstName}, here is your quotation details:\n• Document: ${quoteNumber}\n• Subject: ${quote.subject || "Quotation"}\n• Total Amount: ${amountStr}`;
+    handleSendMessage(quoteMsg);
+    setShowQuotePickerModal(false);
+    toast.success("Quotation Sent", `Quotation ${quoteNumber} sent to ${activeChat.contactName}`);
+  };
 
   // Multi-Number Rep State
   // QR WhatsApp State
@@ -349,9 +378,9 @@ export default function WhatsAppPage() {
       id: raw.id || `conv-${raw.phone_number}`,
       contact_id: raw.contact_id,
       contactName: name,
-      companyName: raw.company_name || "Direct Prospect",
+      companyName: raw.company_name || "",
       phone: raw.phone_number.startsWith("+") ? raw.phone_number : `+${raw.phone_number}`,
-      email: raw.email || "client@whatsapp.crm",
+      email: raw.email || "",
       avatar_url: raw.avatar_url || null,
       avatarInitials: initials || "WA",
       avatarColor: grad,
@@ -369,14 +398,15 @@ export default function WhatsAppPage() {
       isAssignedToMe: isMine,
       lastMessage: raw.last_message,
       lastMessageTime: raw.last_message_time,
-      notes: [
-        {
-          id: `note-${raw.phone_number}`,
-          text: `Inbound WhatsApp thread initiated for ${name}. Channel: Meta Cloud API.`,
-          author: "System Meta API",
-          timestamp: "Verified"
+      notes: (() => {
+        if (typeof window !== "undefined") {
+          try {
+            const saved = localStorage.getItem(`wa_notes_${raw.phone_number}`);
+            if (saved) return JSON.parse(saved);
+          } catch (e) {}
         }
-      ]
+        return Array.isArray(raw.notes) ? raw.notes : [];
+      })()
     };
   };
 
@@ -482,7 +512,7 @@ export default function WhatsAppPage() {
           timestamp: m.created_at || "Today",
           timeLabel: formatTime(m.created_at),
           dateGroup: "Today",
-          status: m.status || (m.direction === "INBOUND" ? "DELIVERED" : "SENT"),
+          status: m.status || "DELIVERED",
           attachment: m.message_body?.toLowerCase().includes("quote") && m.message_body?.toLowerCase().includes(".pdf")
             ? {
                 type: "pdf",
@@ -771,16 +801,24 @@ export default function WhatsAppPage() {
     e.preventDefault();
     if (!newNoteText.trim() || !activeChat) return;
 
+    const authorName = currentUser?.full_name || "Internal Staff";
     const newNote = {
       id: `note-${Date.now()}`,
       text: newNoteText.trim(),
-      author: "Mohamed Thoufiq",
+      author: authorName,
       timestamp: "Just now"
     };
 
+    const updatedNotes = [newNote, ...(activeChat.notes || [])];
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem(`wa_notes_${activeChat.phone}`, JSON.stringify(updatedNotes));
+      } catch (err) {}
+    }
+
     setConversations((prev) =>
       prev.map((c) =>
-        c.phone === activeChat.phone ? { ...c, notes: [newNote, ...c.notes] } : c
+        c.phone === activeChat.phone ? { ...c, notes: updatedNotes } : c
       )
     );
 
@@ -1314,9 +1352,9 @@ export default function WhatsAppPage() {
                     </button>
 
                     <button
-                      onClick={handleQuickSendQuote}
+                      onClick={handleOpenQuotePicker}
                       className="inline-flex items-center justify-center gap-1.5 h-9 px-2.5 sm:px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold whitespace-nowrap shadow-sm shadow-emerald-600/25 transition-all cursor-pointer hover:scale-102 active:scale-98 shrink-0"
-                      title="Generate and send instant GST quotation link"
+                      title="Select and send quotation to contact"
                     >
                       <FileText className="w-3.5 h-3.5 shrink-0" />
                       <span className="hidden sm:inline">Send Quote</span>
@@ -1454,9 +1492,9 @@ export default function WhatsAppPage() {
                             )}>
                               <span>{msg.timeLabel}</span>
                               {isOutbound && (
-                                <span title={msg.status === "READ" ? "Read" : msg.status === "DELIVERED" ? "Delivered" : "Sent"}>
-                                  {msg.status === "SENT" ? (
-                                    <Check className={cn("w-3.5 h-3.5", isDark ? "text-slate-400" : "text-slate-400")} />
+                                <span title={msg.status === "READ" ? "Read" : "Delivered"}>
+                                  {msg.status === "PENDING" ? (
+                                    <Clock className="w-3.5 h-3.5 text-slate-400" />
                                   ) : (
                                     <CheckCheck
                                       className={cn(
@@ -1593,7 +1631,7 @@ export default function WhatsAppPage() {
                       </button>
 
                       <button
-                        onClick={handleQuickSendQuote}
+                        onClick={handleOpenQuotePicker}
                         className={cn(
                           "h-8 px-3 rounded-xl text-xs font-medium border transition-all cursor-pointer whitespace-nowrap shrink-0 hover:scale-102 active:scale-98",
                           isDark
@@ -1842,7 +1880,7 @@ export default function WhatsAppPage() {
                       </div>
                     )}
                     <p className={cn("text-xs truncate", isDark ? "text-slate-400" : "text-slate-500")}>
-                      {activeChat.companyName}
+                      {activeChat.companyName || "Not Found"}
                     </p>
                     <span className={cn(
                       "inline-block mt-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold border shadow-2xs",
@@ -1861,97 +1899,15 @@ export default function WhatsAppPage() {
                   </div>
                   <div className={cn("flex items-center gap-2.5 p-2 rounded-xl border transition-colors", isDark ? "bg-white/5 border-white/5 text-slate-200" : "bg-slate-50 border-slate-200/80 text-slate-700")}>
                     <Mail className="w-3.5 h-3.5 shrink-0 text-indigo-500" />
-                    <span className="truncate select-all">{activeChat.email}</span>
+                    <span className="truncate select-all">{activeChat.email || "Not Found"}</span>
                   </div>
                   <div className={cn("flex items-center gap-2.5 p-2 rounded-xl border transition-colors", isDark ? "bg-white/5 border-white/5 text-slate-200" : "bg-slate-50 border-slate-200/80 text-slate-700")}>
                     <Building2 className="w-3.5 h-3.5 shrink-0 text-amber-500" />
-                    <span className="truncate">{activeChat.companyName}</span>
+                    <span className="truncate">{activeChat.companyName || "Not Found"}</span>
                   </div>
                 </div>
 
-                {/* Assigned Sales Rep / Reassign Selector */}
-                {isAdmin ? (
-                  <div className={cn("pt-2.5 border-t space-y-1.5", isDark ? "border-[#1E293B]/60" : "border-slate-200")}>
-                    <div className="flex items-center justify-between text-xs">
-                      <span className={cn("font-semibold", isDark ? "text-slate-400" : "text-slate-600")}>
-                        Assigned Sales Rep:
-                      </span>
-                      {isReassigning ? (
-                        <span className="inline-flex items-center gap-1 text-[10px] text-emerald-600 font-bold">
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                          <span>Updating...</span>
-                        </span>
-                      ) : (
-                        <span className="text-[10px] text-slate-400">Click to Reassign</span>
-                      )}
-                    </div>
-                    <select
-                      value={activeChat.assignedRep?.id || ""}
-                      disabled={isReassigning}
-                      onChange={async (e) => {
-                        const newUserId = e.target.value;
-                        if (!newUserId || !activeChat) return;
-                        try {
-                          setIsReassigning(true);
-                          await api.reassignWhatsAppConversation(activeChat.phone, newUserId);
-                          const repObj = teamMembers.find((m) => m.id === newUserId) || (currentUser?.id === newUserId ? currentUser : null);
-                          const repName = repObj?.full_name || "Sales Rep";
-                          const repRole = repObj?.role || "Sales Rep";
-                          const repInitials = (repName.split(" ")[0][0] + (repName.split(" ")[1] ? repName.split(" ")[1][0] : "")).toUpperCase();
 
-                          setConversations((prev) =>
-                            prev.map((c) =>
-                              c.phone === activeChat.phone
-                                ? {
-                                    ...c,
-                                    assignedRep: {
-                                      id: newUserId,
-                                      name: repName,
-                                      avatar: repInitials,
-                                      role: repRole
-                                    }
-                                  }
-                                : c
-                            )
-                          );
-                          toast.success("Lead Reassigned", `Conversation and Lead routed to ${repName}`);
-                        } catch (err: any) {
-                          toast.error("Reassignment Failed", err.message || "Could not reassign lead");
-                        } finally {
-                          setIsReassigning(false);
-                        }
-                      }}
-                      className={cn(
-                        "w-full h-8 text-xs font-semibold rounded-xl px-2.5 border transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-emerald-500/20",
-                        isDark
-                          ? "bg-[#131B2E] border-[#1E293B] text-slate-200"
-                          : "bg-slate-50 border-slate-200 text-slate-800"
-                      )}
-                    >
-                      <option value="" disabled>Select Team Member</option>
-                      {currentUser && (
-                        <option value={currentUser.id}>👑 {currentUser.full_name} (Admin)</option>
-                      )}
-                      {teamMembers
-                        .filter((m) => m.id !== currentUser?.id)
-                        .map((m) => (
-                          <option key={m.id} value={m.id}>
-                            👤 {m.full_name} ({m.role || "Sales Rep"})
-                          </option>
-                        ))}
-                    </select>
-                  </div>
-                ) : (
-                  <div className={cn("pt-2 border-t flex items-center justify-between text-xs", isDark ? "border-[#1E293B]/60 text-slate-400" : "border-slate-200 text-slate-500")}>
-                    <span>Assigned Rep:</span>
-                    <div className={cn("flex items-center gap-1.5 font-semibold", isDark ? "text-slate-200" : "text-slate-800")}>
-                      <div className="w-5 h-5 rounded-full bg-emerald-600/20 text-emerald-600 dark:text-emerald-400 font-bold flex items-center justify-center text-[10px] ring-1 ring-emerald-500/30">
-                        {activeChat.assignedRep.avatar}
-                      </div>
-                      <span>{activeChat.assignedRep.name}</span>
-                    </div>
-                  </div>
-                )}
               </div>
 
               {/* Deal Status & Pipeline */}
@@ -2018,7 +1974,7 @@ export default function WhatsAppPage() {
               {/* Quick Actions Panel */}
               <div className={cn("p-4 border-b space-y-2.5", isDark ? "border-[#1E293B]/60" : "border-slate-200")}>
                 <span className={cn("font-bold text-xs block mb-1 uppercase tracking-wider", isDark ? "text-slate-400" : "text-slate-500")}>
-                  Quick Actions
+                  Internal Notes & CRM
                 </span>
 
                 <button
@@ -2031,27 +1987,6 @@ export default function WhatsAppPage() {
                   <Plus className="w-3.5 h-3.5 text-emerald-500" />
                   <span>Add Internal Note</span>
                 </button>
-
-                <button
-                  onClick={() => {
-                    toast.success("Call Scheduled", `Follow-up call booked with ${activeChat.contactName} for tomorrow 3:00 PM`);
-                  }}
-                  className={cn(
-                    "w-full h-9 flex items-center justify-center gap-2 px-3 rounded-xl border text-xs font-semibold transition-all cursor-pointer shadow-2xs hover:scale-101 active:scale-98",
-                    isDark ? "bg-white/5 hover:bg-white/10 text-slate-200 border-[#1E293B]" : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200"
-                  )}
-                >
-                  <Calendar className="w-3.5 h-3.5 text-indigo-500" />
-                  <span>Schedule Call / Follow-up</span>
-                </button>
-
-                <button
-                  onClick={handleQuickSendQuote}
-                  className="w-full h-9.5 flex items-center justify-center gap-2 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold transition-all cursor-pointer shadow-sm shadow-emerald-600/25 hover:scale-101 active:scale-98"
-                >
-                  <FileText className="w-3.5 h-3.5 shrink-0" />
-                  <span>Generate GST Quotation</span>
-                </button>
               </div>
 
               {/* Notes & Activity Timeline */}
@@ -2063,21 +1998,27 @@ export default function WhatsAppPage() {
                 </div>
 
                 <div className="space-y-2.5">
-                  {activeChat.notes.map((note) => (
-                    <div
-                      key={note.id}
-                      className={cn(
-                        "p-3 rounded-xl border text-xs space-y-1.5 transition-colors",
-                        isDark ? "bg-[#131B2E]/60 border-[#1E293B]" : "bg-slate-50 border-slate-200"
-                      )}
-                    >
-                      <p className={cn("leading-relaxed", isDark ? "text-slate-200" : "text-slate-800")}>{note.text}</p>
-                      <div className={cn("flex items-center justify-between text-[10px] pt-1 border-t", isDark ? "border-white/5 text-slate-400" : "border-slate-200 text-slate-500")}>
-                        <span className="font-semibold text-emerald-600 dark:text-emerald-400">{note.author}</span>
-                        <span>{note.timestamp}</span>
-                      </div>
+                  {activeChat.notes.length === 0 ? (
+                    <div className={cn("p-4 rounded-xl border border-dashed text-center text-xs", isDark ? "border-white/10 text-slate-400" : "border-slate-200 text-slate-500")}>
+                      No internal notes recorded yet. Click &quot;Add Internal Note&quot; above.
                     </div>
-                  ))}
+                  ) : (
+                    activeChat.notes.map((note) => (
+                      <div
+                        key={note.id}
+                        className={cn(
+                          "p-3 rounded-xl border text-xs space-y-1.5 transition-colors",
+                          isDark ? "bg-[#131B2E]/60 border-[#1E293B]" : "bg-slate-50 border-slate-200"
+                        )}
+                      >
+                        <p className={cn("leading-relaxed", isDark ? "text-slate-200" : "text-slate-800")}>{note.text}</p>
+                        <div className={cn("flex items-center justify-between text-[10px] pt-1 border-t", isDark ? "border-white/5 text-slate-400" : "border-slate-200 text-slate-500")}>
+                          <span className="font-semibold text-emerald-600 dark:text-emerald-400">{note.author}</span>
+                          <span>{note.timestamp}</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             </div>
@@ -2145,6 +2086,118 @@ export default function WhatsAppPage() {
         </div>
       )}
       {/* WhatsApp QR Scan Modal */}
+            {/* Modal: Select Quotation to Send */}
+      {showQuotePickerModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className={cn(
+            "w-full max-w-lg rounded-2xl shadow-2xl border overflow-hidden flex flex-col max-h-[85vh]",
+            isDark ? "bg-[#0D0F17] border-[#1E293B]" : "bg-white border-slate-200"
+          )}>
+            <div className="flex items-center justify-between p-4 border-b border-slate-100 dark:border-white/10">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className={cn("text-sm font-bold", isDark ? "text-white" : "text-slate-900")}>
+                    Send Quotation to {activeChat?.contactName || "Contact"}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Select a quotation from your records or send a custom quote PDF
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowQuotePickerModal(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 overflow-y-auto space-y-3 flex-1 scrollbar-thin">
+              {/* Option to upload custom PDF directly */}
+              <div className={cn(
+                "p-3 rounded-xl border border-dashed flex items-center justify-between gap-3",
+                isDark ? "border-white/15 bg-white/5" : "border-slate-300 bg-slate-50/50"
+              )}>
+                <div className="flex items-center gap-2.5">
+                  <File className="w-4 h-4 text-emerald-500" />
+                  <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    Send custom PDF file from device
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowQuotePickerModal(false);
+                    fileInputRef.current?.click();
+                  }}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold shadow-2xs cursor-pointer"
+                >
+                  Upload PDF
+                </button>
+              </div>
+
+              <div className="pt-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-2">
+                  Existing Quotations ({availableQuotes.length})
+                </span>
+
+                {loadingQuotes ? (
+                  <div className="py-8 flex flex-col items-center justify-center gap-2 text-slate-400 text-xs">
+                    <Loader2 className="w-5 h-5 animate-spin text-emerald-500" />
+                    <span>Loading quotations...</span>
+                  </div>
+                ) : availableQuotes.length === 0 ? (
+                  <div className="py-8 text-center text-xs text-slate-400">
+                    No quotations found in CRM. You can create one in Quotations section or upload a PDF.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {availableQuotes.map((q) => (
+                      <div
+                        key={q.id}
+                        className={cn(
+                          "p-3 rounded-xl border flex items-center justify-between gap-3 transition-all hover:scale-[1.005]",
+                          isDark ? "bg-white/5 border-white/10 hover:border-emerald-500/50" : "bg-white border-slate-200 hover:border-emerald-400 shadow-2xs"
+                        )}
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-xs font-bold text-slate-900 dark:text-white">
+                              {q.invoice_number || q.bill_number || `QT-${q.id}`}
+                            </span>
+                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-white/10 text-slate-600 dark:text-slate-300">
+                              {q.status || "Quote"}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-500 truncate mt-0.5">
+                            {q.client_name || q.recipient_name || "Client"} {q.subject ? `• ${q.subject}` : ""}
+                          </p>
+                          <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">
+                            {formatCurrency(q.total_amount || 0)}
+                          </p>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleSendSelectedQuote(q)}
+                          className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-2xs transition-all flex items-center gap-1.5 shrink-0 cursor-pointer"
+                        >
+                          <Send className="w-3 h-3" />
+                          <span>Send Quote</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <WhatsAppQRModal
         isOpen={showQRModal}
         onClose={() => setShowQRModal(false)}
