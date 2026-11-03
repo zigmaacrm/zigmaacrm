@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Enum as SQLEnum
+from sqlalchemy import Column, String, Text, DateTime, Boolean, ForeignKey, Enum as SQLEnum
 from sqlalchemy.orm import relationship
 import enum
 from datetime import datetime
@@ -25,7 +25,11 @@ class WhatsAppMessage(TimeStampedBase):
     phone_number = Column(String(50), nullable=False, index=True)
     direction = Column(String(20), default="INBOUND", index=True)  # INBOUND, OUTBOUND
     message_body = Column(Text, nullable=False)
-    message_type = Column(String(50), default="text")  # text, template, image, document
+    message_type = Column(String(50), default="text")  # text, template, image, document, audio, ptt, video
+    media_url = Column(String(500), nullable=True)
+    file_name = Column(String(255), nullable=True)
+    caption = Column(Text, nullable=True)
+    is_voice_note = Column(Boolean, default=False, nullable=True)
     meta_message_id = Column(String(255), nullable=True, index=True)
     status = Column(String(50), default="SENT", index=True)  # SENT, DELIVERED, READ, FAILED
     timestamp = Column(DateTime, default=datetime.utcnow, nullable=True, index=True)

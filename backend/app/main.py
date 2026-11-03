@@ -1,4 +1,6 @@
+import os
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import engine, Base
@@ -18,6 +20,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Ensure uploads and media directories exist and mount static files
+uploads_dir = os.path.join(os.getcwd(), "uploads")
+os.makedirs(uploads_dir, exist_ok=True)
+wa_uploads_dir = os.path.join(uploads_dir, "whatsapp")
+os.makedirs(wa_uploads_dir, exist_ok=True)
+
+app.mount("/media", StaticFiles(directory=uploads_dir), name="media")
+app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
 # Router includes
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["Auth"])

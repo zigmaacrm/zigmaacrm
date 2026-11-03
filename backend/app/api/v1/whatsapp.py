@@ -107,7 +107,11 @@ class WhatsAppMessageOut(BaseModel):
     phone_number: str
     direction: str
     message_body: str
-    message_type: str
+    message_type: Optional[str] = "text"
+    media_url: Optional[str] = None
+    file_name: Optional[str] = None
+    caption: Optional[str] = None
+    is_voice_note: Optional[bool] = False
     meta_message_id: Optional[str] = None
     status: str
     contact_id: Optional[str] = None
@@ -356,7 +360,11 @@ async def get_whatsapp_messages(
                 "phone_number": m.phone_number,
                 "direction": m.direction,
                 "message_body": m.message_body,
-                "message_type": m.message_type,
+                "message_type": m.message_type or "text",
+                "media_url": m.media_url,
+                "file_name": m.file_name,
+                "caption": m.caption,
+                "is_voice_note": bool(m.is_voice_note),
                 "meta_message_id": m.meta_message_id,
                 "status": m.status,
                 "contact_id": m.contact_id,
@@ -486,6 +494,19 @@ async def get_whatsapp_conversations(
 
                 unread_cnt = 1 if m.direction == "INBOUND" and m.status != "READ" else 0
 
+                # WhatsApp Web style message preview snippets
+                m_type = (m.message_type or "").lower()
+                if m_type == "image":
+                    last_msg_snippet = f"📷 {m.caption or 'Photo'}"
+                elif m_type in ("audio", "ptt") or m.is_voice_note:
+                    last_msg_snippet = "🎤 Voice message"
+                elif m_type == "document":
+                    last_msg_snippet = f"📄 {m.file_name or 'Document'}"
+                elif m_type == "video":
+                    last_msg_snippet = f"🎥 {m.caption or 'Video'}"
+                else:
+                    last_msg_snippet = m.message_body or ""
+
                 conv_map[m.phone_number] = {
                     "id": f"conv-{m.phone_number}",
                     "phone_number": m.phone_number,
@@ -505,7 +526,10 @@ async def get_whatsapp_conversations(
                         "avatar": rep_avatar,
                         "role": "Sales Representative"
                     },
-                    "last_message": m.message_body,
+                    "last_message": last_msg_snippet,
+                    "last_message_type": m.message_type or "text",
+                    "media_url": m.media_url,
+                    "is_voice_note": bool(m.is_voice_note),
                     "last_message_time": m.created_at.isoformat() if m.created_at else None,
                     "last_direction": m.direction,
                     "last_status": m.status,
@@ -783,3 +807,195 @@ async def disconnect_whatsapp_qr():
             last_err = e
 
     raise HTTPException(status_code=503, detail=f"Failed to disconnect WhatsApp Gateway: {last_err}")
+
+class WhatsAppHistorySyncItem(BaseModel):
+    phone_number: str
+    contact_name: Optional[str] = None
+    message_body: str
+    meta_message_id: Optional[str] = None
+    timestamp: Optional[int] = None
+    direction: Optional[str] = "INBOUND"
+    message_type: Optional[str] = "text"
+    media_url: Optional[str] = None
+    file_name: Optional[str] = None
+    caption: Optional[str] = None
+    is_voice_note: Optional[bool] = False
+
+class WhatsAppHistorySyncPayload(BaseModel):
+    messages: List[WhatsAppHistorySyncItem]
+
+@router.post("/chats/sync-history")
+async def sync_whatsapp_chat_history(
+    payload: WhatsAppHistorySyncPayload,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Batch upserts 1-on-1 direct WhatsApp messages from Baileys history sync.
+    Filters out duplicates and automatically links or creates contacts.
+    """
+    res_org = await db.execute(select(Organization).limit(1))
+    default_org = res_org.scalars().first()
+    default_org_id = default_org.id if default_org else None
+
+    synced_count = 0
+    for item in payload.messages:
+        clean_phone = normalize_phone(item.phone_number)
+        if not clean_phone or len(clean_phone) < 7:
+            continue
+
+        msg_id = item.meta_message_id or f"wamid.hist_{uuid.uuid4().hex[:16]}"
+        chk = await db.execute(
+            select(WhatsAppMessage.id).where(WhatsAppMessage.meta_message_id == msg_id).limit(1)
+        )
+        if chk.scalar_one_or_none():
+            continue
+
+        search_suffix = clean_phone[-10:] if len(clean_phone) >= 10 else clean_phone
+        c_res = await db.execute(select(Contact).where(Contact.phone.like(f"%{search_suffix}%")).limit(1))
+        contact = c_res.scalar_one_or_none()
+
+        display_name = item.contact_name.strip() if item.contact_name and item.contact_name.strip() else format_display_phone(clean_phone)
+        if not contact:
+            contact = Contact(
+                organization_id=default_org_id,
+                full_name=display_name,
+                phone=f"+{clean_phone}" if not clean_phone.startswith("+") else clean_phone,
+                source="WHATSAPP",
+                lifecycle_stage="LEAD"
+            )
+            db.add(contact)
+            await db.flush()
+
+        dt = datetime.datetime.fromtimestamp(item.timestamp) if item.timestamp else dt_utcnow.utcnow()
+        dir_val = (item.direction or "INBOUND").upper()
+
+        wa_msg = WhatsAppMessage(
+            organization_id=default_org_id,
+            contact_id=contact.id if contact else None,
+            phone_number=clean_phone,
+            direction=dir_val,
+            message_body=item.message_body or "[Historical Message]",
+            message_type=item.message_type or "text",
+            media_url=item.media_url,
+            file_name=item.file_name,
+            caption=item.caption,
+            is_voice_note=bool(item.is_voice_note),
+            meta_message_id=msg_id,
+            status="READ" if dir_val == "INBOUND" else "SENT",
+            timestamp=dt,
+            created_at=dt
+        )
+        db.add(wa_msg)
+        synced_count += 1
+
+    if synced_count > 0:
+        await db.commit()
+
+    return {"status": "success", "synced": synced_count}
+
+class VoiceNotePayload(BaseModel):
+    phone_number: str
+    audio_base64: str
+    mimetype: Optional[str] = "audio/mp4"
+    contact_id: Optional[str] = None
+    duration_seconds: Optional[int] = None
+
+@router.post("/upload-voice", status_code=status.HTTP_201_CREATED)
+async def upload_and_send_voice_note(
+    payload: VoiceNotePayload,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Receives an audio recording from the CRM web UI, saves to uploads, and delivers via WhatsApp Voice Note (PTT).
+    """
+    clean_phone = normalize_phone(payload.phone_number)
+    if not clean_phone:
+        raise HTTPException(status_code=400, detail="Valid phone_number is required")
+
+    pure_base64 = payload.audio_base64.split(",")[1] if "," in payload.audio_base64 else payload.audio_base64
+    import base64
+    try:
+        audio_bytes = base64.b64decode(pure_base64)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid base64 audio payload: {e}")
+
+    # Ensure uploads directory exists
+    uploads_dir = os.path.join(os.getcwd(), "uploads", "whatsapp")
+    os.makedirs(uploads_dir, exist_ok=True)
+
+    ext = "mp4" if "mp4" in (payload.mimetype or "").lower() else "ogg"
+    file_name = f"voice_out_{int(datetime.datetime.utcnow().timestamp())}_{uuid.uuid4().hex[:6]}.{ext}"
+    file_path = os.path.join(uploads_dir, file_name)
+
+    with open(file_path, "wb") as f:
+        f.write(audio_bytes)
+
+    media_url = f"/media/whatsapp/{file_name}"
+    display_body = f"🎤 Voice message ({payload.duration_seconds}s)" if payload.duration_seconds else "🎤 Voice message"
+
+    gateway_url = get_gateway_url()
+    outbound_status = "SENT"
+    meta_id = f"wamid.voice_{uuid.uuid4().hex[:16]}"
+
+    # Dispatch to WhatsApp Bridge
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{gateway_url}/api/whatsapp/send-voice",
+                json={
+                    "phone_number": clean_phone,
+                    "audio_base64": pure_base64,
+                    "mimetype": payload.mimetype or "audio/mp4"
+                }
+            )
+            if resp.status_code in [200, 201]:
+                res_data = resp.json()
+                meta_id = res_data.get("message_id") or meta_id
+                outbound_status = "SENT"
+            else:
+                outbound_status = "FAILED"
+    except Exception as e:
+        logger.error(f"[VOICE DISPATCH ERROR]: {e}")
+        outbound_status = "FAILED"
+
+    res_org = await db.execute(select(Organization).limit(1))
+    default_org = res_org.scalars().first()
+    default_org_id = default_org.id if default_org else None
+
+    wa_msg = WhatsAppMessage(
+        organization_id=default_org_id,
+        contact_id=payload.contact_id,
+        assigned_user_id=current_user.id if current_user else None,
+        phone_number=clean_phone,
+        direction="OUTBOUND",
+        message_body=display_body,
+        message_type="ptt",
+        media_url=media_url,
+        file_name=file_name,
+        is_voice_note=True,
+        meta_message_id=meta_id,
+        status=outbound_status,
+        timestamp=dt_utcnow.utcnow(),
+        created_at=dt_utcnow.utcnow()
+    )
+    db.add(wa_msg)
+    await db.commit()
+    await db.refresh(wa_msg)
+
+    return {
+        "status": "success",
+        "data": {
+            "id": wa_msg.id,
+            "phone_number": wa_msg.phone_number,
+            "direction": wa_msg.direction,
+            "message_body": wa_msg.message_body,
+            "message_type": wa_msg.message_type,
+            "media_url": wa_msg.media_url,
+            "file_name": wa_msg.file_name,
+            "is_voice_note": wa_msg.is_voice_note,
+            "meta_message_id": wa_msg.meta_message_id,
+            "status": wa_msg.status,
+            "created_at": wa_msg.created_at.isoformat() if wa_msg.created_at else None
+        }
+    }

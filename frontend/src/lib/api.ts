@@ -3169,6 +3169,31 @@ export const zigmaaApi = {
     return { status: "success", count: 0, messages: [] };
   },
 
+  async uploadWhatsAppVoice(payload: {
+    phone_number: string;
+    audio_base64: string;
+    mimetype?: string;
+    contact_id?: string;
+    duration_seconds?: number;
+  }): Promise<any> {
+    try {
+      const res = await fetch(`${API_BASE}/whatsapp/upload-voice`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders()
+        },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn("Failed to upload WhatsApp voice note", e);
+    }
+    return null;
+  },
+
   async getWhatsAppConversations(limit = 30, assigned_user_id?: string): Promise<any> {
     try {
       let url = `${API_BASE}/whatsapp/conversations?limit=${limit}`;

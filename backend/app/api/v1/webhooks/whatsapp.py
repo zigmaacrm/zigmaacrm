@@ -499,6 +499,11 @@ class InboundQRMessage(BaseModel):
     meta_message_id: Optional[str] = None
     timestamp: Optional[int] = None
     direction: Optional[str] = "INBOUND"
+    message_type: Optional[str] = "text"
+    media_url: Optional[str] = None
+    file_name: Optional[str] = None
+    caption: Optional[str] = None
+    is_voice_note: Optional[bool] = False
 
 @router.post("/whatsapp/inbound-qr")
 @router.post("/inbound-qr")
@@ -569,7 +574,11 @@ async def receive_whatsapp_qr_inbound(
         phone_number=clean_phone,
         direction=msg_direction,
         message_body=payload.message_body or "[Empty Message]",
-        message_type="text",
+        message_type=payload.message_type or "text",
+        media_url=payload.media_url,
+        file_name=payload.file_name,
+        caption=payload.caption,
+        is_voice_note=bool(payload.is_voice_note),
         meta_message_id=msg_id,
         status=delivery_status
     )

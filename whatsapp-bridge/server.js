@@ -16,19 +16,29 @@ const {
   default: makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
-  fetchLatestBaileysVersion
+  fetchLatestBaileysVersion,
+  downloadMediaMessage
 } = require('@whiskeysockets/baileys');
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '25mb' }));
 
 const PORT = process.env.PORT || 5001;
 const BACKEND_BASE = process.env.FASTAPI_BASE_URL || (process.env.RENDER ? 'https://zigmaacrm-backend.onrender.com' : 'http://127.0.0.1:8000');
 const FASTAPI_WEBHOOK_URL = process.env.FASTAPI_WEBHOOK_URL || `${BACKEND_BASE}/api/v1/webhooks/whatsapp/inbound-qr`;
 const FASTAPI_BULK_SYNC_URL = process.env.FASTAPI_BULK_SYNC_URL || `${BACKEND_BASE}/api/v1/whatsapp/contacts/bulk-sync`;
+const FASTAPI_SYNC_HISTORY_URL = process.env.FASTAPI_SYNC_HISTORY_URL || `${BACKEND_BASE}/api/v1/whatsapp/chats/sync-history`;
 const FASTAPI_STATUS_UPDATE_URL = process.env.FASTAPI_STATUS_UPDATE_URL || `${BACKEND_BASE}/api/v1/webhooks/whatsapp/status-update`;
 const AUTH_DIR = path.join(__dirname, 'auth_info_baileys');
+
+// Uploads directory for decrypted WhatsApp media
+const UPLOADS_DIR = path.join(__dirname, '..', 'uploads', 'whatsapp');
+if (!fs.existsSync(UPLOADS_DIR)) {
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+app.use('/media/whatsapp', express.static(UPLOADS_DIR));
+app.use('/uploads/whatsapp', express.static(UPLOADS_DIR));
 
 // State
 let sock = null;
@@ -157,6 +167,99 @@ function extractMessageBody(m) {
   if (msg.contactMessage) return '[Contact Card]';
   if (msg.locationMessage) return '[Location]';
   return '';
+}
+
+function unwrapMessage(m) {
+  if (!m) return null;
+  let msg = m;
+  while (
+    msg.ephemeralMessage?.message ||
+    msg.viewOnceMessage?.message ||
+    msg.viewOnceMessageV2?.message ||
+    msg.documentWithCaptionMessage?.message ||
+    msg.editedMessage?.message?.protocolMessage?.editedMessage ||
+    msg.deviceSentMessage?.message
+  ) {
+    msg =
+      msg.ephemeralMessage?.message ||
+      msg.viewOnceMessage?.message ||
+      msg.viewOnceMessageV2?.message ||
+      msg.documentWithCaptionMessage?.message ||
+      msg.editedMessage?.message?.protocolMessage?.editedMessage ||
+      msg.deviceSentMessage?.message;
+  }
+  return msg;
+}
+
+async function decryptAndSaveMedia(msgObj) {
+  try {
+    const rawM = unwrapMessage(msgObj?.message);
+    if (!rawM) return null;
+
+    let mediaType = null;
+    let extension = 'bin';
+    let mimeType = 'application/octet-stream';
+    let fileName = null;
+    let caption = null;
+    let isVoiceNote = false;
+
+    if (rawM.imageMessage) {
+      mediaType = 'image';
+      mimeType = rawM.imageMessage.mimetype || 'image/jpeg';
+      extension = mimeType.includes('png') ? 'png' : 'jpg';
+      fileName = `img_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${extension}`;
+      caption = rawM.imageMessage.caption || '';
+    } else if (rawM.audioMessage) {
+      isVoiceNote = !!rawM.audioMessage.ptt;
+      mediaType = isVoiceNote ? 'ptt' : 'audio';
+      mimeType = rawM.audioMessage.mimetype || 'audio/ogg';
+      extension = mimeType.includes('mp4') || mimeType.includes('m4a') ? 'mp4' : 'ogg';
+      fileName = `voice_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${extension}`;
+    } else if (rawM.videoMessage) {
+      mediaType = 'video';
+      mimeType = rawM.videoMessage.mimetype || 'video/mp4';
+      extension = 'mp4';
+      fileName = `vid_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${extension}`;
+      caption = rawM.videoMessage.caption || '';
+    } else if (rawM.documentMessage) {
+      mediaType = 'document';
+      mimeType = rawM.documentMessage.mimetype || 'application/pdf';
+      fileName = rawM.documentMessage.fileName || `doc_${Date.now()}.pdf`;
+      caption = rawM.documentMessage.caption || '';
+    } else {
+      return null;
+    }
+
+    const buffer = await downloadMediaMessage(
+      msgObj,
+      'buffer',
+      {},
+      {
+        logger,
+        reuploadRequest: sock?.updateMediaMessage
+      }
+    );
+
+    if (!buffer || buffer.length === 0) {
+      return null;
+    }
+
+    const filePath = path.join(UPLOADS_DIR, fileName);
+    fs.writeFileSync(filePath, buffer);
+    const mediaUrl = `/media/whatsapp/${fileName}`;
+
+    return {
+      message_type: mediaType,
+      media_url: mediaUrl,
+      file_name: fileName,
+      caption: caption || '',
+      is_voice_note: isVoiceNote,
+      file_size: buffer.length
+    };
+  } catch (err) {
+    console.error('[WhatsApp Media Decrypt Error]:', err.message);
+    return null;
+  }
 }
 
 function scheduleContactSync() {
@@ -452,9 +555,22 @@ async function initWhatsApp(forceClean = false) {
           }
 
           const contactName = msg.pushName || '';
-          const body = extractMessageBody(msg.message);
+          let mediaInfo = null;
+          const rawM = unwrapMessage(msg.message);
+          if (rawM?.imageMessage || rawM?.documentMessage || rawM?.audioMessage || rawM?.videoMessage) {
+            mediaInfo = await decryptAndSaveMedia(msg);
+          }
 
-          if (!body && !msg.message?.imageMessage && !msg.message?.documentMessage && !msg.message?.audioMessage) {
+          let body = extractMessageBody(msg.message);
+          if (!body && mediaInfo) {
+            if (mediaInfo.message_type === 'image') body = mediaInfo.caption || '📷 Photo';
+            else if (mediaInfo.is_voice_note || mediaInfo.message_type === 'ptt') body = '🎤 Voice message';
+            else if (mediaInfo.message_type === 'audio') body = '🎵 Audio';
+            else if (mediaInfo.message_type === 'document') body = `📄 ${mediaInfo.file_name || 'Document'}`;
+            else if (mediaInfo.message_type === 'video') body = mediaInfo.caption || '🎥 Video';
+          }
+
+          if (!body && !mediaInfo) {
             if (msg.messageStubType) {
               console.log(`[WhatsApp Decrypt Waiting] Stub type: ${msg.messageStubType}, Phone: ${phone}, Params:`, msg.messageStubParameters || []);
             } else {
@@ -463,7 +579,7 @@ async function initWhatsApp(forceClean = false) {
             continue;
           }
 
-          console.log(`[WhatsApp INBOUND] Phone: ${phone} (${contactName}) - "${(body || '').slice(0, 50)}"`);
+          console.log(`[WhatsApp INBOUND] Phone: ${phone} (${contactName}) - "${(body || '').slice(0, 50)}" [Type: ${mediaInfo?.message_type || 'text'}]`);
 
           try {
             const res = await fetch(FASTAPI_WEBHOOK_URL, {
@@ -475,7 +591,12 @@ async function initWhatsApp(forceClean = false) {
                 message_body: body || '[Attachment Received]',
                 meta_message_id: msg.key.id || `wamid.qr_${Date.now()}`,
                 timestamp: Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000),
-                direction: 'INBOUND'
+                direction: 'INBOUND',
+                message_type: mediaInfo?.message_type || 'text',
+                media_url: mediaInfo?.media_url || null,
+                file_name: mediaInfo?.file_name || null,
+                caption: mediaInfo?.caption || null,
+                is_voice_note: !!mediaInfo?.is_voice_note
               })
             });
             if (!res.ok) {
@@ -709,6 +830,34 @@ app.post('/send', async (req, res) => {
     });
   } catch (err) {
     console.error('[WhatsApp Outbound Error]:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/whatsapp/send-voice', async (req, res) => {
+  try {
+    const { phone_number, audio_base64, mimetype } = req.body;
+    if (!phone_number || !audio_base64) {
+      return res.status(400).json({ success: false, error: 'phone_number and audio_base64 are required.' });
+    }
+    if (connectionStatus !== 'CONNECTED' || !sock) {
+      return res.status(503).json({ success: false, error: 'WhatsApp is not connected via QR. Please scan the QR code first.' });
+    }
+    const cleanPhone = phone_number.replace(/[^0-9]/g, '');
+    const jid = `${cleanPhone}@s.whatsapp.net`;
+    const pureBase64 = audio_base64.includes(',') ? audio_base64.split(',')[1] : audio_base64;
+    const fileBuffer = Buffer.from(pureBase64, 'base64');
+
+    const result = await sock.sendMessage(jid, {
+      audio: fileBuffer,
+      mimetype: mimetype || 'audio/mp4',
+      ptt: true
+    });
+    const messageId = result?.key?.id || `wamid.voice_${Date.now()}`;
+    console.log(`[WhatsApp Voice Note Sent] To: ${cleanPhone}, ID: ${messageId}`);
+    res.json({ success: true, message_id: messageId, status: 'SENT' });
+  } catch (err) {
+    console.error('[WhatsApp Voice Send Error]:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });

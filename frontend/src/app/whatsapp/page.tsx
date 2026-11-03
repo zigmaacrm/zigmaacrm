@@ -37,7 +37,14 @@ import {
   RefreshCw,
   Loader2,
   Edit2,
-  QrCode
+  QrCode,
+  Mic,
+  MicOff,
+  Play,
+  Pause,
+  Trash2,
+  ImageIcon,
+  Volume2
 } from "lucide-react";
 import Sidebar from "@/components/layout/Sidebar";
 import Header from "@/components/layout/Header";
@@ -58,12 +65,111 @@ export interface WhatsAppMessage {
   timeLabel: string;
   dateGroup: "Today" | "Yesterday" | "Earlier";
   status?: "SENT" | "DELIVERED" | "READ" | "FAILED" | "PENDING";
+  messageType?: string;
+  mediaUrl?: string | null;
+  fileName?: string | null;
+  caption?: string | null;
+  isVoiceNote?: boolean;
   attachment?: {
-    type: "pdf" | "image";
+    type: "pdf" | "image" | "audio" | "document";
     name: string;
-    size: string;
+    size?: string;
     url?: string;
   };
+}
+
+function VoiceNotePlayer({ audioUrl, isOutbound, isDark }: { audioUrl: string; isOutbound: boolean; isDark: boolean }) {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const togglePlay = () => {
+    if (!audioRef.current) return;
+    if (isPlaying) {
+      audioRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+    }
+  };
+
+  const handleTimeUpdate = () => {
+    if (audioRef.current) {
+      setCurrentTime(audioRef.current.currentTime);
+    }
+  };
+
+  const handleLoadedMetadata = () => {
+    if (audioRef.current) {
+      setDuration(audioRef.current.duration || 0);
+    }
+  };
+
+  const handleEnded = () => {
+    setIsPlaying(false);
+    setCurrentTime(0);
+  };
+
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = parseFloat(e.target.value);
+    if (audioRef.current) {
+      audioRef.current.currentTime = val;
+      setCurrentTime(val);
+    }
+  };
+
+  const formatSecs = (sec: number) => {
+    if (isNaN(sec) || !isFinite(sec)) return "0:00";
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${s < 10 ? "0" : ""}${s}`;
+  };
+
+  return (
+    <div className={cn(
+      "flex items-center gap-3 p-2.5 rounded-xl mt-1.5 w-60 sm:w-72 transition-all border",
+      isDark ? "bg-black/40 border-white/10" : (isOutbound ? "bg-white/70 border-emerald-200" : "bg-slate-50 border-slate-200")
+    )}>
+      <audio
+        ref={audioRef}
+        src={audioUrl}
+        onTimeUpdate={handleTimeUpdate}
+        onLoadedMetadata={handleLoadedMetadata}
+        onEnded={handleEnded}
+        preload="metadata"
+      />
+      <button
+        type="button"
+        onClick={togglePlay}
+        className={cn(
+          "w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-transform active:scale-95 shadow-sm text-white",
+          isOutbound ? "bg-emerald-600 hover:bg-emerald-500" : "bg-emerald-600 hover:bg-emerald-500"
+        )}
+      >
+        {isPlaying ? <Pause className="w-4 h-4 fill-white" /> : <Play className="w-4 h-4 fill-white ml-0.5" />}
+      </button>
+
+      <div className="flex-1 min-w-0">
+        <input
+          type="range"
+          min={0}
+          max={duration || 100}
+          value={currentTime}
+          onChange={handleSeek}
+          className="w-full h-1.5 bg-slate-300 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+        />
+        <div className="flex justify-between text-[10px] text-slate-500 dark:text-slate-400 mt-1 font-mono">
+          <span>{formatSecs(currentTime)}</span>
+          <span>{duration > 0 ? formatSecs(duration) : "0:00"}</span>
+        </div>
+      </div>
+
+      <div className="shrink-0 text-emerald-500">
+        <Mic className="w-4 h-4" />
+      </div>
+    </div>
+  );
 }
 
 export interface WhatsAppConversation {
@@ -312,6 +418,109 @@ export default function WhatsAppPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isPollingRef = useRef(false);
 
+  // Media Lightbox & Voice Note State
+  const [selectedImagePreview, setSelectedImagePreview] = useState<string | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      mediaRecorder.start(100);
+      setIsRecording(true);
+      setRecordingDuration(0);
+
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration((prev) => prev + 1);
+      }, 1000);
+    } catch (err: any) {
+      toast.error("Microphone Access", "Please allow microphone access to record voice notes.");
+    }
+  };
+
+  const cancelRecording = () => {
+    if (mediaRecorderRef.current) {
+      try {
+        mediaRecorderRef.current.stop();
+        mediaRecorderRef.current.stream?.getTracks().forEach((t) => t.stop());
+      } catch (_) {}
+    }
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    setIsRecording(false);
+    setRecordingDuration(0);
+    audioChunksRef.current = [];
+  };
+
+  const sendRecording = async () => {
+    if (!mediaRecorderRef.current || !activeChat) return;
+
+    const mimeType = mediaRecorderRef.current.mimeType || "audio/mp4";
+    const duration = recordingDuration;
+
+    mediaRecorderRef.current.onstop = async () => {
+      mediaRecorderRef.current?.stream?.getTracks().forEach((t) => t.stop());
+      const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+      audioChunksRef.current = [];
+
+      const reader = new FileReader();
+      reader.readAsDataURL(audioBlob);
+      reader.onloadend = async () => {
+        const base64Audio = reader.result as string;
+        const cleanPhone = activeChat.phone.replace(/[^0-9]/g, "");
+
+        const optimisticMsg: WhatsAppMessage = {
+          id: `voice-${Date.now()}`,
+          sender: "outbound",
+          text: `🎤 Voice message (${duration}s)`,
+          timestamp: "Just now",
+          timeLabel: formatTime(new Date().toISOString()),
+          dateGroup: "Today",
+          status: "PENDING",
+          messageType: "ptt",
+          isVoiceNote: true,
+          attachment: {
+            type: "audio",
+            name: `voice_${duration}s.mp4`,
+            url: URL.createObjectURL(audioBlob)
+          }
+        };
+        setMessages((prev) => [...prev, optimisticMsg]);
+
+        try {
+          await api.uploadWhatsAppVoice({
+            phone_number: cleanPhone,
+            audio_base64: base64Audio,
+            mimetype: mimeType,
+            contact_id: activeChat.contact_id,
+            duration_seconds: duration
+          });
+          loadMessages(cleanPhone, true);
+        } catch (e: any) {
+          toast.error("Voice Note Failed", "Failed to deliver voice note.");
+        }
+      };
+    };
+
+    try {
+      mediaRecorderRef.current.stop();
+    } catch (_) {}
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    setIsRecording(false);
+  };
+
   const handleChatInitiated = useCallback((phone: string, name?: string, initialMsg?: string) => {
     const cleanPhone = phone.replace(/[^0-9]/g, "");
     setConversations((prev) => {
@@ -510,22 +719,55 @@ export default function WhatsAppPage() {
       const data = await api.getWhatsAppMessages({ phone_number: clean });
 
       if (data && data.status === "success" && Array.isArray(data.messages)) {
-        const mappedMsgs: WhatsAppMessage[] = data.messages.map((m: any) => ({
-          id: m.id,
-          sender: m.direction === "INBOUND" ? "inbound" : "outbound",
-          text: m.message_body,
-          timestamp: m.created_at || "Today",
-          timeLabel: formatTime(m.created_at),
-          dateGroup: "Today",
-          status: m.status || "DELIVERED",
-          attachment: m.message_body?.toLowerCase().includes("quote") && m.message_body?.toLowerCase().includes(".pdf")
-            ? {
-                type: "pdf",
-                name: "Quotation_Zigmaa_INV-2026.pdf",
-                size: "420 KB"
-              }
-            : undefined
-        }));
+        const mappedMsgs: WhatsAppMessage[] = data.messages.map((m: any) => {
+          let mediaFullUrl = m.media_url;
+          if (mediaFullUrl && !mediaFullUrl.startsWith("http")) {
+            const apiBase = process.env.NEXT_PUBLIC_API_URL?.replace("/api/v1", "") || "http://localhost:8000";
+            mediaFullUrl = `${apiBase}${mediaFullUrl}`;
+          }
+
+          let attachment: WhatsAppMessage["attachment"] = undefined;
+          const mType = (m.message_type || "").toLowerCase();
+          const isVoice = m.is_voice_note || mType === "ptt" || mType === "audio";
+          const isImg = mType === "image" || (mediaFullUrl && (mediaFullUrl.endsWith(".jpg") || mediaFullUrl.endsWith(".png") || mediaFullUrl.endsWith(".jpeg")));
+
+          if (isImg) {
+            attachment = {
+              type: "image",
+              name: m.file_name || "Photo",
+              url: mediaFullUrl
+            };
+          } else if (isVoice) {
+            attachment = {
+              type: "audio",
+              name: m.file_name || "Voice note",
+              url: mediaFullUrl
+            };
+          } else if (mType === "document" || (m.message_body?.toLowerCase().includes("quote") && m.message_body?.toLowerCase().includes(".pdf"))) {
+            attachment = {
+              type: "pdf",
+              name: m.file_name || "Quotation_Zigmaa_INV-2026.pdf",
+              size: "420 KB",
+              url: mediaFullUrl
+            };
+          }
+
+          return {
+            id: m.id,
+            sender: m.direction === "INBOUND" ? "inbound" : "outbound",
+            text: m.message_body,
+            timestamp: m.created_at || "Today",
+            timeLabel: formatTime(m.created_at),
+            dateGroup: "Today",
+            status: m.status || "DELIVERED",
+            messageType: m.message_type || "text",
+            mediaUrl: mediaFullUrl,
+            fileName: m.file_name,
+            caption: m.caption,
+            isVoiceNote: isVoice,
+            attachment
+          };
+        });
 
         setMessages(mappedMsgs);
       }
@@ -1379,13 +1621,31 @@ export default function WhatsAppPage() {
                                     : "bg-white border border-slate-200/90 text-slate-900 rounded-tl-sm shadow-2xs")
                             )}
                           >
-                            {/* Message Text */}
-                            <p className="whitespace-pre-wrap select-text">{msg.text}</p>
+                            {/* Image Preview Card */}
+                            {msg.attachment?.type === "image" && msg.attachment.url && (
+                              <div className="mt-1 mb-2 rounded-xl overflow-hidden border border-black/10 dark:border-white/10 max-w-xs cursor-pointer group shadow-sm">
+                                <img
+                                  src={msg.attachment.url}
+                                  alt="WhatsApp Image"
+                                  className="w-full max-h-60 object-cover rounded-xl transition-transform group-hover:scale-102"
+                                  onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}
+                                />
+                              </div>
+                            )}
 
-                            {/* Attachment Card if present */}
-                            {msg.attachment && (
+                            {/* Voice Note / Audio Player */}
+                            {(msg.isVoiceNote || msg.messageType === "ptt" || msg.attachment?.type === "audio") && (
+                              <VoiceNotePlayer
+                                audioUrl={msg.attachment?.url || msg.mediaUrl || ""}
+                                isOutbound={isOutbound}
+                                isDark={isDark}
+                              />
+                            )}
+
+                            {/* Document Card if present */}
+                            {msg.attachment?.type === "pdf" && (
                               <div className={cn(
-                                "mt-2.5 p-3 rounded-xl flex items-center justify-between gap-3 border",
+                                "mt-2 p-3 rounded-xl flex items-center justify-between gap-3 border shadow-2xs",
                                 isDark
                                   ? "bg-black/40 border-white/10"
                                   : (isOutbound ? "bg-white/70 border-emerald-200" : "bg-slate-50 border-slate-200")
@@ -1399,16 +1659,20 @@ export default function WhatsAppPage() {
                                       {msg.attachment.name}
                                     </div>
                                     <div className={cn("text-[10px]", isDark ? "text-slate-400" : "text-slate-500")}>
-                                      {msg.attachment.size} • PDF Document
+                                      {msg.attachment.size || "Document"} • PDF
                                     </div>
                                   </div>
                                 </div>
 
                                 <a
-                                  href="#"
+                                  href={msg.attachment.url || "#"}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
                                   onClick={(e) => {
-                                    e.preventDefault();
-                                    toast.info("Document Download", `Opening ${msg.attachment?.name}`);
+                                    if (!msg.attachment?.url) {
+                                      e.preventDefault();
+                                      toast.info("Document Download", `Opening ${msg.attachment?.name}`);
+                                    }
                                   }}
                                   className={cn(
                                     "p-1.5 rounded-lg transition-colors shrink-0",
@@ -1419,6 +1683,14 @@ export default function WhatsAppPage() {
                                   <Download className="w-3.5 h-3.5" />
                                 </a>
                               </div>
+                            )}
+
+                            {/* Message Text (Hide if placeholder when attachment exists) */}
+                            {msg.text &&
+                              !msg.text.startsWith("🎤 Voice message") &&
+                              !msg.text.startsWith("📷 ") &&
+                              !msg.text.startsWith("📎 ") && (
+                              <p className="whitespace-pre-wrap select-text mt-1">{msg.text}</p>
                             )}
 
                             {/* Message Footer: Time + Status Tick */}
@@ -1589,119 +1861,169 @@ export default function WhatsAppPage() {
                   </div>
 
                   {/* Input row */}
-                  <div className={cn(
-                    "flex items-center gap-1.5 border rounded-2xl p-1.5 transition-all shadow-xs",
-                    isDark
-                      ? "bg-[#131B2E] border-[#1E293B] focus-within:border-emerald-500/60 focus-within:ring-2 focus-within:ring-emerald-500/10"
-                      : "bg-slate-50 border-slate-200 focus-within:border-emerald-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-emerald-500/10"
-                  )}>
-                    {/* Hidden file input */}
-                    <input
-                      type="file"
-                      ref={fileInputRef}
-                      onChange={handleFileUpload}
-                      className="hidden"
-                      accept="application/pdf,image/*"
-                    />
+                  {isRecording ? (
+                    <div className={cn(
+                      "flex items-center justify-between gap-3 border rounded-2xl p-2.5 transition-all shadow-md animate-in fade-in slide-in-from-bottom-1",
+                      isDark ? "bg-red-950/20 border-red-500/30 text-white" : "bg-red-50 border-red-200 text-slate-900"
+                    )}>
+                      <div className="flex items-center gap-3">
+                        <span className="relative flex h-3 w-3">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+                        </span>
+                        <span className="text-xs font-bold text-red-500 tracking-wider font-mono">
+                          {Math.floor(recordingDuration / 60)}:{(recordingDuration % 60) < 10 ? "0" : ""}{recordingDuration % 60}
+                        </span>
+                        <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                          Recording voice message...
+                        </span>
+                      </div>
 
-                    {/* Attachment Button */}
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className={cn(
-                        "h-9 w-9 flex items-center justify-center rounded-xl transition-all cursor-pointer shrink-0 hover:scale-105 active:scale-95",
-                        isDark ? "text-slate-400 hover:text-emerald-400 hover:bg-white/5" : "text-slate-500 hover:text-emerald-600 hover:bg-slate-200/60"
-                      )}
-                      title="Attach PDF quote or image"
-                    >
-                      <Paperclip className="w-4 h-4" />
-                    </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={cancelRecording}
+                          className="h-8 px-3 rounded-xl text-xs font-semibold flex items-center gap-1.5 bg-slate-200 hover:bg-slate-300 dark:bg-white/10 dark:hover:bg-white/20 text-slate-700 dark:text-slate-300 transition-colors"
+                          title="Discard recording"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                          <span>Cancel</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={sendRecording}
+                          className="h-8 px-4 rounded-xl text-xs font-bold flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs transition-transform active:scale-95"
+                          title="Send voice note"
+                        >
+                          <Send className="w-3.5 h-3.5" />
+                          <span>Send</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className={cn(
+                      "flex items-center gap-1.5 border rounded-2xl p-1.5 transition-all shadow-xs",
+                      isDark
+                        ? "bg-[#131B2E] border-[#1E293B] focus-within:border-emerald-500/60 focus-within:ring-2 focus-within:ring-emerald-500/10"
+                        : "bg-slate-50 border-slate-200 focus-within:border-emerald-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-emerald-500/10"
+                    )}>
+                      {/* Hidden file input */}
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        onChange={handleFileUpload}
+                        className="hidden"
+                        accept="application/pdf,image/*"
+                      />
 
-                    {/* Text Area */}
-                    <textarea
-                      rows={1}
-                      value={messageInput}
-                      onChange={handleInputChange}
-                      onKeyDown={handleKeyDown}
-                      placeholder='Type a message or press "/" for Meta templates...'
-                      className={cn(
-                        "flex-1 bg-transparent border-0 text-xs sm:text-sm focus:outline-none focus:ring-0 resize-none py-2 px-2 max-h-32 min-h-[38px] leading-relaxed",
-                        isDark ? "text-white placeholder-slate-400" : "text-slate-900 placeholder-slate-400"
-                      )}
-                    />
-
-                    {/* Add Emoji */}
-                    <div className="relative">
+                      {/* Attachment Button */}
                       <button
                         type="button"
-                        onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                        onClick={() => fileInputRef.current?.click()}
                         className={cn(
                           "h-9 w-9 flex items-center justify-center rounded-xl transition-all cursor-pointer shrink-0 hover:scale-105 active:scale-95",
-                          showEmojiPicker
-                            ? "bg-amber-500/20 text-amber-500"
-                            : isDark ? "text-slate-400 hover:text-amber-400 hover:bg-white/5" : "text-slate-500 hover:text-amber-500 hover:bg-slate-200/60"
+                          isDark ? "text-slate-400 hover:text-emerald-400 hover:bg-white/5" : "text-slate-500 hover:text-emerald-600 hover:bg-slate-200/60"
                         )}
-                        title="Add emoji"
+                        title="Attach PDF quote or image"
                       >
-                        <Smile className="w-4 h-4" />
+                        <Paperclip className="w-4 h-4" />
                       </button>
 
-                      {showEmojiPicker && (
-                        <div
-                          ref={emojiPickerRef}
+                      {/* Text Area */}
+                      <textarea
+                        rows={1}
+                        value={messageInput}
+                        onChange={handleInputChange}
+                        onKeyDown={handleKeyDown}
+                        placeholder='Type a message or press "/" for Meta templates...'
+                        className={cn(
+                          "flex-1 bg-transparent border-0 text-xs sm:text-sm focus:outline-none focus:ring-0 resize-none py-2 px-2 max-h-32 min-h-[38px] leading-relaxed",
+                          isDark ? "text-white placeholder-slate-400" : "text-slate-900 placeholder-slate-400"
+                        )}
+                      />
+
+                      {/* Add Emoji */}
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setShowEmojiPicker(!showEmojiPicker)}
                           className={cn(
-                            "absolute bottom-12 right-0 z-40 p-3 rounded-2xl shadow-2xl border w-72 backdrop-blur-md animate-in fade-in zoom-in-95 duration-150",
-                            isDark ? "bg-[#131B2E]/95 border-[#1E293B] text-white" : "bg-white/95 border-slate-200 text-slate-900"
+                            "h-9 w-9 flex items-center justify-center rounded-xl transition-all cursor-pointer shrink-0 hover:scale-105 active:scale-95",
+                            showEmojiPicker
+                              ? "bg-amber-500/20 text-amber-500"
+                              : isDark ? "text-slate-400 hover:text-amber-400 hover:bg-white/5" : "text-slate-500 hover:text-amber-500 hover:bg-slate-200/60"
                           )}
+                          title="Add emoji"
                         >
-                          <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100 dark:border-slate-800">
-                            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">Quick Emojis</span>
-                            <button
-                              type="button"
-                              onClick={() => setShowEmojiPicker(false)}
-                              className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-0.5 cursor-pointer"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                          <div className="grid grid-cols-8 gap-1.5 text-lg select-none">
-                            {EMOJI_LIST.map((emoji) => (
+                          <Smile className="w-4 h-4" />
+                        </button>
+
+                        {showEmojiPicker && (
+                          <div
+                            ref={emojiPickerRef}
+                            className={cn(
+                              "absolute bottom-12 right-0 z-40 p-3 rounded-2xl shadow-2xl border w-72 backdrop-blur-md animate-in fade-in zoom-in-95 duration-150",
+                              isDark ? "bg-[#131B2E]/95 border-[#1E293B] text-white" : "bg-white/95 border-slate-200 text-slate-900"
+                            )}
+                          >
+                            <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100 dark:border-slate-800">
+                              <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">Quick Emojis</span>
                               <button
-                                key={emoji}
                                 type="button"
-                                onClick={() => {
-                                  setMessageInput((prev) => prev + emoji);
-                                }}
-                                className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-slate-100 dark:hover:bg-white/10 transition-transform active:scale-125 cursor-pointer text-base"
+                                onClick={() => setShowEmojiPicker(false)}
+                                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-0.5 cursor-pointer"
                               >
-                                {emoji}
+                                <X className="w-3.5 h-3.5" />
                               </button>
-                            ))}
+                            </div>
+                            <div className="grid grid-cols-8 gap-1.5 text-lg select-none">
+                              {EMOJI_LIST.map((emoji) => (
+                                <button
+                                  key={emoji}
+                                  type="button"
+                                  onClick={() => {
+                                    setMessageInput((prev) => prev + emoji);
+                                  }}
+                                  className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-slate-100 dark:hover:bg-white/10 transition-transform active:scale-125 cursor-pointer text-base"
+                                >
+                                  {emoji}
+                                </button>
+                              ))}
+                            </div>
                           </div>
-                        </div>
+                        )}
+                      </div>
+
+                      {/* Dynamic Send / Mic Button (WhatsApp Web Style) */}
+                      {messageInput.trim() ? (
+                        <button
+                          type="button"
+                          onClick={() => handleSendMessage()}
+                          disabled={isSending}
+                          className="h-9 w-9 rounded-xl font-bold transition-all flex items-center justify-center shrink-0 cursor-pointer shadow-sm shadow-emerald-500/25 bg-gradient-to-r from-emerald-600 to-teal-500 text-white hover:scale-105 active:scale-95"
+                          title="Send message"
+                        >
+                          {isSending ? (
+                            <Loader2 className="w-4 h-4 animate-spin text-white" />
+                          ) : (
+                            <Send className="w-4 h-4" />
+                          )}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={startRecording}
+                          className={cn(
+                            "h-9 w-9 rounded-xl font-bold transition-all flex items-center justify-center shrink-0 cursor-pointer shadow-sm hover:scale-105 active:scale-95",
+                            isDark ? "bg-white/5 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" : "bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200"
+                          )}
+                          title="Record WhatsApp voice note"
+                        >
+                          <Mic className="w-4 h-4" />
+                        </button>
                       )}
                     </div>
-
-                    {/* Send Button */}
-                    <button
-                      type="button"
-                      onClick={() => handleSendMessage()}
-                      disabled={!messageInput.trim() || isSending}
-                      className={cn(
-                        "h-9 w-9 rounded-xl font-bold transition-all flex items-center justify-center shrink-0 cursor-pointer shadow-sm shadow-emerald-500/25",
-                        messageInput.trim() && !isSending
-                          ? "bg-gradient-to-r from-emerald-600 to-teal-500 text-white hover:scale-105 active:scale-95"
-                          : (isDark ? "bg-white/5 text-slate-500 cursor-not-allowed" : "bg-slate-200 text-slate-400 cursor-not-allowed")
-                      )}
-                      title="Send WhatsApp message via Meta Cloud API"
-                    >
-                      {isSending ? (
-                        <Loader2 className="w-4 h-4 animate-spin text-white" />
-                      ) : (
-                        <Send className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
+                  )}
                 </div>
               </>
             ) : (
@@ -2150,6 +2472,44 @@ export default function WhatsAppPage() {
         onChatInitiated={handleChatInitiated}
       />
 
+      {/* Image Preview Lightbox Modal */}
+      {selectedImagePreview && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in"
+          onClick={() => setSelectedImagePreview(null)}
+        >
+          <div
+            className="relative max-w-4xl max-h-[90vh] bg-transparent rounded-2xl overflow-hidden shadow-2xl flex flex-col items-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="absolute top-3 right-3 flex items-center gap-2 z-10">
+              <a
+                href={selectedImagePreview}
+                download
+                target="_blank"
+                rel="noopener noreferrer"
+                className="p-2 rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors"
+                title="Download full size"
+              >
+                <Download className="w-5 h-5" />
+              </a>
+              <button
+                type="button"
+                onClick={() => setSelectedImagePreview(null)}
+                className="p-2 rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors cursor-pointer"
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <img
+              src={selectedImagePreview}
+              alt="WhatsApp Preview"
+              className="max-w-full max-h-[85vh] object-contain rounded-xl shadow-2xl"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
