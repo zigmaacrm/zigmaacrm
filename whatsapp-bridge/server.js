@@ -302,6 +302,16 @@ async function initWhatsApp(forceClean = false) {
 
         console.log(`[WhatsApp Gateway] Connected successfully! Phone: ${connectedPhone} (${connectedName})`);
         isStarting = false;
+
+        // Proactively upload 50 fresh prekeys to WhatsApp server so inbound decryption never fails
+        try {
+          if (sock.uploadPreKeys) {
+            await sock.uploadPreKeys(50);
+            console.log('[WhatsApp Gateway] Fresh prekeys registered with WhatsApp network.');
+          }
+        } catch (pkErr) {
+          console.warn('[WhatsApp Gateway] Prekey upload note:', pkErr.message);
+        }
       }
     });
 
@@ -397,7 +407,11 @@ async function initWhatsApp(forceClean = false) {
           const body = extractMessageBody(msg.message);
 
           if (!body && !msg.message?.imageMessage && !msg.message?.documentMessage && !msg.message?.audioMessage) {
-            console.log(`[WhatsApp Inbound Notice] Empty body from ${phone}, message keys:`, Object.keys(msg.message || {}));
+            if (msg.messageStubType) {
+              console.log(`[WhatsApp Decrypt Waiting] Stub type: ${msg.messageStubType}, Phone: ${phone}, Params:`, msg.messageStubParameters || []);
+            } else {
+              console.log(`[WhatsApp Inbound Notice] Empty body from ${phone}, message keys:`, Object.keys(msg.message || {}));
+            }
             continue;
           }
 
@@ -430,34 +444,63 @@ async function initWhatsApp(forceClean = false) {
       }
     });
 
-    // 3. Message Status & Read Receipts (Blue Ticks)
+    // 3. Message Status & Read Receipts (Blue Ticks) + Decrypted Retries
     sock.ev.on('messages.update', async (updates) => {
       try {
         if (!updates || !Array.isArray(updates)) return;
         for (const u of updates) {
           const id = u.key?.id;
-          const statusNum = u.update?.status;
-          if (!id || typeof statusNum === 'undefined') continue;
+          if (!id) continue;
 
-          let statusStr = null;
-          // WAMessageStatus: 2: SERVER_ACK (SENT), 3: DELIVERY_ACK (DELIVERED), 4: READ (READ), 5: PLAYED (READ)
-          if (statusNum === 4 || statusNum === 5) {
-            statusStr = 'READ';
-          } else if (statusNum === 3) {
-            statusStr = 'DELIVERED';
-          } else if (statusNum === 2) {
-            statusStr = 'SENT';
+          // Asynchronously decrypted message (e.g. from retry receipt or placeholder resend)
+          if (u.update?.message && !u.key?.fromMe) {
+            const remoteJid = u.key?.remoteJid || '';
+            const phone = resolvePhoneFromJid(remoteJid);
+            const body = extractMessageBody(u.update.message);
+            if (phone && (body || u.update.message?.imageMessage || u.update.message?.documentMessage)) {
+              console.log(`[WhatsApp Decrypted Inbound] Phone: ${phone} - "${(body || '').slice(0, 50)}"`);
+              try {
+                await fetch(FASTAPI_WEBHOOK_URL, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    phone_number: phone,
+                    contact_name: '',
+                    message_body: body || '[Attachment Received]',
+                    meta_message_id: id,
+                    timestamp: Math.floor(Date.now() / 1000),
+                    direction: 'INBOUND'
+                  })
+                });
+                console.log(`[WhatsApp Decrypted Forwarded] Successfully delivered to CRM for ${phone}`);
+              } catch (decErr) {
+                console.error('[WhatsApp Gateway] Failed to forward decrypted message to FastAPI:', decErr.message);
+              }
+            }
           }
 
-          if (statusStr) {
-            console.log(`[WhatsApp Receipt] ID: ${id} -> ${statusStr}`);
-            try {
-              await fetch(FASTAPI_STATUS_UPDATE_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ meta_message_id: id, status: statusStr })
-              });
-            } catch (_) {}
+          const statusNum = u.update?.status;
+          if (typeof statusNum !== 'undefined') {
+            let statusStr = null;
+            // WAMessageStatus: 2: SERVER_ACK (SENT), 3: DELIVERY_ACK (DELIVERED), 4: READ (READ), 5: PLAYED (READ)
+            if (statusNum === 4 || statusNum === 5) {
+              statusStr = 'READ';
+            } else if (statusNum === 3) {
+              statusStr = 'DELIVERED';
+            } else if (statusNum === 2) {
+              statusStr = 'SENT';
+            }
+
+            if (statusStr) {
+              console.log(`[WhatsApp Receipt] ID: ${id} -> ${statusStr}`);
+              try {
+                await fetch(FASTAPI_STATUS_UPDATE_URL, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ meta_message_id: id, status: statusStr })
+                });
+              } catch (_) {}
+            }
           }
         }
       } catch (err) {
