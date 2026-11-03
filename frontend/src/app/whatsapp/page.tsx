@@ -1757,67 +1757,248 @@ export default function WhatsAppPage() {
                       const isOutbound = msg.sender === "outbound";
                       const cleanText = cleanDisplayCaption(msg.text, msg.fileName);
                       const isSticker = msg.attachment?.type === "sticker";
+                      const isPureImage = msg.attachment?.type === "image" && !cleanText;
+                      const isPureVideo = msg.attachment?.type === "video" && !cleanText;
+                      const isDoc = msg.attachment?.type === "pdf" || msg.attachment?.type === "document";
+                      const isVoice = msg.isVoiceNote || msg.messageType === "ptt" || msg.attachment?.type === "audio";
+                      const isContactCard = msg.messageType === "contact" || msg.text === "[Contact Card]" || (typeof msg.text === "string" && (msg.text.startsWith('{"type":"contact"') || msg.text.includes("BEGIN:VCARD")));
 
-                      return (
-                        <div
-                          key={msg.id}
-                          className={cn(
-                            "flex flex-col",
-                            isOutbound ? "items-end" : "items-start"
-                          )}
-                        >
-                          <div
-                            className={cn(
-                              "rounded-2xl p-3.5 max-w-[85%] sm:max-w-[70%] text-sm leading-relaxed transition-all shadow-xs",
-                              isSticker && !cleanText
-                                ? "bg-transparent border-0 shadow-none p-1"
-                                : (isOutbound
-                                    ? (isDark
-                                        ? "bg-emerald-600/25 border border-emerald-500/30 text-white rounded-tr-sm ml-auto"
-                                        : "bg-[#D9FDD3] border border-[#C2EBC0] text-slate-900 rounded-tr-sm ml-auto shadow-2xs")
-                                    : (isDark
-                                        ? "bg-white/5 border border-white/10 text-white rounded-tl-sm"
-                                        : "bg-white border border-slate-200/90 text-slate-900 rounded-tl-sm shadow-2xs"))
-                            )}
-                          >
-                            {/* Sticker Preview */}
-                            {msg.attachment?.type === "sticker" && msg.attachment.url && (
-                              <div className="my-1 cursor-pointer select-none">
-                                <img
-                                  src={msg.attachment.url}
-                                  alt="WhatsApp Sticker"
-                                  className="w-36 h-36 max-w-[160px] max-h-[160px] object-contain drop-shadow-sm transition-transform hover:scale-105"
-                                  onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}
-                                />
+                      // 1. Sticker message (borderless, transparent)
+                      if (isSticker && msg.attachment?.url) {
+                        return (
+                          <div key={msg.id} className={cn("flex flex-col my-1", isOutbound ? "items-end" : "items-start")}>
+                            <div className="cursor-pointer select-none">
+                              <img
+                                src={msg.attachment.url}
+                                alt="WhatsApp Sticker"
+                                className="w-36 h-36 max-w-[160px] max-h-[160px] object-contain drop-shadow-md transition-transform hover:scale-105"
+                                onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}
+                              />
+                              <div className={cn("text-[10px] text-right mt-0.5 pr-1 font-medium", isDark ? "text-slate-400" : "text-slate-500")}>
+                                {msg.timeLabel}
                               </div>
-                            )}
+                            </div>
+                          </div>
+                        );
+                      }
 
-                            {/* Image Preview Card */}
-                            {msg.attachment?.type === "image" && msg.attachment.url && (
-                              <div className="mt-1 mb-2 rounded-xl overflow-hidden border border-black/10 dark:border-white/10 max-w-xs cursor-pointer group shadow-sm">
+                      // 2. Pure Image (No outer white box, exact WhatsApp Web style)
+                      if (isPureImage && msg.attachment?.url) {
+                        return (
+                          <div key={msg.id} className={cn("flex flex-col my-1", isOutbound ? "items-end" : "items-start")}>
+                            <div
+                              className={cn(
+                                "rounded-xl p-[3px] shadow-xs select-none transition-all group relative overflow-hidden",
+                                isOutbound
+                                  ? (isDark ? "bg-[#005c4b] rounded-tr-xs ml-auto" : "bg-[#D9FDD3] rounded-tr-xs ml-auto shadow-2xs border border-[#C2EBC0]")
+                                  : (isDark ? "bg-[#202c33] rounded-tl-xs" : "bg-white rounded-tl-xs shadow-2xs border border-slate-200/90")
+                              )}
+                            >
+                              <div className="relative rounded-lg overflow-hidden max-w-[280px] sm:max-w-[340px]">
                                 <img
                                   src={msg.attachment.url}
                                   alt="WhatsApp Image"
-                                  className="w-full max-h-64 object-cover rounded-xl transition-transform group-hover:scale-102"
+                                  className="w-full max-h-[380px] object-cover rounded-lg block cursor-pointer transition-transform group-hover:scale-[1.01]"
                                   onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}
                                 />
+                                {/* Floating bottom-right timestamp pill */}
+                                <div className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded-md bg-black/60 backdrop-blur-xs text-white text-[10px] font-medium flex items-center gap-1 shadow-sm pointer-events-none">
+                                  <span>{msg.timeLabel}</span>
+                                  {isOutbound && (
+                                    <CheckCheck
+                                      className={cn(
+                                        "w-3.5 h-3.5",
+                                        msg.status === "READ" ? "text-[#53bdeb]" : "text-white/80"
+                                      )}
+                                    />
+                                  )}
+                                </div>
                               </div>
-                            )}
+                            </div>
+                          </div>
+                        );
+                      }
 
-                            {/* Video Player Card */}
-                            {msg.attachment?.type === "video" && msg.attachment.url && (
-                              <div className="mt-1 mb-2 rounded-xl overflow-hidden border border-black/10 dark:border-white/10 max-w-xs shadow-sm bg-black">
+                      // 3. Pure Video (Exact WhatsApp Web style)
+                      if (isPureVideo && msg.attachment?.url) {
+                        return (
+                          <div key={msg.id} className={cn("flex flex-col my-1", isOutbound ? "items-end" : "items-start")}>
+                            <div
+                              className={cn(
+                                "rounded-xl p-[3px] shadow-xs select-none transition-all relative overflow-hidden",
+                                isOutbound
+                                  ? (isDark ? "bg-[#005c4b] rounded-tr-xs ml-auto" : "bg-[#D9FDD3] rounded-tr-xs ml-auto shadow-2xs border border-[#C2EBC0]")
+                                  : (isDark ? "bg-[#202c33] rounded-tl-xs" : "bg-white rounded-tl-xs shadow-2xs border border-slate-200/90")
+                              )}
+                            >
+                              <div className="relative rounded-lg overflow-hidden max-w-[280px] sm:max-w-[340px] bg-black">
                                 <video
                                   src={msg.attachment.url}
                                   controls
                                   preload="metadata"
-                                  className="w-full max-h-72 rounded-xl object-contain"
+                                  className="w-full max-h-[360px] rounded-lg object-contain block"
                                 />
+                                <div className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded-md bg-black/60 backdrop-blur-xs text-white text-[10px] font-medium flex items-center gap-1 shadow-sm pointer-events-none">
+                                  <span>{msg.timeLabel}</span>
+                                  {isOutbound && (
+                                    <CheckCheck
+                                      className={cn(
+                                        "w-3.5 h-3.5",
+                                        msg.status === "READ" ? "text-[#53bdeb]" : "text-white/80"
+                                      )}
+                                    />
+                                  )}
+                                </div>
                               </div>
-                            )}
+                            </div>
+                          </div>
+                        );
+                      }
 
-                            {/* Voice Note / Audio Player */}
-                            {(msg.isVoiceNote || msg.messageType === "ptt" || msg.attachment?.type === "audio") && (
+                      // 4. Contact Card (WhatsApp Web style)
+                      if (isContactCard) {
+                        let contactDisplayName = "+91 86100 68470";
+                        let contactPhone = "918610068470";
+                        if (typeof msg.text === "string" && msg.text.startsWith('{"type":"contact"')) {
+                          try {
+                            const p = JSON.parse(msg.text);
+                            contactDisplayName = p.displayName || p.phone || contactDisplayName;
+                            contactPhone = p.phone || contactPhone;
+                          } catch (_) {}
+                        }
+
+                        return (
+                          <div key={msg.id} className={cn("flex flex-col my-1", isOutbound ? "items-end" : "items-start")}>
+                            <div
+                              className={cn(
+                                "w-64 sm:w-72 rounded-xl overflow-hidden border shadow-xs transition-all",
+                                isOutbound
+                                  ? (isDark ? "bg-[#005c4b] border-emerald-600/30 text-white rounded-tr-xs ml-auto" : "bg-[#D9FDD3] border-[#C2EBC0] text-slate-900 rounded-tr-xs ml-auto shadow-2xs")
+                                  : (isDark ? "bg-[#202c33] border-white/10 text-white rounded-tl-xs" : "bg-white border-slate-200 text-slate-900 rounded-tl-xs shadow-2xs")
+                              )}
+                            >
+                              <div className="p-3 flex items-center justify-between gap-3">
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <div className="w-10 h-10 rounded-full bg-pink-500 text-white flex items-center justify-center shrink-0 shadow-xs">
+                                    <User className="w-5 h-5" />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className={cn("text-xs sm:text-sm font-bold truncate", isDark ? "text-white" : "text-slate-900")}>
+                                      {contactDisplayName}
+                                    </div>
+                                    <div className="text-[11px] text-slate-400">
+                                      WhatsApp Contact
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="text-[10px] text-slate-400 self-start shrink-0">
+                                  {msg.timeLabel}
+                                </div>
+                              </div>
+
+                              <div className="border-t border-slate-200 dark:border-white/10" />
+
+                              <div className="flex items-center divide-x divide-slate-200 dark:divide-white/10">
+                                <button
+                                  type="button"
+                                  onClick={() => handleSelectChat(contactPhone)}
+                                  className="flex-1 py-2 text-center text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
+                                >
+                                  Message
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    handleChatInitiated(contactPhone, contactDisplayName);
+                                    toast.success("Contact Saved", `Added ${contactDisplayName} to CRM contacts`);
+                                  }}
+                                  className="flex-1 py-2 text-center text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
+                                >
+                                  Save contact
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      // 5. Document / File Attachment (Word, Excel, PDF, TXT)
+                      if (isDoc) {
+                        const ext = (msg.attachment?.name || msg.fileName || "").split(".").pop()?.toLowerCase();
+                        const isWord = ext === "doc" || ext === "docx";
+                        const isExcel = ext === "xls" || ext === "xlsx" || ext === "csv";
+                        const isPdf = ext === "pdf";
+
+                        return (
+                          <div key={msg.id} className={cn("flex flex-col my-1", isOutbound ? "items-end" : "items-start")}>
+                            <div
+                              className={cn(
+                                "w-64 sm:w-72 rounded-xl overflow-hidden border shadow-xs transition-all p-2.5",
+                                isOutbound
+                                  ? (isDark ? "bg-[#005c4b] border-emerald-600/30 text-white rounded-tr-xs ml-auto" : "bg-[#D9FDD3] border-[#C2EBC0] text-slate-900 rounded-tr-xs ml-auto shadow-2xs")
+                                  : (isDark ? "bg-[#202c33] border-white/10 text-white rounded-tl-xs" : "bg-white border-slate-200 text-slate-900 rounded-tl-xs shadow-2xs")
+                              )}
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <div className={cn(
+                                    "w-10 h-10 rounded-lg flex items-center justify-center shrink-0 font-bold text-xs shadow-xs text-white",
+                                    isWord ? "bg-blue-600" : isExcel ? "bg-emerald-600" : isPdf ? "bg-red-600" : "bg-teal-600"
+                                  )}>
+                                    {isWord ? "W" : isExcel ? "X" : isPdf ? "PDF" : <File className="w-5 h-5" />}
+                                  </div>
+
+                                  <div className="min-w-0 flex-1">
+                                    <div className={cn("text-xs font-semibold truncate", isDark ? "text-white" : "text-slate-900")} title={msg.attachment?.name || msg.fileName || undefined}>
+                                      {msg.attachment?.name || msg.fileName || "Document"}
+                                    </div>
+                                    <div className={cn("text-[10px] mt-0.5", isDark ? "text-slate-400" : "text-slate-500")}>
+                                      {ext?.toUpperCase() || "FILE"} • {msg.attachment?.size || "Document"}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <a
+                                  href={msg.attachment?.url || msg.mediaUrl || "#"}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  download={msg.attachment?.name || msg.fileName || undefined}
+                                  className={cn(
+                                    "w-8 h-8 rounded-full border flex items-center justify-center shrink-0 transition-transform active:scale-95",
+                                    isDark ? "border-white/10 hover:bg-white/10 text-slate-300" : "border-slate-300 hover:bg-black/5 text-slate-700"
+                                  )}
+                                  title="Download file"
+                                >
+                                  <Download className="w-4 h-4" />
+                                </a>
+                              </div>
+
+                              <div className={cn(
+                                "flex items-center justify-end gap-1 text-[10px] mt-1.5",
+                                isDark ? "text-slate-400" : "text-slate-500"
+                              )}>
+                                <span>{msg.timeLabel}</span>
+                                {isOutbound && (
+                                  <CheckCheck className={cn("w-3.5 h-3.5", msg.status === "READ" ? "text-[#53bdeb]" : "text-slate-400")} />
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      // 6. Voice Note (PTT)
+                      if (isVoice) {
+                        return (
+                          <div key={msg.id} className={cn("flex flex-col my-1", isOutbound ? "items-end" : "items-start")}>
+                            <div
+                              className={cn(
+                                "rounded-2xl p-2.5 max-w-[85%] sm:max-w-[70%] text-sm transition-all shadow-xs",
+                                isOutbound
+                                  ? (isDark ? "bg-[#005c4b] border border-emerald-600/30 text-white rounded-tr-xs ml-auto" : "bg-[#D9FDD3] border border-[#C2EBC0] text-slate-900 rounded-tr-xs ml-auto shadow-2xs")
+                                  : (isDark ? "bg-[#202c33] border border-white/10 text-white rounded-tl-xs" : "bg-white border border-slate-200 text-slate-900 rounded-tl-xs shadow-2xs")
+                              )}
+                            >
                               <VoiceNotePlayer
                                 audioUrl={msg.attachment?.url || msg.mediaUrl || ""}
                                 isOutbound={isOutbound}
@@ -1830,59 +2011,70 @@ export default function WhatsAppPage() {
                                   return undefined;
                                 })()}
                               />
-                            )}
-
-                            {/* Document Card if present */}
-                            {(msg.attachment?.type === "pdf" || msg.attachment?.type === "document") && (
                               <div className={cn(
-                                "mt-2 p-3 rounded-xl flex items-center justify-between gap-3 border shadow-2xs",
-                                isDark
-                                  ? "bg-black/40 border-white/10"
-                                  : (isOutbound ? "bg-white/70 border-emerald-200" : "bg-slate-50 border-slate-200")
+                                "flex items-center justify-end gap-1 text-[10px] mt-1 pr-1",
+                                isDark ? "text-slate-400" : "text-slate-500"
                               )}>
-                                <div className="flex items-center gap-2.5 min-w-0">
-                                  <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 shrink-0">
-                                    <File className="w-4 h-4" />
-                                  </div>
-                                  <div className="min-w-0">
-                                    <div className={cn("text-xs font-semibold truncate", isDark ? "text-white" : "text-slate-900")}>
-                                      {msg.attachment.name}
-                                    </div>
-                                    <div className={cn("text-[10px]", isDark ? "text-slate-400" : "text-slate-500")}>
-                                      {msg.attachment.size || "Document"}
-                                    </div>
-                                  </div>
-                                </div>
+                                <span>{msg.timeLabel}</span>
+                                {isOutbound && (
+                                  <CheckCheck className={cn("w-3.5 h-3.5", msg.status === "READ" ? "text-[#53bdeb]" : "text-slate-400")} />
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
 
-                                <a
-                                  href={msg.attachment.url || "#"}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  onClick={(e) => {
-                                    if (!msg.attachment?.url) {
-                                      e.preventDefault();
-                                      toast.info("Document Download", `Opening ${msg.attachment?.name}`);
-                                    }
-                                  }}
-                                  className={cn(
-                                    "p-1.5 rounded-lg transition-colors shrink-0",
-                                    isDark ? "bg-white/10 hover:bg-white/20 text-slate-200" : "bg-slate-200/70 hover:bg-slate-300 text-slate-700"
-                                  )}
-                                  title="Download document"
-                                >
-                                  <Download className="w-3.5 h-3.5" />
-                                </a>
+                      // 7. Standard Text / Media with Caption
+                      return (
+                        <div
+                          key={msg.id}
+                          className={cn(
+                            "flex flex-col my-1",
+                            isOutbound ? "items-end" : "items-start"
+                          )}
+                        >
+                          <div
+                            className={cn(
+                              "rounded-2xl p-2.5 sm:p-3 max-w-[85%] sm:max-w-[70%] text-sm leading-relaxed transition-all shadow-xs",
+                              isOutbound
+                                ? (isDark
+                                    ? "bg-[#005c4b] border border-emerald-600/30 text-white rounded-tr-xs ml-auto"
+                                    : "bg-[#D9FDD3] border border-[#C2EBC0] text-slate-900 rounded-tr-sm ml-auto shadow-2xs")
+                                : (isDark
+                                    ? "bg-[#202c33] border border-white/10 text-white rounded-tl-xs"
+                                    : "bg-white border border-slate-200/90 text-slate-900 rounded-tl-sm shadow-2xs")
+                            )}
+                          >
+                            {/* Attached Media with Caption if any */}
+                            {msg.attachment?.type === "image" && msg.attachment.url && (
+                              <div className="mb-2 rounded-xl overflow-hidden cursor-pointer group shadow-sm">
+                                <img
+                                  src={msg.attachment.url}
+                                  alt="WhatsApp Image"
+                                  className="w-full max-h-64 object-cover rounded-xl transition-transform group-hover:scale-101"
+                                  onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}
+                                />
                               </div>
                             )}
 
-                            {/* Message Text (Hide if placeholder, only display real user message or caption) */}
+                            {msg.attachment?.type === "video" && msg.attachment.url && (
+                              <div className="mb-2 rounded-xl overflow-hidden shadow-sm bg-black">
+                                <video
+                                  src={msg.attachment.url}
+                                  controls
+                                  preload="metadata"
+                                  className="w-full max-h-72 rounded-xl object-contain"
+                                />
+                              </div>
+                            )}
+
                             {cleanText ? (
-                              <p className="whitespace-pre-wrap select-text mt-1">{cleanText}</p>
+                              <p className="whitespace-pre-wrap select-text">{cleanText}</p>
                             ) : null}
 
-                            {/* Message Footer: Time + Status Tick */}
                             <div className={cn(
-                              "flex items-center justify-end gap-1.5 mt-1.5 text-[10px] font-medium",
+                              "flex items-center justify-end gap-1 mt-1 text-[10px] font-medium",
                               isDark ? "text-slate-400" : "text-slate-500"
                             )}>
                               <span>{msg.timeLabel}</span>
