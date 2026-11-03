@@ -1614,10 +1614,12 @@ export default function WhatsAppPage() {
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
-        const matchesName = c.contactName.toLowerCase().includes(q);
-        const matchesPhone = c.phone.replace(/[^0-9]/g, "").includes(q.replace(/[^0-9]/g, ""));
-        const matchesCompany = c.companyName.toLowerCase().includes(q);
-        return matchesName || matchesPhone || matchesCompany;
+        const digitsOnly = q.replace(/[^0-9]/g, "");
+        const matchesName = (c.contactName || "").toLowerCase().includes(q);
+        const matchesPhone = digitsOnly.length > 0 && c.phone.replace(/[^0-9]/g, "").includes(digitsOnly);
+        const matchesCompany = (c.companyName || "").toLowerCase().includes(q);
+        const matchesLastMessage = (c.lastMessage || "").toLowerCase().includes(q);
+        return Boolean(matchesName || matchesPhone || matchesCompany || matchesLastMessage);
       }
       return true;
     });
@@ -2148,11 +2150,26 @@ export default function WhatsAppPage() {
                 </div>
               ) : filteredConversations.length === 0 ? (
                 <div className="p-8 text-center text-slate-400 text-xs">
-                  <MessageSquare className="w-8 h-8 text-slate-400 mx-auto mb-2 opacity-50" />
-                  <p className={isDark ? "text-slate-400" : "text-slate-600"}>No WhatsApp conversations yet.</p>
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    Incoming messages will appear here automatically.
+                  {searchQuery.trim() ? (
+                    <Search className="w-8 h-8 text-slate-400 mx-auto mb-2 opacity-50" />
+                  ) : (
+                    <MessageSquare className="w-8 h-8 text-slate-400 mx-auto mb-2 opacity-50" />
+                  )}
+                  <p className={isDark ? "text-slate-300 font-medium" : "text-slate-700 font-medium"}>
+                    {searchQuery.trim() ? `No chats found for "${searchQuery}"` : "No WhatsApp conversations yet."}
                   </p>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    {searchQuery.trim() ? "Try searching for a different name or phone number." : "Incoming messages will appear here automatically."}
+                  </p>
+                  {searchQuery.trim() && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery("")}
+                      className="mt-3 px-3 py-1 text-xs rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer font-medium transition-colors"
+                    >
+                      Clear search
+                    </button>
+                  )}
                 </div>
               ) : (
                 filteredConversations.map((conv) => {
