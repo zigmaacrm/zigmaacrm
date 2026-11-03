@@ -979,7 +979,17 @@ app.post('/disconnect', async (req, res) => {
 
 app.post('/send', async (req, res) => {
   try {
-    const { phone_number, message, file_base64, file_name, file_type } = req.body;
+    const { 
+      phone_number, 
+      message, 
+      file_base64, 
+      file_name, 
+      file_type,
+      quoted_message_id,
+      quoted_text,
+      quoted_from_me
+    } = req.body;
+
     if (!phone_number || (!message && !file_base64)) {
       return res.status(400).json({ success: false, error: 'phone_number and message or file are required.' });
     }
@@ -994,6 +1004,21 @@ app.post('/send', async (req, res) => {
     const cleanPhone = phone_number.replace(/[^0-9]/g, '');
     const jid = `${cleanPhone}@s.whatsapp.net`;
 
+    // Construct native Baileys quoted reply context if replying to a message
+    let sendOptions = {};
+    if (quoted_message_id) {
+      sendOptions.quoted = {
+        key: {
+          remoteJid: jid,
+          fromMe: Boolean(quoted_from_me),
+          id: quoted_message_id
+        },
+        message: {
+          conversation: (quoted_text || '').slice(0, 500)
+        }
+      };
+    }
+
     let result;
     if (file_base64) {
       const pureBase64 = file_base64.includes(',') ? file_base64.split(',')[1] : file_base64;
@@ -1005,13 +1030,13 @@ app.post('/send', async (req, res) => {
           image: fileBuffer,
           caption: (message || '').trim(),
           mimetype: mime
-        });
+        }, sendOptions);
       } else if (mime.startsWith('video/')) {
         result = await sock.sendMessage(jid, {
           video: fileBuffer,
           caption: (message || '').trim(),
           mimetype: mime
-        });
+        }, sendOptions);
       } else if (mime.startsWith('audio/')) {
         const pttData = await convertAudioToWhatsAppPtt(fileBuffer);
         result = await sock.sendMessage(jid, {
@@ -1020,7 +1045,7 @@ app.post('/send', async (req, res) => {
           ptt: true,
           seconds: pttData.seconds || 1,
           waveform: pttData.waveform
-        });
+        }, sendOptions);
         if (pttData.filePath) {
           setTimeout(() => { try { fs.unlinkSync(pttData.filePath); } catch (_) {} }, 30000);
         }
@@ -1030,10 +1055,10 @@ app.post('/send', async (req, res) => {
           mimetype: mime,
           fileName: file_name || 'document.pdf',
           caption: (message || '').trim()
-        });
+        }, sendOptions);
       }
     } else {
-      result = await sock.sendMessage(jid, { text: message.trim() });
+      result = await sock.sendMessage(jid, { text: (message || '').trim() }, sendOptions);
     }
 
     const messageId = result?.key?.id || `wamid.qr_out_${Date.now()}`;

@@ -286,12 +286,6 @@ function VoiceNotePlayer({
   const effectiveDuration = duration > 0 ? duration : (durationHint > 0 ? durationHint : 0);
   const progressRatio = effectiveDuration > 0 ? Math.min(1, currentTime / effectiveDuration) : 0;
 
-  // Blue scrubber color matching real WhatsApp Web (#53bdeb)
-  const playedColor = "#53bdeb";
-  const unplayedColor = isDark
-    ? (isOutbound ? "rgba(255, 255, 255, 0.4)" : "rgba(134, 150, 160, 0.4)")
-    : (isOutbound ? "rgba(0, 0, 0, 0.28)" : "rgba(134, 150, 160, 0.4)");
-
   const hasSenderAvatar = Boolean(senderAvatarUrl && isValidImageUrl(senderAvatarUrl) && !senderImgFailed);
   const hasContactAvatar = Boolean(avatarUrl && isValidImageUrl(avatarUrl) && !contactImgFailed);
   const displaySecs = isPlaying ? currentTime : (effectiveDuration > 0 ? effectiveDuration : (durationHint && durationHint > 0 ? durationHint : 0));
@@ -302,52 +296,73 @@ function VoiceNotePlayer({
       <audio
         ref={audioRef}
         src={audioUrl}
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={handleLoadedMetadata}
         onEnded={handleEnded}
+        onError={() => setIsPlaying(false)}
         preload="metadata"
       />
 
-      {/* Main player row */}
-      <div className="flex items-center gap-2.5">
-        {/* Outbound Left Side: DP (avatar) with mic badge OR Speed Pill when playing */}
-        {isOutbound && (
-          <div className="shrink-0 flex items-center justify-center">
-            {isSpeedPillActive ? (
-              <button
-                type="button"
-                onClick={handleCycleSpeed}
-                className={cn(
-                  "w-11 h-8 rounded-full font-bold text-xs flex items-center justify-center transition-all cursor-pointer shadow-xs select-none",
-                  isDark
-                    ? "bg-black/50 hover:bg-black/70 text-white border border-white/10"
-                    : "bg-black/15 hover:bg-black/25 text-slate-800 border border-black/10"
+      {/* Main player row: [Avatar OR Speed Pill] -> [Play Button] -> [Waveform Scrubber] */}
+      <div className="flex items-center gap-2">
+        {/* Left Side: Avatar with mic badge OR Speed Pill when playing */}
+        <div className="shrink-0 flex items-center justify-center">
+          {isSpeedPillActive ? (
+            <button
+              type="button"
+              onClick={handleCycleSpeed}
+              className={cn(
+                "w-10 h-8 rounded-full font-bold text-xs flex items-center justify-center transition-all cursor-pointer shadow-xs select-none",
+                isDark
+                  ? "bg-black/50 hover:bg-black/70 text-white border border-white/10"
+                  : "bg-black/15 hover:bg-black/25 text-slate-800 border border-black/10"
+              )}
+              title="Cycle playback speed (1x, 1.5x, 2x)"
+            >
+              {speed}x
+            </button>
+          ) : isOutbound ? (
+            /* Outbound (Me): Linked WhatsApp Avatar with mic badge */
+            <div className="relative w-9 h-9">
+              <div className="w-9 h-9 rounded-full bg-emerald-700 text-white flex items-center justify-center font-bold text-xs shadow-xs overflow-hidden">
+                {hasSenderAvatar ? (
+                  <img
+                    src={senderAvatarUrl!}
+                    alt=""
+                    className="w-full h-full object-cover"
+                    onError={() => setSenderImgFailed(true)}
+                  />
+                ) : (
+                  <User className="w-4 h-4 text-white/90" />
                 )}
-                title="Cycle playback speed (1x, 1.5x, 2x)"
-              >
-                {speed}x
-              </button>
-            ) : (
-              <div className="relative w-9 h-9">
-                <div className="w-9 h-9 rounded-full bg-emerald-800 text-white flex items-center justify-center font-bold text-xs shadow-xs overflow-hidden">
-                  {hasSenderAvatar ? (
-                    <img
-                      src={senderAvatarUrl!}
-                      alt=""
-                      className="w-full h-full object-cover"
-                      onError={() => setSenderImgFailed(true)}
-                    />
-                  ) : (
-                    <User className="w-4 h-4 text-white/90" />
-                  )}
-                </div>
-                <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-[#00a884] text-white flex items-center justify-center shadow-xs border-2 border-[#D9FDD3] dark:border-[#005c4b]">
-                  <Mic className="w-2 h-2 fill-current" />
-                </div>
               </div>
-            )}
-          </div>
-        )}
+              <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-[#00a884] text-white flex items-center justify-center shadow-xs border-2 border-[#D9FDD3] dark:border-[#005c4b]">
+                <Mic className="w-2 h-2 fill-current" />
+              </div>
+            </div>
+          ) : (
+            /* Inbound (Contact): Contact Avatar with mic badge */
+            <div className="relative w-9 h-9">
+              <div className="w-9 h-9 rounded-full bg-slate-300 dark:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center justify-center font-bold text-xs shadow-xs overflow-hidden">
+                {hasContactAvatar ? (
+                  <img
+                    src={avatarUrl!}
+                    alt=""
+                    className="w-full h-full object-cover"
+                    onError={() => setContactImgFailed(true)}
+                  />
+                ) : (
+                  <span>{(contactName || "U").charAt(0).toUpperCase()}</span>
+                )}
+              </div>
+              <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-[#00a884] text-white flex items-center justify-center shadow-xs border-2 border-white dark:border-[#202c33]">
+                <Mic className="w-2 h-2 fill-current" />
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Play / Pause button */}
         <button
@@ -365,85 +380,42 @@ function VoiceNotePlayer({
           )}
         </button>
 
-        {/* Waveform Scrubber with Middle-Center Dot (Real WhatsApp Web Image 2) */}
+        {/* Waveform Scrubber with Middle-Center Dot (Real WhatsApp Web Image 6) */}
         <div
           onClick={handleWaveformSeek}
-          className="relative min-w-0 flex-1 h-8 flex items-center cursor-pointer select-none overflow-visible"
+          className="relative min-w-0 flex-1 h-7 flex items-center cursor-pointer select-none group px-1"
           title="Click to seek"
         >
-          <svg
-            viewBox="0 0 220 32"
-            className="w-full h-8 overflow-visible"
-            preserveAspectRatio="none"
-          >
-            {/* Waveform vertical bars perfectly centered at y = 16 */}
+          {/* Waveform vertical bars */}
+          <div className="w-full flex items-center justify-between gap-[2px] h-5 pointer-events-none">
             {WAVEFORM_BARS.map((h, idx) => {
-              const x = 6 + idx * (208 / (WAVEFORM_BARS.length - 1));
-              const isPlayed = progressRatio >= idx / WAVEFORM_BARS.length;
+              const barProgress = idx / (WAVEFORM_BARS.length - 1);
+              const isPlayed = progressRatio >= barProgress;
+              const barHeight = Math.max(4, Math.round((h / 24) * 20));
               return (
-                <line
+                <div
                   key={idx}
-                  x1={x}
-                  y1={16 - h / 2}
-                  x2={x}
-                  y2={16 + h / 2}
-                  stroke={isPlayed ? playedColor : unplayedColor}
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  className="transition-colors duration-100"
+                  className={cn(
+                    "flex-1 rounded-full transition-colors duration-100",
+                    isPlayed
+                      ? (isDark ? "bg-[#53bdeb]" : "bg-[#00a884]")
+                      : (isDark ? "bg-[#8696a0]/40" : "bg-black/25")
+                  )}
+                  style={{ height: `${barHeight}px` }}
                 />
               );
             })}
-
-            {/* Scrubber round dot - strictly locked to middle center (y = 16) */}
-            <circle
-              cx={6 + progressRatio * 208}
-              cy="16"
-              r="6"
-              fill={playedColor}
-              className="pointer-events-none drop-shadow-sm transition-[cx] duration-100 ease-linear"
-            />
-          </svg>
-        </div>
-
-        {/* Inbound: Contact Avatar with mic badge on right OR speed pill when playing */}
-        {!isOutbound && (
-          <div className="shrink-0 flex items-center justify-center mr-0.5">
-            {isSpeedPillActive ? (
-              <button
-                type="button"
-                onClick={handleCycleSpeed}
-                className={cn(
-                  "w-11 h-8 rounded-full font-bold text-xs flex items-center justify-center transition-all cursor-pointer shadow-xs select-none",
-                  isDark
-                    ? "bg-black/50 hover:bg-black/70 text-white border border-white/10"
-                    : "bg-black/15 hover:bg-black/25 text-slate-800 border border-black/10"
-                )}
-                title="Cycle playback speed (1x, 1.5x, 2x)"
-              >
-                {speed}x
-              </button>
-            ) : (
-              <div className="relative w-9 h-9">
-                <div className="w-9 h-9 rounded-full bg-slate-300 dark:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center justify-center font-bold text-xs shadow-xs overflow-hidden">
-                  {hasContactAvatar ? (
-                    <img
-                      src={avatarUrl!}
-                      alt=""
-                      className="w-full h-full object-cover"
-                      onError={() => setContactImgFailed(true)}
-                    />
-                  ) : (
-                    <span>{(contactName || "U").charAt(0).toUpperCase()}</span>
-                  )}
-                </div>
-                <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-[#00a884] text-white flex items-center justify-center shadow-xs border-2 border-white dark:border-[#202c33]">
-                  <Mic className="w-2 h-2 fill-current" />
-                </div>
-              </div>
-            )}
           </div>
-        )}
+
+          {/* Scrubber round dot - strictly locked to middle center (top-1/2 -translate-y-1/2) */}
+          <div
+            className={cn(
+              "absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 rounded-full pointer-events-none transition-[left] duration-100 shadow-xs",
+              isDark ? "bg-[#53bdeb]" : "bg-[#00a884]"
+            )}
+            style={{ left: `${Math.max(1, Math.min(99, progressRatio * 100))}%` }}
+          />
+        </div>
       </div>
 
       {/* Bottom status row: Duration alone on left, Time + Double Tick on right */}
@@ -773,7 +745,7 @@ function MessageBubbleContainer({
             data-msg-menu="true"
             className={cn(
               "absolute z-50 w-44 rounded-xl shadow-2xl border py-1.5 animate-in fade-in zoom-in-95 duration-100 select-none",
-              isNearBottom ? "bottom-8" : "top-8",
+              isNearBottom ? "bottom-full mb-1.5" : "top-full mt-1.5",
               isOutbound ? "right-1" : "left-1",
               isDark ? "bg-[#233138] border-white/10 text-slate-100" : "bg-white border-slate-200 text-slate-800"
             )}
@@ -863,7 +835,8 @@ function MessageBubbleContainer({
               onReact(msg.reaction!);
             }}
             className={cn(
-              "absolute -bottom-2 right-2 px-1.5 py-0.5 rounded-full text-xs shadow-sm border flex items-center gap-1 z-20 cursor-pointer transition-transform hover:scale-110 select-none",
+              "absolute -bottom-2.5 px-1.5 py-0.5 rounded-full text-xs shadow-sm border flex items-center gap-1 z-20 cursor-pointer transition-transform hover:scale-110 select-none",
+              isOutbound ? "right-2" : "left-2",
               isDark ? "bg-[#202c33] border-white/10 text-white" : "bg-white border-slate-200 text-slate-800"
             )}
             title="Click to remove reaction"
@@ -1674,10 +1647,16 @@ export default function WhatsAppPage() {
     const cleanPhone = activeChat.phone.replace(/[^0-9]/g, "");
 
     let textPayload = text;
+    let quotedMessageId: string | undefined = undefined;
+    let quotedText: string | undefined = undefined;
+    let quotedFromMe: boolean | undefined = undefined;
+
     if (replyingToMessage) {
+      quotedMessageId = replyingToMessage.metaMessageId || replyingToMessage.id;
+      quotedText = replyingToMessage.text?.slice(0, 100) || replyingToMessage.fileName || "Media";
+      quotedFromMe = replyingToMessage.sender === "outbound";
       const quotedSender = replyingToMessage.sender === "outbound" ? "You" : activeChat.contactName;
-      const quotedSnippet = replyingToMessage.text?.slice(0, 80) || replyingToMessage.fileName || "Media";
-      textPayload = `> *${quotedSender}*: ${quotedSnippet}\n\n${text}`;
+      textPayload = `> *${quotedSender}*: ${quotedText}\n\n${text}`;
       setReplyingToMessage(null);
     }
 
@@ -1686,7 +1665,7 @@ export default function WhatsAppPage() {
     const optimisticMsg: WhatsAppMessage = {
       id: tempId,
       sender: "outbound",
-      text,
+      text: textPayload,
       timestamp: "Today",
       timeLabel: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       dateGroup: "Today",
@@ -1701,8 +1680,12 @@ export default function WhatsAppPage() {
     try {
       const res = await api.sendWhatsAppMessage({
         phone_number: cleanPhone,
-        message: textPayload,
-        contact_id: activeChat.contact_id
+        message: text,
+        contact_id: activeChat.contact_id,
+        quoted_message_id: quotedMessageId,
+        quoted_text: quotedText,
+        quoted_from_me: quotedFromMe,
+        crm_display_message: textPayload
       });
 
       if (res && res.status === "success") {
@@ -2402,7 +2385,7 @@ export default function WhatsAppPage() {
                     </div>
                   ) : (
                     messages.map((msg, idx) => {
-                      const isNearBottom = idx >= messages.length - 4;
+                      const isNearBottom = idx >= Math.max(0, messages.length - 6);
                       const isOutbound = msg.sender === "outbound";
                       const cleanText = cleanDisplayCaption(msg.text, msg.fileName);
                       const isSticker = msg.attachment?.type === "sticker";
@@ -2675,7 +2658,7 @@ export default function WhatsAppPage() {
                             /* 6. Voice Note (PTT) */
                             <div
                               className={cn(
-                                "rounded-2xl p-2.5 text-sm transition-all shadow-xs w-fit min-w-[280px] sm:min-w-[310px]",
+                                "rounded-2xl p-2.5 pr-6 text-sm transition-all shadow-xs w-fit min-w-[285px] sm:min-w-[315px]",
                                 isOutbound
                                   ? (isDark ? "bg-[#005c4b] border border-emerald-600/30 text-white rounded-tr-xs" : "bg-[#D9FDD3] border border-[#C2EBC0] text-slate-900 rounded-tr-xs shadow-2xs")
                                   : (isDark ? "bg-[#202c33] border border-white/10 text-white rounded-tl-xs" : "bg-white border border-slate-200 text-slate-900 rounded-tl-xs shadow-2xs")
@@ -2706,8 +2689,8 @@ export default function WhatsAppPage() {
                               return (
                                 <div
                                   className={cn(
-                                    "rounded-2xl px-3 py-2 text-sm leading-relaxed transition-all shadow-xs w-fit",
-                                    parsed.hasQuote ? "min-w-[125px] sm:min-w-[135px]" : "min-w-[90px]",
+                                    "rounded-2xl px-3 py-2 pr-7 text-sm leading-relaxed transition-all shadow-xs w-fit",
+                                    parsed.hasQuote ? "min-w-[195px] sm:min-w-[220px]" : "min-w-[90px]",
                                     isOutbound
                                       ? (isDark
                                           ? "bg-[#005c4b] border border-emerald-600/30 text-white rounded-tr-xs"
@@ -2739,47 +2722,31 @@ export default function WhatsAppPage() {
                                     </div>
                                   )}
 
-                                  {/* Quoted Tag UI matching real WhatsApp Web (Image 3) */}
+                                  {/* Quoted Tag UI matching real WhatsApp Web (Image 10) */}
                                   {parsed.hasQuote && (
                                     <div className={cn(
-                                      "w-full rounded-[6px] px-2.5 py-1 mb-1.5 border-l-[3.5px] text-xs select-none transition-all overflow-hidden",
+                                      "w-full min-w-[180px] sm:min-w-[205px] rounded-[6px] px-2.5 py-1.5 mb-1.5 border-l-[3.5px] text-xs select-none transition-all overflow-hidden",
                                       isOutbound
                                         ? (isDark
-                                            ? "bg-black/20 border-l-[#53bdeb]"
+                                            ? "bg-black/25 border-l-[#53bdeb]"
                                             : "bg-black/[0.06] border-l-[#00a884]")
                                         : (isDark
-                                            ? "bg-black/20 border-l-[#00a884]"
+                                            ? "bg-black/25 border-l-[#00a884]"
                                             : "bg-black/[0.06] border-l-[#00a884]")
                                     )}>
-                                      {parsed.quotedText && parsed.quotedText.length <= 18 ? (
-                                        <div className="flex items-center gap-1.5 leading-snug">
-                                          <span className={cn(
-                                            "font-semibold text-[12px] shrink-0",
-                                            isOutbound
-                                              ? (isDark ? "text-[#53bdeb]" : "text-[#00a884]")
-                                              : "text-[#00a884]"
-                                          )}>
-                                            {parsed.quotedSender}:
-                                          </span>
-                                          <span className="truncate text-[12px] opacity-85 text-slate-800 dark:text-slate-200">
-                                            {parsed.quotedText}
-                                          </span>
-                                        </div>
-                                      ) : (
-                                        <div className="flex flex-col leading-snug gap-0.5">
-                                          <span className={cn(
-                                            "font-semibold text-[12px] truncate",
-                                            isOutbound
-                                              ? (isDark ? "text-[#53bdeb]" : "text-[#00a884]")
-                                              : "text-[#00a884]"
-                                          )}>
-                                            {parsed.quotedSender}
-                                          </span>
-                                          <span className="text-[12px] line-clamp-1 break-words opacity-85 text-slate-800 dark:text-slate-200">
-                                            {parsed.quotedText}
-                                          </span>
-                                        </div>
-                                      )}
+                                      <div className="flex flex-col leading-snug gap-0.5">
+                                        <span className={cn(
+                                          "font-semibold text-[12px] truncate",
+                                          isOutbound
+                                            ? (isDark ? "text-[#53bdeb]" : "text-[#00a884]")
+                                            : "text-[#00a884]"
+                                        )}>
+                                          {parsed.quotedSender}
+                                        </span>
+                                        <span className="text-[12px] line-clamp-2 break-words opacity-85 text-slate-800 dark:text-slate-200">
+                                          {parsed.quotedText}
+                                        </span>
+                                      </div>
                                     </div>
                                   )}
 

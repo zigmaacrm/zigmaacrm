@@ -103,6 +103,10 @@ class SendWhatsAppMessageRequest(BaseModel):
     file_base64: Optional[str] = None
     file_name: Optional[str] = None
     file_type: Optional[str] = None
+    quoted_message_id: Optional[str] = None
+    quoted_text: Optional[str] = None
+    quoted_from_me: Optional[bool] = None
+    crm_display_message: Optional[str] = None
 
 class WhatsAppMessageOut(BaseModel):
     id: str
@@ -205,7 +209,10 @@ async def send_whatsapp_message(
                         "message": payload.message or "",
                         "file_base64": payload.file_base64,
                         "file_name": payload.file_name,
-                        "file_type": payload.file_type
+                        "file_type": payload.file_type,
+                        "quoted_message_id": payload.quoted_message_id,
+                        "quoted_text": payload.quoted_text,
+                        "quoted_from_me": payload.quoted_from_me
                     }
                     send_res = await client.post(
                         f"{target}/send",
@@ -316,7 +323,11 @@ async def send_whatsapp_message(
         except Exception as save_err:
             logger.error(f"[OUTBOUND FILE SAVE ERROR]: {save_err}")
 
-    body_text = payload.message.strip() if has_text else (f"📎 {saved_file_name or 'Document'}" if has_file else "")
+    body_text = (
+        payload.crm_display_message.strip()
+        if payload.crm_display_message
+        else (payload.message.strip() if has_text else (f"📎 {saved_file_name or 'Document'}" if has_file else ""))
+    )
 
     wa_message = WhatsAppMessage(
         organization_id=org_id,

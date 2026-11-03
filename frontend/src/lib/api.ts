@@ -3112,6 +3112,10 @@ export const zigmaaApi = {
     file_base64?: string;
     file_name?: string;
     file_type?: string;
+    quoted_message_id?: string;
+    quoted_text?: string;
+    quoted_from_me?: boolean;
+    crm_display_message?: string;
   }): Promise<any> {
     try {
       const cleanPhone = payload.phone_number.replace(/[^0-9]/g, "");
