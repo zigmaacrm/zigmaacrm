@@ -16,7 +16,7 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
 const PORT = process.env.PORT || 5001;
-const BACKEND_BASE = process.env.FASTAPI_BASE_URL || (process.env.RENDER ? 'https://zigmaacrm-backend.onrender.com' : 'http://localhost:8000');
+const BACKEND_BASE = process.env.FASTAPI_BASE_URL || (process.env.RENDER ? 'https://zigmaacrm-backend.onrender.com' : 'http://127.0.0.1:8000');
 const FASTAPI_WEBHOOK_URL = process.env.FASTAPI_WEBHOOK_URL || `${BACKEND_BASE}/api/v1/webhooks/whatsapp/inbound-qr`;
 const FASTAPI_BULK_SYNC_URL = process.env.FASTAPI_BULK_SYNC_URL || `${BACKEND_BASE}/api/v1/whatsapp/contacts/bulk-sync`;
 const FASTAPI_STATUS_UPDATE_URL = process.env.FASTAPI_STATUS_UPDATE_URL || `${BACKEND_BASE}/api/v1/webhooks/whatsapp/status-update`;
@@ -30,6 +30,29 @@ let connectedPhone = null;
 let connectedName = null;
 let isStarting = false;
 
+// In-Memory Caches
+const lidToPhoneMap = new Map();
+const msgStore = new Map();
+
+function loadLidMappings() {
+  if (!fs.existsSync(AUTH_DIR)) return;
+  try {
+    const files = fs.readdirSync(AUTH_DIR);
+    for (const f of files) {
+      if (f.startsWith('lid-mapping-') && !f.includes('_reverse') && f.endsWith('.json')) {
+        const phone = f.replace('lid-mapping-', '').replace('.json', '');
+        try {
+          const lid = JSON.parse(fs.readFileSync(path.join(AUTH_DIR, f), 'utf8'));
+          if (lid) lidToPhoneMap.set(String(lid).trim(), String(phone).trim());
+        } catch (_) {}
+      }
+    }
+    console.log(`[WhatsApp Gateway] Indexed ${lidToPhoneMap.size} LID to Phone mappings in memory.`);
+  } catch (err) {
+    console.error('[WhatsApp Gateway] Failed to index LID mappings:', err.message);
+  }
+}
+
 // Contacts buffer
 let syncTimeout = null;
 const pendingContacts = new Map();
@@ -39,7 +62,12 @@ const logger = pino({ level: 'silent' });
 function resolvePhoneFromJid(jid) {
   if (!jid) return null;
   const str = String(jid).trim();
-  if (str === 'status@broadcast' || str.endsWith('@g.us') || str.endsWith('@broadcast')) {
+  if (
+    str === 'status@broadcast' ||
+    str.endsWith('@g.us') ||
+    str.endsWith('@broadcast') ||
+    str.endsWith('@newsletter')
+  ) {
     return null;
   }
   if (str.endsWith('@s.whatsapp.net') || str.endsWith('@c.us')) {
@@ -47,44 +75,80 @@ function resolvePhoneFromJid(jid) {
     return raw && raw.length >= 7 ? raw : null;
   }
   if (str.endsWith('@lid')) {
-    const cleanLid = str.split('@')[0].split(':')[0];
+    const cleanLid = str.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+    if (lidToPhoneMap.has(cleanLid)) {
+      return lidToPhoneMap.get(cleanLid);
+    }
     const revFile = path.join(AUTH_DIR, `lid-mapping-${cleanLid}_reverse.json`);
     if (fs.existsSync(revFile)) {
       try {
         const pn = JSON.parse(fs.readFileSync(revFile, 'utf8'));
-        if (pn) return pn.toString().replace(/[^0-9]/g, '');
+        if (pn) {
+          const cleanPn = String(pn).replace(/[^0-9]/g, '');
+          lidToPhoneMap.set(cleanLid, cleanPn);
+          return cleanPn;
+        }
       } catch (_) {}
     }
+    // Fallback to LID digits so inbound messages are NEVER skipped
+    return cleanLid && cleanLid.length >= 7 ? cleanLid : null;
   }
-  return null;
+  const clean = str.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+  return clean && clean.length >= 7 ? clean : null;
 }
 
 function extractMessageBody(m) {
   if (!m) return '';
-  const msg =
-    m.ephemeralMessage?.message ||
-    m.viewOnceMessage?.message ||
-    m.viewOnceMessageV2?.message ||
-    m.documentWithCaptionMessage?.message ||
-    m;
+  let msg = m;
+  // Deep unwrap all Baileys nested message wrappers
+  while (
+    msg.ephemeralMessage?.message ||
+    msg.viewOnceMessage?.message ||
+    msg.viewOnceMessageV2?.message ||
+    msg.documentWithCaptionMessage?.message ||
+    msg.editedMessage?.message?.protocolMessage?.editedMessage ||
+    msg.deviceSentMessage?.message
+  ) {
+    msg =
+      msg.ephemeralMessage?.message ||
+      msg.viewOnceMessage?.message ||
+      msg.viewOnceMessageV2?.message ||
+      msg.documentWithCaptionMessage?.message ||
+      msg.editedMessage?.message?.protocolMessage?.editedMessage ||
+      msg.deviceSentMessage?.message;
+  }
 
-  return (
-    msg.conversation ||
-    msg.extendedTextMessage?.text ||
-    msg.imageMessage?.caption ||
-    msg.videoMessage?.caption ||
-    msg.documentMessage?.caption ||
-    msg.buttonsResponseMessage?.selectedDisplayText ||
-    msg.listResponseMessage?.title ||
-    msg.templateButtonReplyMessage?.selectedId ||
-    (msg.imageMessage ? '[Image Attachment]' : '') ||
-    (msg.documentMessage ? '[Document Attachment]' : '') ||
-    (msg.audioMessage ? '[Voice Note]' : '') ||
-    (msg.stickerMessage ? '[Sticker]' : '') ||
-    (msg.contactMessage ? '[Contact Card]' : '') ||
-    (msg.locationMessage ? '[Location]' : '') ||
-    ''
-  );
+  if (typeof msg.conversation === 'string' && msg.conversation.trim()) {
+    return msg.conversation.trim();
+  }
+  if (typeof msg.extendedTextMessage?.text === 'string' && msg.extendedTextMessage.text.trim()) {
+    return msg.extendedTextMessage.text.trim();
+  }
+  if (typeof msg.imageMessage?.caption === 'string' && msg.imageMessage.caption.trim()) {
+    return msg.imageMessage.caption.trim();
+  }
+  if (typeof msg.videoMessage?.caption === 'string' && msg.videoMessage.caption.trim()) {
+    return msg.videoMessage.caption.trim();
+  }
+  if (typeof msg.documentMessage?.caption === 'string' && msg.documentMessage.caption.trim()) {
+    return msg.documentMessage.caption.trim();
+  }
+  if (msg.buttonsResponseMessage?.selectedDisplayText) {
+    return msg.buttonsResponseMessage.selectedDisplayText;
+  }
+  if (msg.listResponseMessage?.title) {
+    return msg.listResponseMessage.title;
+  }
+  if (msg.templateButtonReplyMessage?.selectedId) {
+    return msg.templateButtonReplyMessage.selectedId;
+  }
+  if (msg.imageMessage) return '[Image Attachment]';
+  if (msg.documentMessage) return '[Document Attachment]';
+  if (msg.audioMessage) return '[Voice Note]';
+  if (msg.stickerMessage) return '[Sticker]';
+  if (msg.contactMessage) return '[Contact Card]';
+  if (msg.locationMessage) return '[Location]';
+  return '';
 }
 
 function scheduleContactSync() {
@@ -128,6 +192,7 @@ async function initWhatsApp(forceClean = false) {
     if (!fs.existsSync(AUTH_DIR)) {
       fs.mkdirSync(AUTH_DIR, { recursive: true });
     }
+    loadLidMappings();
 
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
     const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307], isLatest: true }));
@@ -141,7 +206,10 @@ async function initWhatsApp(forceClean = false) {
       syncFullHistory: false,
       markOnlineOnConnect: true,
       connectTimeoutMs: 60000,
-      defaultQueryTimeoutMs: 60000
+      defaultQueryTimeoutMs: 60000,
+      getMessage: async (key) => {
+        return msgStore.get(key.id) || undefined;
+      }
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -241,15 +309,30 @@ async function initWhatsApp(forceClean = false) {
     // 2. Live Messages (Both Inbound from customers and Outbound from web/mobile)
     sock.ev.on('messages.upsert', async (chatUpdate) => {
       try {
-        const { messages } = chatUpdate;
+        const { messages, type } = chatUpdate;
         if (!messages || !messages.length) return;
 
         for (const msg of messages) {
+          // Cache message in memory for Baileys getMessage / retry decryptor
+          if (msg.key?.id && msg.message) {
+            msgStore.set(msg.key.id, msg.message);
+            if (msgStore.size > 2000) {
+              const firstKey = msgStore.keys().next().value;
+              msgStore.delete(firstKey);
+            }
+          }
+
           // Strictly ignore outbound messages sent by us so CRM messages are never duplicated
           if (msg.key?.fromMe) continue;
 
           const remoteJid = msg.key?.remoteJid || '';
-          if (!remoteJid || remoteJid === 'status@broadcast' || remoteJid.endsWith('@g.us') || remoteJid.endsWith('@broadcast')) {
+          if (
+            !remoteJid ||
+            remoteJid === 'status@broadcast' ||
+            remoteJid.endsWith('@g.us') ||
+            remoteJid.endsWith('@broadcast') ||
+            remoteJid.endsWith('@newsletter')
+          ) {
             continue;
           }
 
@@ -260,25 +343,28 @@ async function initWhatsApp(forceClean = false) {
           if (!phone && msg.key?.remoteJidAlt) {
             phone = resolvePhoneFromJid(msg.key.remoteJidAlt);
           }
+          if (!phone && remoteJid.endsWith('@lid')) {
+            const cleanLid = remoteJid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+            if (cleanLid) phone = cleanLid;
+          }
 
           if (!phone) {
             console.log(`[WhatsApp Message Skipped] Cannot resolve phone from JID: ${remoteJid}`);
             continue;
           }
 
-          const isFromMe = Boolean(msg.key?.fromMe);
           const contactName = msg.pushName || '';
           const body = extractMessageBody(msg.message);
 
           if (!body && !msg.message?.imageMessage && !msg.message?.documentMessage && !msg.message?.audioMessage) {
+            console.log(`[WhatsApp Inbound Notice] Empty body from ${phone}, message keys:`, Object.keys(msg.message || {}));
             continue;
           }
 
-          const direction = isFromMe ? 'OUTBOUND' : 'INBOUND';
-          console.log(`[WhatsApp ${direction}] Phone: ${phone} (${contactName}) - "${body.slice(0, 50)}"`);
+          console.log(`[WhatsApp INBOUND] Phone: ${phone} (${contactName}) - "${(body || '').slice(0, 50)}"`);
 
           try {
-            await fetch(FASTAPI_WEBHOOK_URL, {
+            const res = await fetch(FASTAPI_WEBHOOK_URL, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -287,11 +373,16 @@ async function initWhatsApp(forceClean = false) {
                 message_body: body || '[Attachment Received]',
                 meta_message_id: msg.key.id || `wamid.qr_${Date.now()}`,
                 timestamp: Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000),
-                direction: direction
+                direction: 'INBOUND'
               })
             });
+            if (!res.ok) {
+              console.error(`[WhatsApp Gateway] Webhook returned status ${res.status}: ${await res.text()}`);
+            } else {
+              console.log(`[WhatsApp Inbound Forwarded] Successfully delivered to CRM for ${phone}`);
+            }
           } catch (webhookErr) {
-            console.error('[WhatsApp Gateway] Failed to forward message to FastAPI:', webhookErr.message);
+            console.error(`[WhatsApp Gateway] Failed to forward message to FastAPI (${FASTAPI_WEBHOOK_URL}):`, webhookErr.message);
           }
         }
       } catch (err) {
