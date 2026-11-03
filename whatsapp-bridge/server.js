@@ -158,6 +158,7 @@ let isStarting = false;
 // In-Memory Caches
 const lidToPhoneMap = new Map();
 const msgStore = new Map();
+const sentFromCrmMsgIds = new Set();
 
 function loadLidMappings() {
   if (!fs.existsSync(AUTH_DIR)) return;
@@ -666,8 +667,13 @@ async function initWhatsApp(forceClean = false) {
             }
           }
 
-          // Strictly ignore outbound messages sent by us so CRM messages are never duplicated
-          if (msg.key?.fromMe) continue;
+          const isFromMe = Boolean(msg.key?.fromMe);
+
+          // If this message was sent directly by this CRM server's /send endpoint,
+          // it was ALREADY saved into the database by FastAPI during that HTTP request.
+          if (isFromMe && msg.key?.id && sentFromCrmMsgIds.has(msg.key.id)) {
+            continue;
+          }
 
           const remoteJid = msg.key?.remoteJid || '';
           if (
@@ -699,12 +705,12 @@ async function initWhatsApp(forceClean = false) {
 
           const rawM = unwrapMessage(msg.message);
 
-          // Handle incoming message reaction
+          // Handle message reaction (both inbound and from web/phone)
           if (rawM?.reactionMessage) {
             const rMsg = rawM.reactionMessage;
             const targetId = rMsg.key?.id;
             const emoji = rMsg.text || '';
-            console.log(`[WhatsApp Reaction Received] Target ID: ${targetId}, Emoji: "${emoji}", From: ${phone}`);
+            console.log(`[WhatsApp Reaction Received] Target ID: ${targetId}, Emoji: "${emoji}", Phone: ${phone}`);
             if (targetId) {
               try {
                 await fetch(`${BACKEND_BASE}/api/v1/webhooks/whatsapp/reaction`, {
@@ -729,7 +735,7 @@ async function initWhatsApp(forceClean = false) {
             const targetId = pMsg.key?.id;
             // Type 0 = REVOKE (Delete for everyone)
             if (pMsg.type === 0 && targetId) {
-              console.log(`[WhatsApp Revoke Received] Target ID: ${targetId}, From: ${phone}`);
+              console.log(`[WhatsApp Revoke Received] Target ID: ${targetId}, Phone: ${phone}`);
               try {
                 await fetch(`${BACKEND_BASE}/api/v1/webhooks/whatsapp/revoke`, {
                   method: 'POST',
@@ -747,7 +753,7 @@ async function initWhatsApp(forceClean = false) {
             // Type 14 = MESSAGE_EDIT
             if (pMsg.type === 14 && targetId && pMsg.editedMessage) {
               const editedText = extractMessageBody(pMsg.editedMessage);
-              console.log(`[WhatsApp Edit Received] Target ID: ${targetId}, New text: "${editedText}", From: ${phone}`);
+              console.log(`[WhatsApp Edit Received] Target ID: ${targetId}, New text: "${editedText}", Phone: ${phone}`);
               if (editedText) {
                 try {
                   await fetch(`${BACKEND_BASE}/api/v1/webhooks/whatsapp/edit`, {
@@ -767,7 +773,7 @@ async function initWhatsApp(forceClean = false) {
             }
           }
 
-          const contactName = msg.pushName || '';
+          const contactName = isFromMe ? null : (msg.pushName || '');
           let mediaInfo = null;
           if (rawM?.imageMessage || rawM?.documentMessage || rawM?.audioMessage || rawM?.videoMessage || rawM?.stickerMessage) {
             mediaInfo = await decryptAndSaveMedia(msg);
@@ -787,12 +793,16 @@ async function initWhatsApp(forceClean = false) {
             if (msg.messageStubType) {
               console.log(`[WhatsApp Decrypt Waiting] Stub type: ${msg.messageStubType}, Phone: ${phone}, Params:`, msg.messageStubParameters || []);
             } else {
-              console.log(`[WhatsApp Inbound Notice] Empty body from ${phone}, message keys:`, Object.keys(msg.message || {}));
+              console.log(`[WhatsApp Notice] Empty body for ${phone}, message keys:`, Object.keys(msg.message || {}));
             }
             continue;
           }
 
-          console.log(`[WhatsApp INBOUND] Phone: ${phone} (${contactName}) - "${(body || '').slice(0, 50)}" [Type: ${mediaInfo?.message_type || 'text'}]`);
+          let deliveryStatus = 'SENT';
+          if (msg.status === 4) deliveryStatus = 'DELIVERED';
+          if (msg.status === 5) deliveryStatus = 'READ';
+
+          console.log(`[WhatsApp ${isFromMe ? 'OUTBOUND (Web/Linked)' : 'INBOUND'}] Phone: ${phone}${contactName ? ` (${contactName})` : ''} - "${(body || '').slice(0, 50)}" [Type: ${mediaInfo?.message_type || 'text'}]`);
 
           try {
             const res = await fetch(FASTAPI_WEBHOOK_URL, {
@@ -804,7 +814,8 @@ async function initWhatsApp(forceClean = false) {
                 message_body: body || '[Attachment Received]',
                 meta_message_id: msg.key.id || `wamid.qr_${Date.now()}`,
                 timestamp: Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000),
-                direction: 'INBOUND',
+                direction: isFromMe ? 'OUTBOUND' : 'INBOUND',
+                status: isFromMe ? deliveryStatus : 'DELIVERED',
                 message_type: mediaInfo?.message_type || 'text',
                 media_url: mediaInfo?.media_url || null,
                 file_name: mediaInfo?.file_name || null,
@@ -815,7 +826,7 @@ async function initWhatsApp(forceClean = false) {
             if (!res.ok) {
               console.error(`[WhatsApp Gateway] Webhook returned status ${res.status}: ${await res.text()}`);
             } else {
-              console.log(`[WhatsApp Inbound Forwarded] Successfully delivered to CRM for ${phone}`);
+              console.log(`[WhatsApp ${isFromMe ? 'Outbound' : 'Inbound'} Forwarded] Successfully delivered to CRM for ${phone}`);
             }
           } catch (webhookErr) {
             console.error(`[WhatsApp Gateway] Failed to forward message to FastAPI (${FASTAPI_WEBHOOK_URL}):`, webhookErr.message);
@@ -835,28 +846,32 @@ async function initWhatsApp(forceClean = false) {
           if (!id) continue;
 
           // Asynchronously decrypted message (e.g. from retry receipt or placeholder resend)
-          if (u.update?.message && !u.key?.fromMe) {
-            const remoteJid = u.key?.remoteJid || '';
-            const phone = resolvePhoneFromJid(remoteJid);
-            const body = extractMessageBody(u.update.message);
-            if (phone && (body || u.update.message?.imageMessage || u.update.message?.documentMessage)) {
-              console.log(`[WhatsApp Decrypted Inbound] Phone: ${phone} - "${(body || '').slice(0, 50)}"`);
-              try {
-                await fetch(FASTAPI_WEBHOOK_URL, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    phone_number: phone,
-                    contact_name: '',
-                    message_body: body || '[Attachment Received]',
-                    meta_message_id: id,
-                    timestamp: Math.floor(Date.now() / 1000),
-                    direction: 'INBOUND'
-                  })
-                });
-                console.log(`[WhatsApp Decrypted Forwarded] Successfully delivered to CRM for ${phone}`);
-              } catch (decErr) {
-                console.error('[WhatsApp Gateway] Failed to forward decrypted message to FastAPI:', decErr.message);
+          if (u.update?.message) {
+            const isFromMe = Boolean(u.key?.fromMe);
+            if (!(isFromMe && sentFromCrmMsgIds.has(id))) {
+              const remoteJid = u.key?.remoteJid || '';
+              const phone = resolvePhoneFromJid(remoteJid);
+              const body = extractMessageBody(u.update.message);
+              if (phone && (body || u.update.message?.imageMessage || u.update.message?.documentMessage)) {
+                console.log(`[WhatsApp Decrypted ${isFromMe ? 'Outbound' : 'Inbound'}] Phone: ${phone} - "${(body || '').slice(0, 50)}"`);
+                try {
+                  await fetch(FASTAPI_WEBHOOK_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      phone_number: phone,
+                      contact_name: isFromMe ? null : '',
+                      message_body: body || '[Attachment Received]',
+                      meta_message_id: id,
+                      timestamp: Math.floor(Date.now() / 1000),
+                      direction: isFromMe ? 'OUTBOUND' : 'INBOUND',
+                      status: isFromMe ? 'SENT' : 'DELIVERED'
+                    })
+                  });
+                  console.log(`[WhatsApp Decrypted Forwarded] Successfully delivered to CRM for ${phone}`);
+                } catch (decErr) {
+                  console.error('[WhatsApp Gateway] Failed to forward decrypted message to FastAPI:', decErr.message);
+                }
               }
             }
           }
@@ -1082,6 +1097,13 @@ app.post('/send', async (req, res) => {
     }
 
     const messageId = result?.key?.id || `wamid.qr_out_${Date.now()}`;
+    if (messageId) {
+      sentFromCrmMsgIds.add(messageId);
+      if (sentFromCrmMsgIds.size > 2000) {
+        const first = sentFromCrmMsgIds.values().next().value;
+        sentFromCrmMsgIds.delete(first);
+      }
+    }
 
     console.log(`[WhatsApp Outbound Success] To: ${cleanPhone}, ID: ${messageId}${file_base64 ? ` (File: ${file_name || 'attachment'})` : ''}`);
     res.json({
@@ -1120,6 +1142,13 @@ app.post('/api/whatsapp/send-voice', async (req, res) => {
       waveform: pttData.waveform
     });
     const messageId = result?.key?.id || `wamid.voice_${Date.now()}`;
+    if (messageId) {
+      sentFromCrmMsgIds.add(messageId);
+      if (sentFromCrmMsgIds.size > 2000) {
+        const first = sentFromCrmMsgIds.values().next().value;
+        sentFromCrmMsgIds.delete(first);
+      }
+    }
     console.log(`[WhatsApp Voice Note Sent] To: ${cleanPhone}, ID: ${messageId}, Duration: ${pttData.seconds}s, Size: ${pttData.buffer.length} bytes`);
     if (pttData.filePath) {
       setTimeout(() => { try { fs.unlinkSync(pttData.filePath); } catch (_) {} }, 30000);

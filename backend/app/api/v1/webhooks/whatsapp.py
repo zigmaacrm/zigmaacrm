@@ -504,6 +504,7 @@ class InboundQRMessage(BaseModel):
     file_name: Optional[str] = None
     caption: Optional[str] = None
     is_voice_note: Optional[bool] = False
+    status: Optional[str] = None
 
 @router.post("/whatsapp/inbound-qr")
 @router.post("/inbound-qr")
@@ -513,7 +514,7 @@ async def receive_whatsapp_qr_inbound(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Ingests inbound messages from Baileys WhatsApp QR Gateway.
+    Ingests inbound or outbound (from WhatsApp Web / Mobile) messages from Baileys WhatsApp QR Gateway.
     Automatically captures lead/contact, links conversation, and triggers notifications.
     """
     clean_phone = normalize_phone(payload.phone_number)
@@ -566,7 +567,16 @@ async def receive_whatsapp_qr_inbound(
         return {"status": "success", "skipped": "duplicate"}
 
     msg_direction = (payload.direction or "INBOUND").upper()
-    delivery_status = "SENT" if msg_direction == "OUTBOUND" else "DELIVERED"
+    delivery_status = payload.status.upper() if payload.status else ("SENT" if msg_direction == "OUTBOUND" else "DELIVERED")
+
+    # Precise message timestamp to ensure accurate chronological order
+    if payload.timestamp:
+        try:
+            msg_dt = datetime.utcfromtimestamp(payload.timestamp)
+        except Exception:
+            msg_dt = datetime.utcnow()
+    else:
+        msg_dt = datetime.utcnow()
 
     wa_msg = WhatsAppMessage(
         organization_id=default_org_id,
@@ -580,7 +590,9 @@ async def receive_whatsapp_qr_inbound(
         caption=payload.caption,
         is_voice_note=bool(payload.is_voice_note),
         meta_message_id=msg_id,
-        status=delivery_status
+        status=delivery_status,
+        timestamp=msg_dt,
+        created_at=msg_dt
     )
     db.add(wa_msg)
 
@@ -596,18 +608,24 @@ async def receive_whatsapp_qr_inbound(
             .values(status="READ")
         )
 
+    act_notes = (
+        f"💬 WhatsApp Outbound (Web/App): {payload.message_body[:250]}"
+        if msg_direction == "OUTBOUND"
+        else f"💬 WhatsApp Inbound (QR Scan): {payload.message_body[:250]}"
+    )
     act = Activity(
         organization_id=default_org_id,
         contact_id=contact.id if contact else None,
         lead_id=lead.id if lead else None,
         type="NOTE",
-        notes=f"💬 WhatsApp Inbound (QR Scan): {payload.message_body[:250]}",
-        status="COMPLETED"
+        notes=act_notes,
+        status="COMPLETED",
+        created_at=msg_dt
     )
     db.add(act)
 
     await db.commit()
-    logger.info(f"[QR INBOUND PROCESSED] From: {clean_phone} ({display_name}) - Msg: {payload.message_body[:40]}")
+    logger.info(f"[QR {msg_direction} PROCESSED] To/From: {clean_phone} ({display_name}) - Msg: {payload.message_body[:40]}")
     return {"status": "success", "contact_id": contact.id, "is_new_lead": is_new_lead}
 
 @router.post("/whatsapp/status-update")
