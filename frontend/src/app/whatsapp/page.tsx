@@ -1641,14 +1641,6 @@ export default function WhatsAppPage() {
                         <h3 className={cn("font-bold text-sm sm:text-base truncate leading-snug shrink min-w-0", isDark ? "text-white" : "text-slate-900")}>
                           {activeChat.contactName}
                         </h3>
-                        <span className={cn(
-                          "text-[10px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap shrink-0",
-                          isDark
-                            ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                            : "bg-emerald-50 text-emerald-700 border-emerald-200"
-                        )}>
-                          {activeChat.dealStage}
-                        </span>
                       </div>
                       <div className={cn(
                         "flex items-center gap-2 text-xs truncate mt-0.5",
