@@ -175,7 +175,7 @@ function cleanDisplayCaption(text?: string | null, fileName?: string | null): st
 }
 
 const WAVEFORM_BARS = [
-  6, 10, 16, 12, 18, 22, 16, 12, 20, 24, 18, 10, 14, 20, 16, 10, 14, 22, 18, 12, 16, 22, 14, 10, 12, 8
+  4, 4, 6, 8, 12, 18, 22, 18, 14, 10, 8, 10, 14, 16, 14, 12, 10, 8, 10, 12, 14, 12, 10, 8, 8, 6, 6, 4, 4, 4, 4, 4
 ];
 
 function VoiceNotePlayer({
@@ -365,41 +365,45 @@ function VoiceNotePlayer({
           )}
         </button>
 
-        {/* Waveform Scrubber Bars with Starting Dot */}
+        {/* Waveform Scrubber with Middle-Center Dot (Real WhatsApp Web Image 2) */}
         <div
           onClick={handleWaveformSeek}
-          className="relative min-w-0 flex-1 h-7 flex items-center gap-[1.5px] cursor-pointer py-1 overflow-visible"
+          className="relative min-w-0 flex-1 h-8 flex items-center cursor-pointer select-none overflow-visible"
           title="Click to seek"
         >
-          {/* Progress scrubber dot - Perfectly round and clamped to track bounds */}
-          <div
-            className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full shadow-sm pointer-events-none z-10 transition-[left] duration-100 ease-linear"
-            style={{
-              left: `calc(6px + ${progressRatio} * (100% - 12px))`,
-              transform: 'translate(-50%, -50%)',
-              backgroundColor: playedColor
-            }}
-          />
-
-          {/* Waveform vertical bars */}
-          {WAVEFORM_BARS.map((height, idx) => {
-            const barRatio = idx / WAVEFORM_BARS.length;
-            const isPlayed = progressRatio >= barRatio;
-            return (
-              <div
-                key={idx}
-                className="flex-1 flex items-center justify-center h-full"
-              >
-                <span
-                  className="w-[2px] rounded-full transition-colors duration-100"
-                  style={{
-                    height: `${Math.max(4, height)}px`,
-                    backgroundColor: isPlayed ? playedColor : unplayedColor
-                  }}
+          <svg
+            viewBox="0 0 220 32"
+            className="w-full h-8 overflow-visible"
+            preserveAspectRatio="none"
+          >
+            {/* Waveform vertical bars perfectly centered at y = 16 */}
+            {WAVEFORM_BARS.map((h, idx) => {
+              const x = 6 + idx * (208 / (WAVEFORM_BARS.length - 1));
+              const isPlayed = progressRatio >= idx / WAVEFORM_BARS.length;
+              return (
+                <line
+                  key={idx}
+                  x1={x}
+                  y1={16 - h / 2}
+                  x2={x}
+                  y2={16 + h / 2}
+                  stroke={isPlayed ? playedColor : unplayedColor}
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  className="transition-colors duration-100"
                 />
-              </div>
-            );
-          })}
+              );
+            })}
+
+            {/* Scrubber round dot - strictly locked to middle center (y = 16) */}
+            <circle
+              cx={6 + progressRatio * 208}
+              cy="16"
+              r="6"
+              fill={playedColor}
+              className="pointer-events-none drop-shadow-sm transition-[cx] duration-100 ease-linear"
+            />
+          </svg>
         </div>
 
         {/* Inbound: Contact Avatar with mic badge on right OR speed pill when playing */}
