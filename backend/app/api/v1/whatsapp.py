@@ -323,11 +323,18 @@ async def send_whatsapp_message(
         except Exception as save_err:
             logger.error(f"[OUTBOUND FILE SAVE ERROR]: {save_err}")
 
-    body_text = (
-        payload.crm_display_message.strip()
-        if payload.crm_display_message
-        else (payload.message.strip() if has_text else (f"📎 {saved_file_name or 'Document'}" if has_file else ""))
-    )
+    if payload.crm_display_message and payload.crm_display_message.strip():
+        body_text = payload.crm_display_message.strip()
+    elif payload.quoted_text and (payload.message or has_text):
+        quoted_sender = "You" if payload.quoted_from_me else "Contact"
+        clean_q_text = re.sub(r"[\r\n]+", " ", payload.quoted_text).strip()[:100]
+        body_text = f"> *{quoted_sender}*: {clean_q_text}\n\n{(payload.message or '').strip()}"
+    else:
+        body_text = (
+            payload.message.strip()
+            if has_text
+            else (f"📎 {saved_file_name or 'Document'}" if has_file else "")
+        )
 
     wa_message = WhatsAppMessage(
         organization_id=org_id,

@@ -113,7 +113,7 @@ function parseQuotedReply(rawText?: string | null): {
 } {
   if (!rawText) return { hasQuote: false, quotedSender: "", quotedText: "", body: "" };
   const raw = rawText.trim();
-  const match = raw.match(/^>\s*\*?([^*\n:]+)\*?:\s*([^\n]+)\n+([\s\S]*)$/);
+  const match = raw.match(/^>\s*\*?([^\n*:]+?)\*?:\s*([^\n]+?)\n+([\s\S]*)$/);
   if (match) {
     return {
       hasQuote: true,
@@ -121,6 +121,24 @@ function parseQuotedReply(rawText?: string | null): {
       quotedText: match[2].trim(),
       body: match[3].trim()
     };
+  }
+  if (raw.startsWith(">")) {
+    const doubleNewlineIdx = raw.indexOf("\n\n");
+    if (doubleNewlineIdx !== -1) {
+      const header = raw.slice(1, doubleNewlineIdx).trim();
+      const body = raw.slice(doubleNewlineIdx + 2).trim();
+      const colonIdx = header.indexOf(":");
+      if (colonIdx !== -1) {
+        const sender = header.slice(0, colonIdx).replace(/\*/g, "").trim();
+        const snippet = header.slice(colonIdx + 1).trim();
+        return {
+          hasQuote: true,
+          quotedSender: sender || "Contact",
+          quotedText: snippet,
+          body
+        };
+      }
+    }
   }
   return { hasQuote: false, quotedSender: "", quotedText: "", body: raw };
 }
@@ -1655,7 +1673,10 @@ export default function WhatsAppPage() {
 
     if (replyingToMessage) {
       quotedMessageId = replyingToMessage.metaMessageId || replyingToMessage.id;
-      quotedText = replyingToMessage.text?.slice(0, 100) || replyingToMessage.fileName || "Media";
+      const cleanQuotedText = replyingToMessage.text
+        ? (parseQuotedReply(replyingToMessage.text).body || replyingToMessage.text)
+        : (replyingToMessage.fileName || "Media");
+      quotedText = cleanQuotedText.replace(/[\r\n]+/g, " ").trim().slice(0, 100);
       quotedFromMe = replyingToMessage.sender === "outbound";
       const quotedSender = replyingToMessage.sender === "outbound" ? "You" : activeChat.contactName;
       textPayload = `> *${quotedSender}*: ${quotedText}\n\n${text}`;
@@ -2900,7 +2921,7 @@ export default function WhatsAppPage() {
                         <span>Replying to {replyingToMessage.sender === "outbound" ? "You" : activeChat?.contactName}</span>
                       </div>
                       <p className="truncate text-slate-500 dark:text-slate-400 text-[11px] mt-0.5">
-                        {replyingToMessage.text || replyingToMessage.fileName || "[Attachment]"}
+                        {replyingToMessage.text ? (parseQuotedReply(replyingToMessage.text).body || replyingToMessage.text) : (replyingToMessage.fileName || "[Attachment]")}
                       </p>
                     </div>
                     <button

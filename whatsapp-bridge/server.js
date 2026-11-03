@@ -247,7 +247,27 @@ function extractMessageBody(m) {
     return msg.conversation.trim();
   }
   if (typeof msg.extendedTextMessage?.text === 'string' && msg.extendedTextMessage.text.trim()) {
-    return msg.extendedTextMessage.text.trim();
+    const text = msg.extendedTextMessage.text.trim();
+    const contextInfo = msg.extendedTextMessage.contextInfo;
+    if (contextInfo?.quotedMessage) {
+      const q = contextInfo.quotedMessage;
+      let qText = q.conversation ||
+                  q.extendedTextMessage?.text ||
+                  q.imageMessage?.caption ||
+                  q.videoMessage?.caption ||
+                  q.documentMessage?.caption ||
+                  (q.audioMessage ? 'Voice note' : '') ||
+                  (q.imageMessage ? 'Photo' : '') ||
+                  (q.stickerMessage ? 'Sticker' : '') ||
+                  (q.documentMessage ? 'Document' : '') ||
+                  '';
+      qText = qText.replace(/[\r\n]+/g, ' ').trim().slice(0, 100);
+      if (qText) {
+        const sender = contextInfo.fromMe ? 'You' : 'Contact';
+        return `> *${sender}*: ${qText}\n\n${text}`;
+      }
+    }
+    return text;
   }
   if (typeof msg.imageMessage?.caption === 'string' && msg.imageMessage.caption.trim()) {
     return msg.imageMessage.caption.trim();
