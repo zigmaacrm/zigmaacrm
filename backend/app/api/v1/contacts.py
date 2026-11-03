@@ -339,8 +339,11 @@ async def bulk_import_contacts(
 
     default_owner = current_user.full_name or "Mohamed Thoufiq"
 
-    # Pre-fetch existing contacts for fast lookup
-    existing_contacts_res = await db.execute(select(Contact))
+    # Pre-fetch existing contacts for fast lookup strictly scoped to target_org_id
+    existing_query = select(Contact)
+    if target_org_id:
+        existing_query = existing_query.where(Contact.organization_id == target_org_id)
+    existing_contacts_res = await db.execute(existing_query)
     all_existing = existing_contacts_res.scalars().all()
 
     phone_map = {}
@@ -458,24 +461,26 @@ async def create_contact(
         org = res.scalars().first()
         target_org_id = org.id if org else None
 
-    # 1. Validation: Prevent duplicate contacts by phone number
+    # 1. Validation: Prevent duplicate contacts by phone number within the same organization
     raw_phone = contact_in.phone or ""
     clean_phone = "".join(c for c in raw_phone if c.isdigit())
     dup_phone = None
     if clean_phone and len(clean_phone) >= 7:
         phone_suffix = clean_phone[-10:] if len(clean_phone) >= 10 else clean_phone
-        dup_phone_res = await db.execute(
-            select(Contact).where(Contact.phone.ilike(f"%{phone_suffix}%"))
-        )
+        dup_query = select(Contact).where(Contact.phone.ilike(f"%{phone_suffix}%"))
+        if target_org_id:
+            dup_query = dup_query.where(Contact.organization_id == target_org_id)
+        dup_phone_res = await db.execute(dup_query)
         dup_phone = dup_phone_res.scalars().first()
 
-    # 2. Validation: Prevent duplicate contacts by email
+    # 2. Validation: Prevent duplicate contacts by email within the same organization
     clean_email = (contact_in.email or "").strip().lower()
     dup_email = None
     if clean_email:
-        dup_email_res = await db.execute(
-            select(Contact).where(func.lower(Contact.email) == clean_email)
-        )
+        dup_email_query = select(Contact).where(func.lower(Contact.email) == clean_email)
+        if target_org_id:
+            dup_email_query = dup_email_query.where(Contact.organization_id == target_org_id)
+        dup_email_res = await db.execute(dup_email_query)
         dup_email = dup_email_res.scalars().first()
 
     existing_contact = dup_phone or dup_email

@@ -1831,7 +1831,7 @@ export default function ContactsPage() {
         isOpen={showBulkUpload}
         onClose={() => setShowBulkUpload(false)}
         onSuccess={() => {
-          loadContacts();
+          loadContacts(true);
         }}
       />
 
