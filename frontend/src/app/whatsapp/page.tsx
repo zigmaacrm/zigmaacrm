@@ -87,6 +87,44 @@ export interface WhatsAppMessage {
   };
 }
 
+
+function isValidImageUrl(url?: string | null): boolean {
+  if (!url) return false;
+  const lower = url.toLowerCase().trim();
+  if (
+    lower.includes("voice_") ||
+    lower.endsWith(".mp4") ||
+    lower.endsWith(".ogg") ||
+    lower.endsWith(".wav") ||
+    lower.endsWith(".bin") ||
+    lower.endsWith(".pdf") ||
+    lower.endsWith(".docx")
+  ) {
+    return false;
+  }
+  return lower.startsWith("http") || lower.startsWith("data:image") || lower.startsWith("/") || lower.includes("googleusercontent");
+}
+
+function parseQuotedReply(rawText?: string | null): {
+  hasQuote: boolean;
+  quotedSender: string;
+  quotedText: string;
+  body: string;
+} {
+  if (!rawText) return { hasQuote: false, quotedSender: "", quotedText: "", body: "" };
+  const raw = rawText.trim();
+  const match = raw.match(/^>\s*\*?([^*\n:]+)\*?:\s*([^\n]+)\n\n([\s\S]*)$/);
+  if (match) {
+    return {
+      hasQuote: true,
+      quotedSender: match[1].trim(),
+      quotedText: match[2].trim(),
+      body: match[3].trim()
+    };
+  }
+  return { hasQuote: false, quotedSender: "", quotedText: "", body: raw };
+}
+
 function cleanDisplayCaption(text?: string | null, fileName?: string | null): string {
   if (!text) return "";
   const t = text.trim();
@@ -119,8 +157,7 @@ function cleanDisplayCaption(text?: string | null, fileName?: string | null): st
 }
 
 const WAVEFORM_BARS = [
-  10, 14, 22, 16, 26, 32, 24, 18, 28, 38, 26, 14, 18, 28, 24, 16,
-  20, 30, 26, 18, 14, 24, 32, 22, 16, 20, 14, 18, 12, 16, 10, 8
+  6, 10, 16, 12, 18, 22, 16, 12, 20, 24, 18, 10, 14, 20, 16, 10, 14, 22, 18, 12, 16, 22, 14, 10, 12, 8
 ];
 
 function VoiceNotePlayer({
@@ -130,7 +167,9 @@ function VoiceNotePlayer({
   durationHint = 0,
   avatarUrl,
   contactName,
-  senderAvatarUrl
+  senderAvatarUrl,
+  timeLabel,
+  status
 }: {
   audioUrl: string;
   isOutbound: boolean;
@@ -139,11 +178,15 @@ function VoiceNotePlayer({
   avatarUrl?: string | null;
   contactName?: string | null;
   senderAvatarUrl?: string | null;
+  timeLabel?: string;
+  status?: string;
 }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(durationHint);
   const [speed, setSpeed] = useState<1 | 1.5 | 2>(1);
+  const [senderImgFailed, setSenderImgFailed] = useState(false);
+  const [contactImgFailed, setContactImgFailed] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
@@ -226,8 +269,12 @@ function VoiceNotePlayer({
     ? (isOutbound ? "rgba(255, 255, 255, 0.35)" : "rgba(134, 150, 160, 0.4)")
     : (isOutbound ? "rgba(0, 0, 0, 0.25)" : "rgba(134, 150, 160, 0.4)");
 
+  const hasSenderAvatar = isValidImageUrl(senderAvatarUrl);
+  const hasContactAvatar = isValidImageUrl(avatarUrl);
+  const displaySecs = isPlaying ? currentTime : (effectiveDuration > 0 ? effectiveDuration : (durationHint && durationHint > 0 ? durationHint : 0));
+
   return (
-    <div className="flex flex-col gap-1 w-64 sm:w-76 select-none">
+    <div className="w-[260px] sm:w-[290px] select-none flex flex-col justify-between">
       <audio
         ref={audioRef}
         src={audioUrl}
@@ -237,19 +284,24 @@ function VoiceNotePlayer({
         preload="metadata"
       />
 
-      <div className="flex items-center gap-2.5">
+      {/* Main player row */}
+      <div className="flex items-center gap-2">
         {/* Outbound: User Avatar with mic badge on left */}
         {isOutbound && (
-          <div className="relative shrink-0 w-10 h-10">
-            {senderAvatarUrl ? (
-              <img src={senderAvatarUrl} alt="You" className="w-10 h-10 rounded-full object-cover" />
-            ) : (
-              <div className="w-10 h-10 rounded-full bg-emerald-700 text-white flex items-center justify-center font-bold text-[11px] shadow-xs">
-                YOU
-              </div>
-            )}
-            <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-[#00a884] text-white flex items-center justify-center shadow-xs border border-white dark:border-[#005c4b]">
-              <Mic className="w-2.5 h-2.5 fill-current" />
+          <div className="relative shrink-0 w-9 h-9">
+            <div className="w-9 h-9 rounded-full bg-emerald-700 text-white flex items-center justify-center font-bold text-xs shadow-xs overflow-hidden">
+              {hasSenderAvatar && !senderImgFailed ? (
+                <img
+                  src={senderAvatarUrl!}
+                  className="w-full h-full object-cover"
+                  onError={() => setSenderImgFailed(true)}
+                />
+              ) : (
+                <User className="w-4 h-4 text-white/90" />
+              )}
+            </div>
+            <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-[#00a884] text-white flex items-center justify-center shadow-xs border-2 border-[#D9FDD3] dark:border-[#005c4b]">
+              <Mic className="w-2 h-2 fill-current" />
             </div>
           </div>
         )}
@@ -273,7 +325,7 @@ function VoiceNotePlayer({
         {/* Waveform Scrubber Bars */}
         <div
           onClick={handleWaveformSeek}
-          className="relative flex-1 h-8 flex items-center gap-[2px] cursor-pointer py-1"
+          className="relative min-w-0 flex-1 h-7 flex items-center gap-[1.5px] cursor-pointer py-1 overflow-hidden"
           title="Click to seek"
         >
           {/* Progress scrubber dot */}
@@ -304,37 +356,55 @@ function VoiceNotePlayer({
 
         {/* Inbound: Contact Avatar with mic badge on right */}
         {!isOutbound && (
-          <div className="relative shrink-0 w-10 h-10">
-            {avatarUrl ? (
-              <img src={avatarUrl} alt="Contact" className="w-10 h-10 rounded-full object-cover" />
-            ) : (
-              <div className="w-10 h-10 rounded-full bg-slate-300 dark:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center justify-center font-bold text-xs shadow-xs">
-                {(contactName || "U").charAt(0).toUpperCase()}
-              </div>
-            )}
-            <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-[#00a884] text-white flex items-center justify-center shadow-xs border border-white dark:border-[#202c33]">
-              <Mic className="w-2.5 h-2.5 fill-current" />
+          <div className="relative shrink-0 w-9 h-9">
+            <div className="w-9 h-9 rounded-full bg-slate-300 dark:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center justify-center font-bold text-xs shadow-xs overflow-hidden">
+              {hasContactAvatar && !contactImgFailed ? (
+                <img
+                  src={avatarUrl!}
+                  className="w-full h-full object-cover"
+                  onError={() => setContactImgFailed(true)}
+                />
+              ) : (
+                <span>{(contactName || "U").charAt(0).toUpperCase()}</span>
+              )}
+            </div>
+            <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-[#00a884] text-white flex items-center justify-center shadow-xs border-2 border-white dark:border-[#202c33]">
+              <Mic className="w-2 h-2 fill-current" />
             </div>
           </div>
         )}
       </div>
 
-      {/* Duration and 1x / 1.5x / 2x Speed button */}
-      <div className="flex items-center justify-between text-[11px] px-1 font-mono text-slate-500 dark:text-slate-400">
-        <span>{isPlaying ? formatSecs(currentTime) : (effectiveDuration > 0 ? formatSecs(effectiveDuration) : "0:00")}</span>
-        <button
-          type="button"
-          onClick={handleCycleSpeed}
-          className={cn(
-            "px-2 py-0.5 rounded-full font-bold text-[10px] tracking-tight transition-all active:scale-95 cursor-pointer shadow-2xs border",
-            isDark
-              ? "bg-white/10 hover:bg-white/20 text-white border-white/10"
-              : "bg-black/5 hover:bg-black/10 text-slate-700 border-black/10"
-          )}
-          title="Change playback speed (1x, 1.5x, 2x)"
-        >
-          {speed}x
-        </button>
+      {/* Bottom status row: Duration + Speed button on left, Time + Double Tick on right */}
+      <div className={cn(
+        "flex items-center justify-between text-[11px] pt-1 font-mono",
+        isDark ? "text-slate-400" : "text-slate-500"
+      )}>
+        <div className="flex items-center gap-1.5 pl-1">
+          <span>{formatSecs(displaySecs)}</span>
+          <button
+            type="button"
+            onClick={handleCycleSpeed}
+            className={cn(
+              "px-1.5 py-0.2 rounded-full font-bold text-[10px] tracking-tight transition-all active:scale-95 cursor-pointer shadow-2xs border",
+              isDark
+                ? "bg-white/10 hover:bg-white/20 text-white border-white/10"
+                : "bg-black/5 hover:bg-black/10 text-slate-700 border-black/10"
+            )}
+            title="Cycle playback speed (1x, 1.5x, 2x)"
+          >
+            {speed}x
+          </button>
+        </div>
+
+        {timeLabel && (
+          <div className="flex items-center gap-1 pr-1 font-sans text-[10px]">
+            <span>{timeLabel}</span>
+            {isOutbound && (
+              <CheckCheck className={cn("w-3.5 h-3.5", status === "READ" ? "text-[#53bdeb]" : "text-slate-400")} />
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -501,6 +571,8 @@ function ContactAvatar({
 }
 
 
+const QUICK_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+
 function MessageBubbleContainer({
   msg,
   isOutbound,
@@ -532,9 +604,13 @@ function MessageBubbleContainer({
   onInfo: () => void;
   children: React.ReactNode;
 }) {
+  const [showMoreEmojis, setShowMoreEmojis] = useState(false);
+  const showContext = activeContextMenuId === msg.id;
+  const showReaction = activeReactionMenuId === msg.id;
+
   if (msg.isDeleted) {
     return (
-      <div className={cn("flex flex-col my-1 relative", isOutbound ? "items-end" : "items-start")}>
+      <div className={cn("flex w-full my-1", isOutbound ? "justify-end" : "justify-start")}>
         <div
           className={cn(
             "rounded-2xl px-3.5 py-2 text-xs transition-all shadow-2xs border flex items-center gap-2 italic select-none",
@@ -551,85 +627,93 @@ function MessageBubbleContainer({
     );
   }
 
-  const isMenuOpen = activeContextMenuId === msg.id;
-  const isReactionOpen = activeReactionMenuId === msg.id;
-
   return (
-    <div className={cn("flex flex-col my-1 relative group", isOutbound ? "items-end" : "items-start")}>
-      {/* Floating Reaction Bar */}
-      {isReactionOpen && (
-        <div
-          className={cn(
-            "absolute -top-10 z-40 flex items-center gap-1 px-2 py-1 rounded-full shadow-2xl border animate-in fade-in zoom-in-95 duration-100",
-            isOutbound ? "right-2" : "left-2",
-            isDark ? "bg-[#202c33] border-white/10" : "bg-white border-slate-200 shadow-xl"
-          )}
-        >
-          {["👍", "❤️", "😂", "😮", "😢", "🙏"].map((emoji) => (
-            <button
-              key={emoji}
-              type="button"
-              onClick={() => onReact(emoji)}
-              className="w-7 h-7 rounded-full flex items-center justify-center hover:scale-130 transition-transform text-sm cursor-pointer"
-            >
-              {emoji}
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={() => setActiveReactionMenuId(null)}
-            className="w-5 h-5 rounded-full flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 text-xs ml-0.5 cursor-pointer"
+    <div className={cn("flex w-full my-0.5", isOutbound ? "justify-end" : "justify-start")}>
+      <div className="relative group inline-block max-w-[85%] sm:max-w-[70%]">
+        {/* Floating Quick Reaction Bar (WhatsApp style: appears above bubble on trigger) */}
+        {showReaction && (
+          <div
+            className={cn(
+              "absolute -top-11 z-40 flex items-center gap-1 px-2.5 py-1.5 rounded-full shadow-xl border animate-in fade-in zoom-in-95 duration-150 select-none",
+              isOutbound ? "right-0" : "left-0",
+              isDark ? "bg-[#233138] border-white/10 text-white" : "bg-white border-slate-200 text-slate-800"
+            )}
+            onClick={(e) => e.stopPropagation()}
           >
-            <X className="w-3 h-3" />
-          </button>
-        </div>
-      )}
+            {QUICK_EMOJIS.map((emoji) => (
+              <button
+                key={emoji}
+                type="button"
+                onClick={() => {
+                  onReact(emoji);
+                  setActiveReactionMenuId(null);
+                }}
+                className="w-8 h-8 rounded-full hover:bg-black/10 dark:hover:bg-white/10 flex items-center justify-center text-lg transition-transform hover:scale-125 active:scale-95 cursor-pointer"
+              >
+                {emoji}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setShowMoreEmojis(!showMoreEmojis)}
+              className="w-7 h-7 rounded-full hover:bg-black/10 dark:hover:bg-white/10 flex items-center justify-center text-xs opacity-70 hover:opacity-100 transition-colors cursor-pointer"
+              title="More emojis"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
-      {/* Down Chevron Trigger Button on Hover */}
-      <div className="absolute top-1.5 right-1.5 z-20 opacity-0 group-hover:opacity-100 transition-opacity">
+        {/* Hover Chevron / Action Dropdown Trigger - Strictly anchored to THIS bubble! */}
         <button
           type="button"
           onClick={(e) => {
             e.stopPropagation();
-            setActiveContextMenuId(isMenuOpen ? null : msg.id);
+            setActiveContextMenuId(showContext ? null : msg.id);
+            setActiveReactionMenuId(null);
           }}
-          className="p-1 rounded-full bg-black/30 hover:bg-black/50 text-white backdrop-blur-xs shadow-xs cursor-pointer transition-transform active:scale-95"
+          className={cn(
+            "absolute top-1.5 right-1.5 z-20 w-6 h-6 rounded-full flex items-center justify-center transition-all cursor-pointer shadow-xs",
+            showContext
+              ? "opacity-100 bg-black/25 text-white"
+              : "opacity-0 group-hover:opacity-100 bg-black/20 hover:bg-black/40 text-white dark:bg-white/15 dark:hover:bg-white/25"
+          )}
           title="Message options"
         >
-          <ChevronDown className="w-3.5 h-3.5" />
+          <ChevronDown className="w-4 h-4" />
         </button>
 
-        {/* Dropdown Menu */}
-        {isMenuOpen && (
+        {/* Context Menu Dropdown */}
+        {showContext && (
           <div
             className={cn(
-              "absolute right-0 top-6 w-40 rounded-xl shadow-2xl py-1 text-xs border z-50 animate-in fade-in zoom-in-95 duration-100 select-none",
-              isDark ? "bg-[#202c33] border-white/10 text-white" : "bg-white border-slate-200 text-slate-800"
+              "absolute top-8 z-50 w-44 rounded-xl shadow-2xl border py-1.5 animate-in fade-in zoom-in-95 duration-100 select-none",
+              isOutbound ? "right-1" : "left-1",
+              isDark ? "bg-[#233138] border-white/10 text-slate-100" : "bg-white border-slate-200 text-slate-800"
             )}
+            onClick={(e) => e.stopPropagation()}
           >
             <button
               type="button"
-              onClick={onInfo}
-              className="w-full px-3 py-2 flex items-center gap-2.5 hover:bg-black/5 dark:hover:bg-white/10 text-left cursor-pointer"
+              onClick={() => {
+                onInfo();
+                setActiveContextMenuId(null);
+              }}
+              className="w-full px-3.5 py-2 text-xs flex items-center gap-2.5 hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer transition-colors"
             >
-              <Info className="w-3.5 h-3.5 text-slate-400" />
+              <Info className="w-4 h-4 opacity-70" />
               <span>Message info</span>
             </button>
             <button
               type="button"
-              onClick={onReply}
-              className="w-full px-3 py-2 flex items-center gap-2.5 hover:bg-black/5 dark:hover:bg-white/10 text-left cursor-pointer"
+              onClick={() => {
+                onReply();
+                setActiveContextMenuId(null);
+              }}
+              className="w-full px-3.5 py-2 text-xs flex items-center gap-2.5 hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer transition-colors"
             >
-              <CornerUpLeft className="w-3.5 h-3.5 text-slate-400" />
+              <CornerUpLeft className="w-4 h-4 opacity-70" />
               <span>Reply</span>
-            </button>
-            <button
-              type="button"
-              onClick={onCopy}
-              className="w-full px-3 py-2 flex items-center gap-2.5 hover:bg-black/5 dark:hover:bg-white/10 text-left cursor-pointer"
-            >
-              <Copy className="w-3.5 h-3.5 text-slate-400" />
-              <span>Copy</span>
             </button>
             <button
               type="button"
@@ -637,54 +721,75 @@ function MessageBubbleContainer({
                 setActiveReactionMenuId(msg.id);
                 setActiveContextMenuId(null);
               }}
-              className="w-full px-3 py-2 flex items-center gap-2.5 hover:bg-black/5 dark:hover:bg-white/10 text-left cursor-pointer"
+              className="w-full px-3.5 py-2 text-xs flex items-center gap-2.5 hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer transition-colors"
             >
-              <Smile className="w-3.5 h-3.5 text-slate-400" />
+              <Smile className="w-4 h-4 opacity-70" />
               <span>React</span>
             </button>
-            {isOutbound && onEdit && (
+            <button
+              type="button"
+              onClick={() => {
+                onCopy();
+                setActiveContextMenuId(null);
+              }}
+              className="w-full px-3.5 py-2 text-xs flex items-center gap-2.5 hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer transition-colors"
+            >
+              <Copy className="w-4 h-4 opacity-70" />
+              <span>Copy</span>
+            </button>
+            {onEdit && (
               <button
                 type="button"
-                onClick={onEdit}
-                className="w-full px-3 py-2 flex items-center gap-2.5 hover:bg-black/5 dark:hover:bg-white/10 text-left cursor-pointer"
+                onClick={() => {
+                  onEdit();
+                  setActiveContextMenuId(null);
+                }}
+                className="w-full px-3.5 py-2 text-xs flex items-center gap-2.5 hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer transition-colors"
               >
-                <Pencil className="w-3.5 h-3.5 text-slate-400" />
+                <Pencil className="w-4 h-4 opacity-70" />
                 <span>Edit</span>
               </button>
             )}
-            <div className="border-t border-slate-200 dark:border-white/10 my-0.5" />
+            <div className="h-px bg-slate-200 dark:bg-white/10 my-1" />
             <button
               type="button"
-              onClick={onDelete}
-              className="w-full px-3 py-2 flex items-center gap-2.5 hover:bg-red-500/10 text-red-500 text-left cursor-pointer font-medium"
+              onClick={() => {
+                onDelete();
+                setActiveContextMenuId(null);
+              }}
+              className="w-full px-3.5 py-2 text-xs flex items-center gap-2.5 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 cursor-pointer transition-colors"
             >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Delete</span>
+              <Trash2 className="w-4 h-4" />
+              <span>Delete message</span>
             </button>
           </div>
         )}
+
+        {/* Bubble Content */}
+        {children}
+
+        {/* Reaction Pill Badge - Anchored to THIS bubble! */}
+        {msg.reaction && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onReact(msg.reaction!);
+            }}
+            className={cn(
+              "absolute -bottom-2 right-2 px-1.5 py-0.5 rounded-full text-xs shadow-sm border flex items-center gap-1 z-20 cursor-pointer transition-transform hover:scale-110 select-none",
+              isDark ? "bg-[#202c33] border-white/10 text-white" : "bg-white border-slate-200 text-slate-800"
+            )}
+            title="Click to remove reaction"
+          >
+            <span>{msg.reaction}</span>
+          </button>
+        )}
       </div>
-
-      {/* Bubble Content */}
-      {children}
-
-      {/* Reaction Pill Badge */}
-      {msg.reaction && (
-        <button
-          type="button"
-          onClick={() => onReact(msg.reaction!)}
-          className={cn(
-            "absolute -bottom-2 right-2 px-1.5 py-0.2 rounded-full text-xs shadow-xs border flex items-center gap-1 z-20 cursor-pointer transition-transform hover:scale-110",
-            isDark ? "bg-[#202c33] border-white/10 text-white" : "bg-white border-slate-200 text-slate-800"
-          )}
-          title="Click to remove reaction"
-        >
-          <span>{msg.reaction}</span>
-        </button>
-      )}
     </div>
   );
 }
+
 
 export default function WhatsAppPage() {
   const { toast } = useToast();
@@ -2408,7 +2513,7 @@ export default function WhatsAppPage() {
                             /* 6. Voice Note (PTT) */
                             <div
                               className={cn(
-                                "rounded-2xl p-2.5 max-w-[85%] sm:max-w-[70%] text-sm transition-all shadow-xs",
+                                "rounded-2xl p-2.5 text-sm transition-all shadow-xs",
                                 isOutbound
                                   ? (isDark ? "bg-[#005c4b] border border-emerald-600/30 text-white rounded-tr-xs ml-auto" : "bg-[#D9FDD3] border border-[#C2EBC0] text-slate-900 rounded-tr-xs ml-auto shadow-2xs")
                                   : (isDark ? "bg-[#202c33] border border-white/10 text-white rounded-tl-xs" : "bg-white border border-slate-200 text-slate-900 rounded-tl-xs shadow-2xs")
@@ -2428,16 +2533,9 @@ export default function WhatsAppPage() {
                                 avatarUrl={activeChat?.avatar_url || null}
                                 contactName={activeChat?.contactName || null}
                                 senderAvatarUrl={currentUser?.picture || currentUser?.avatar_url || null}
+                                timeLabel={msg.timeLabel}
+                                status={msg.status}
                               />
-                              <div className={cn(
-                                "flex items-center justify-end gap-1 text-[10px] mt-1 pr-1",
-                                isDark ? "text-slate-400" : "text-slate-500"
-                              )}>
-                                <span>{msg.timeLabel}</span>
-                                {isOutbound && (
-                                  <CheckCheck className={cn("w-3.5 h-3.5", msg.status === "READ" ? "text-[#53bdeb]" : "text-slate-400")} />
-                                )}
-                              </div>
                             </div>
                           ) : (
                             /* 7. Standard Text / Media with Caption */
@@ -2475,9 +2573,31 @@ export default function WhatsAppPage() {
                                 </div>
                               )}
 
-                              {cleanText ? (
-                                <p className="whitespace-pre-wrap select-text">{cleanText}</p>
-                              ) : null}
+                              {(() => {
+                                const parsed = parseQuotedReply(cleanText);
+                                return (
+                                  <>
+                                    {parsed.hasQuote && (
+                                      <div className={cn(
+                                        "rounded-lg px-2.5 py-1.5 mb-2 border-l-4 text-xs select-none flex flex-col justify-center transition-all",
+                                        isOutbound
+                                          ? (isDark ? "bg-black/30 border-l-[#53bdeb]" : "bg-black/5 border-l-[#00a884]")
+                                          : (isDark ? "bg-black/30 border-l-[#00a884]" : "bg-black/5 border-l-[#00a884]")
+                                      )}>
+                                        <div className="font-bold text-[11px] text-emerald-600 dark:text-[#53bdeb] truncate">
+                                          {parsed.quotedSender}
+                                        </div>
+                                        <div className="text-[11px] truncate text-slate-700 dark:text-slate-300 mt-0.5 opacity-90">
+                                          {parsed.quotedText}
+                                        </div>
+                                      </div>
+                                    )}
+                                    {parsed.body ? (
+                                      <p className="whitespace-pre-wrap select-text">{parsed.body}</p>
+                                    ) : null}
+                                  </>
+                                );
+                              })()}
 
                               <div className={cn(
                                 "flex items-center justify-end gap-1 mt-1 text-[10px] font-medium",
