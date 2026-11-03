@@ -49,7 +49,8 @@ import {
   Pause,
   Trash2,
   ImageIcon,
-  Volume2
+  Volume2,
+  UserPlus
 } from "lucide-react";
 import Sidebar from "@/components/layout/Sidebar";
 import Header from "@/components/layout/Header";
@@ -1783,26 +1784,66 @@ export default function WhatsAppPage() {
     toast.success("Quotation Link Sent", `GST Quote link dispatched to ${activeChat.contactName}`);
   };
 
-  // Quick Action: Create Deal
-  const handleQuickCreateDeal = async () => {
+  const [isAddingContact, setIsAddingContact] = useState(false);
+  const [isContactSaved, setIsContactSaved] = useState(false);
+  const [isCreatingDeal, setIsCreatingDeal] = useState(false);
+  const [isSubmittingNote, setIsSubmittingNote] = useState(false);
+
+  // Add WhatsApp prospect directly to CRM Contacts
+  const handleAddToContact = async () => {
     if (!activeChat) return;
     try {
-      const dealTitle = `${activeChat.contactName || activeChat.companyName || "WhatsApp Prospect"} - Deal`;
+      setIsAddingContact(true);
+      const cleanPhone = activeChat.phone.replace(/[^0-9]/g, "");
+      const res = await api.createContact({
+        name: activeChat.contactName,
+        phone: cleanPhone,
+        email: activeChat.email || undefined,
+        company: activeChat.companyName || "Direct Prospect"
+      }, true);
+      setIsContactSaved(true);
+      if (res && res.id) {
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.phone.replace(/[^0-9]/g, "") === cleanPhone
+              ? { ...c, contact_id: String(res.id) }
+              : c
+          )
+        );
+      }
+      toast.success("Contact Saved", `${activeChat.contactName} (${activeChat.phone}) added to CRM Contacts.`);
+    } catch (err: any) {
+      toast.error("Failed to Add Contact", err.message || "Could not save contact to CRM.");
+    } finally {
+      setIsAddingContact(false);
+    }
+  };
+
+  // Create Deal from CRM Drawer with selected stage & entered amount
+  const handleCreateDealFromDrawer = async () => {
+    if (!activeChat) return;
+    try {
+      setIsCreatingDeal(true);
+      const dealTitle = `${activeChat.contactName || "WhatsApp Prospect"} - Deal`;
+      const val = Number(activeChat.dealValue) || 0;
+      const stageName = activeChat.dealStage || "Qualified";
       const created = await api.createDeal({
         title: dealTitle,
         contact_id: activeChat.contact_id ? String(activeChat.contact_id) : undefined,
         contact_name: activeChat.contactName,
         contact_phone: activeChat.phone,
-        company_name: activeChat.companyName,
-        stage: "New Deal",
-        stage_id: "New Deal",
-        value: 50000,
-        deal_value: 50000,
+        company_name: activeChat.companyName || "Direct Prospect",
+        stage: stageName,
+        stage_id: stageName,
+        value: val,
+        deal_value: val,
         currency: "INR"
       });
-      toast.success("Deal Created & Linked", `Deal "${created.title}" added to pipeline in New Deal stage.`);
+      toast.success("Deal Created in CRM", `Deal "${dealTitle}" with ${formatCurrency(val)} added to ${stageName} stage.`);
     } catch (err: any) {
       toast.error("Deal Creation Failed", err.message || "Could not create deal for WhatsApp contact.");
+    } finally {
+      setIsCreatingDeal(false);
     }
   };
 
@@ -1838,35 +1879,56 @@ export default function WhatsAppPage() {
     }
   };
 
-  // Quick Action: Add Internal Note
-  const handleAddNoteSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  // Quick Action: Add Internal Note Inline
+  const handleAddNoteInline = async () => {
     if (!newNoteText.trim() || !activeChat) return;
 
-    const authorName = currentUser?.full_name || "Internal Staff";
-    const newNote = {
-      id: `note-${Date.now()}`,
-      text: newNoteText.trim(),
-      author: authorName,
-      timestamp: "Just now"
-    };
+    try {
+      setIsSubmittingNote(true);
+      const noteContent = newNoteText.trim();
+      const authorName = currentUser?.full_name || "Internal Staff";
+      const newNote = {
+        id: `note-${Date.now()}`,
+        text: noteContent,
+        author: authorName,
+        timestamp: "Just now"
+      };
 
-    const updatedNotes = [newNote, ...(activeChat.notes || [])];
-    if (typeof window !== "undefined") {
-      try {
-        localStorage.setItem(`wa_notes_${activeChat.phone}`, JSON.stringify(updatedNotes));
-      } catch (err) {}
+      const updatedNotes = [newNote, ...(activeChat.notes || [])];
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem(`wa_notes_${activeChat.phone}`, JSON.stringify(updatedNotes));
+        } catch (err) {}
+      }
+
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.phone === activeChat.phone ? { ...c, notes: updatedNotes } : c
+        )
+      );
+
+      // Persist note to CRM Activity log if contact_id exists
+      if (activeChat.contact_id) {
+        await api.createActivity({
+          contact_id: activeChat.contact_id,
+          type: "note",
+          notes: noteContent
+        }).catch(() => {});
+      }
+
+      setNewNoteText("");
+      toast.success("Note Saved", "CRM context note recorded.");
+    } catch (err: any) {
+      toast.error("Failed to add note", err.message || "Could not save note.");
+    } finally {
+      setIsSubmittingNote(false);
     }
+  };
 
-    setConversations((prev) =>
-      prev.map((c) =>
-        c.phone === activeChat.phone ? { ...c, notes: updatedNotes } : c
-      )
-    );
-
-    setNewNoteText("");
+  const handleAddNoteSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await handleAddNoteInline();
     setShowNewNoteModal(false);
-    toast.success("Note Saved", "CRM context note recorded.");
   };
 
   // Handle Stage Change
@@ -2294,8 +2356,12 @@ export default function WhatsAppPage() {
                   "h-16 px-4 sm:px-5 border-b backdrop-blur-md flex items-center justify-between shrink-0 z-10 transition-colors gap-3 overflow-hidden",
                   isDark ? "border-[#1E293B] bg-[#090A0F]/90 text-white" : "border-slate-200 bg-white/95 text-slate-900 shadow-2xs"
                 )}>
-                  {/* Contact Identity (Protected from shrinking/overlapping) */}
-                  <div className="flex items-center gap-3 min-w-0 flex-1 overflow-hidden">
+                  {/* Contact Identity - Clicking profile or name opens CRM Lead Context Drawer */}
+                  <div
+                    onClick={() => setShowRightDrawer(!showRightDrawer)}
+                    className="flex items-center gap-3 min-w-0 flex-1 overflow-hidden cursor-pointer hover:opacity-90 transition-opacity select-none group"
+                    title="Click to open CRM Lead Context"
+                  >
                     <ContactAvatar
                       avatarUrl={activeChat.avatar_url}
                       name={activeChat.contactName}
@@ -2307,7 +2373,7 @@ export default function WhatsAppPage() {
                     />
                     <div className="min-w-0 flex-1 overflow-hidden">
                       <div className="flex items-center gap-2 min-w-0">
-                        <h3 className={cn("font-bold text-sm sm:text-base truncate leading-snug shrink min-w-0", isDark ? "text-white" : "text-slate-900")}>
+                        <h3 className={cn("font-bold text-sm sm:text-base truncate leading-snug shrink min-w-0 group-hover:text-emerald-500 transition-colors", isDark ? "text-white" : "text-slate-900")}>
                           {activeChat.contactName}
                         </h3>
                       </div>
@@ -2330,51 +2396,15 @@ export default function WhatsAppPage() {
                     </div>
                   </div>
 
-                  {/* Header Actions (Never crowd or overlap contact identity) */}
+                  {/* Header Actions - ONLY Send Quote button */}
                   <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                     <button
-                      onClick={handleQuickCreateDeal}
-                      className={cn(
-                        "inline-flex items-center justify-center gap-1.5 h-9 px-2.5 sm:px-3 rounded-xl border text-xs font-semibold whitespace-nowrap transition-all cursor-pointer shadow-2xs hover:scale-102 active:scale-98 shrink-0",
-                        isDark
-                          ? "bg-white/5 hover:bg-white/10 text-slate-200 border-[#1E293B]"
-                          : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200"
-                      )}
-                      title="Create or link pipeline deal"
-                    >
-                      <Handshake className="w-4 h-4 text-indigo-500 shrink-0" />
-                      <span className="hidden xl:inline">Create Deal</span>
-                    </button>
-
-                    <button
                       onClick={handleOpenQuotePicker}
-                      className="inline-flex items-center justify-center gap-1.5 h-9 px-2.5 sm:px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold whitespace-nowrap shadow-sm shadow-emerald-600/25 transition-all cursor-pointer hover:scale-102 active:scale-98 shrink-0"
+                      className="inline-flex items-center justify-center gap-1.5 h-9 px-3.5 sm:px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold whitespace-nowrap shadow-sm shadow-emerald-600/25 transition-all cursor-pointer hover:scale-102 active:scale-98 shrink-0"
                       title="Select and send quotation to contact"
                     >
-                      <FileText className="w-3.5 h-3.5 shrink-0" />
-                      <span className="hidden sm:inline">Send Quote</span>
-                    </button>
-
-                    {/* Right Drawer Toggle */}
-                    <button
-                      onClick={() => setShowRightDrawer(!showRightDrawer)}
-                      className={cn(
-                        "h-9 w-9 flex items-center justify-center rounded-xl border transition-all cursor-pointer shrink-0 hover:scale-102 active:scale-98",
-                        isDark
-                          ? (showRightDrawer
-                              ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
-                              : "bg-white/5 text-slate-400 hover:text-white border-[#1E293B]")
-                          : (showRightDrawer
-                              ? "bg-emerald-50 text-emerald-700 border-emerald-300"
-                              : "bg-slate-50 text-slate-600 hover:text-slate-900 border-slate-200")
-                      )}
-                      title={showRightDrawer ? "Hide CRM context drawer" : "Show CRM context drawer"}
-                    >
-                      {showRightDrawer ? (
-                        <PanelRightClose className="w-4 h-4" />
-                      ) : (
-                        <PanelRightOpen className="w-4 h-4" />
-                      )}
+                      <FileText className="w-4 h-4 shrink-0" />
+                      <span>Send Quote</span>
                     </button>
                   </div>
                 </div>
@@ -3230,7 +3260,7 @@ export default function WhatsAppPage() {
               </div>
 
               {/* Customer Profile Card */}
-              <div className={cn("p-4 border-b space-y-3.5", isDark ? "border-[#1E293B]/60" : "border-slate-200")}>
+              <div className={cn("p-4 border-b space-y-3", isDark ? "border-[#1E293B]/60" : "border-slate-200")}>
                 <div className="flex items-center gap-3">
                   <ContactAvatar
                     avatarUrl={activeChat.avatar_url}
@@ -3298,39 +3328,40 @@ export default function WhatsAppPage() {
                         </button>
                       </div>
                     )}
-                    <p className={cn("text-xs truncate", isDark ? "text-slate-400" : "text-slate-500")}>
-                      {activeChat.companyName || "Not Found"}
-                    </p>
-                    <span className={cn(
-                      "inline-block mt-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold border shadow-2xs",
-                      isDark ? "bg-indigo-500/10 text-indigo-400 border-indigo-500/20" : "bg-indigo-50 text-indigo-700 border-indigo-200"
-                    )}>
-                      High Intent Prospect
-                    </span>
                   </div>
                 </div>
 
-                {/* Contact details */}
+                {/* Only Number below name */}
                 <div className="space-y-2 pt-1 text-xs">
                   <div className={cn("flex items-center gap-2.5 p-2 rounded-xl border transition-colors", isDark ? "bg-white/5 border-white/5 text-slate-200" : "bg-slate-50 border-slate-200/80 text-slate-700")}>
                     <Phone className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
-                    <span className="font-mono text-[11px] truncate select-all">{activeChat.phone}</span>
+                    <span className="font-mono text-xs truncate select-all">{activeChat.phone}</span>
                   </div>
-                  <div className={cn("flex items-center gap-2.5 p-2 rounded-xl border transition-colors", isDark ? "bg-white/5 border-white/5 text-slate-200" : "bg-slate-50 border-slate-200/80 text-slate-700")}>
-                    <Mail className="w-3.5 h-3.5 shrink-0 text-indigo-500" />
-                    <span className="truncate select-all">{activeChat.email || "Not Found"}</span>
-                  </div>
-                  <div className={cn("flex items-center gap-2.5 p-2 rounded-xl border transition-colors", isDark ? "bg-white/5 border-white/5 text-slate-200" : "bg-slate-50 border-slate-200/80 text-slate-700")}>
-                    <Building2 className="w-3.5 h-3.5 shrink-0 text-amber-500" />
-                    <span className="truncate">{activeChat.companyName || "Not Found"}</span>
-                  </div>
+
+                  {/* Add to Contact Button */}
+                  <button
+                    type="button"
+                    onClick={handleAddToContact}
+                    disabled={isAddingContact}
+                    className={cn(
+                      "w-full h-9 flex items-center justify-center gap-2 px-3 rounded-xl font-semibold text-xs transition-all cursor-pointer shadow-xs hover:scale-101 active:scale-98",
+                      isDark
+                        ? "bg-emerald-600 hover:bg-emerald-500 text-white"
+                        : "bg-emerald-600 hover:bg-emerald-700 text-white"
+                    )}
+                  >
+                    {isAddingContact ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <UserPlus className="w-3.5 h-3.5" />
+                    )}
+                    <span>{isContactSaved || activeChat.contact_id ? "Saved to Contacts" : "Add to Contact"}</span>
+                  </button>
                 </div>
-
-
               </div>
 
               {/* Deal Status & Pipeline */}
-              <div className={cn("p-4 border-b space-y-3.5", isDark ? "border-[#1E293B]/60" : "border-slate-200")}>
+              <div className={cn("p-4 border-b space-y-3", isDark ? "border-[#1E293B]/60" : "border-slate-200")}>
                 <div className="flex items-center justify-between">
                   <span className={cn("font-bold text-xs flex items-center gap-1.5", isDark ? "text-slate-300" : "text-slate-700")}>
                     <Handshake className="w-4 h-4 text-indigo-500" />
@@ -3384,27 +3415,62 @@ export default function WhatsAppPage() {
                   </div>
                 </div>
 
+                {/* Create Deal Button below the amount enter */}
+                <button
+                  type="button"
+                  onClick={handleCreateDealFromDrawer}
+                  disabled={isCreatingDeal}
+                  className={cn(
+                    "w-full h-9 flex items-center justify-center gap-2 px-3 rounded-xl font-semibold text-xs transition-all cursor-pointer shadow-xs hover:scale-101 active:scale-98",
+                    isDark
+                      ? "bg-indigo-600 hover:bg-indigo-500 text-white"
+                      : "bg-indigo-600 hover:bg-indigo-700 text-white"
+                  )}
+                >
+                  {isCreatingDeal ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Handshake className="w-3.5 h-3.5" />}
+                  <span>Create Deal</span>
+                </button>
+
                 <div className={cn("flex items-center justify-between text-xs pt-1 border-t", isDark ? "border-white/5 text-slate-400" : "border-slate-200/80 text-slate-500")}>
                   <span>Target Close Date:</span>
                   <span className={cn("font-semibold", isDark ? "text-slate-200" : "text-slate-800")}>{activeChat.dealCloseDate}</span>
                 </div>
               </div>
 
-              {/* Quick Actions Panel */}
+              {/* Internal Notes & CRM Section (Text Area UP, Button BELOW) */}
               <div className={cn("p-4 border-b space-y-2.5", isDark ? "border-[#1E293B]/60" : "border-slate-200")}>
-                <span className={cn("font-bold text-xs block mb-1 uppercase tracking-wider", isDark ? "text-slate-400" : "text-slate-500")}>
+                <span className={cn("font-bold text-xs block uppercase tracking-wider", isDark ? "text-slate-400" : "text-slate-500")}>
                   Internal Notes & CRM
                 </span>
 
-                <button
-                  onClick={() => setShowNewNoteModal(true)}
+                {/* Text area UP (on top) */}
+                <textarea
+                  value={newNoteText}
+                  onChange={(e) => setNewNoteText(e.target.value)}
+                  placeholder="Record customer preferences, budget discussion, or next steps..."
+                  rows={3}
                   className={cn(
-                    "w-full h-9 flex items-center justify-center gap-2 px-3 rounded-xl border text-xs font-semibold transition-all cursor-pointer shadow-2xs hover:scale-101 active:scale-98",
-                    isDark ? "bg-white/5 hover:bg-white/10 text-slate-200 border-[#1E293B]" : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200"
+                    "w-full border rounded-xl p-2.5 text-xs focus:outline-none focus:ring-1 resize-none transition-all shadow-2xs",
+                    isDark
+                      ? "bg-[#131B2E] border-[#1E293B] text-white placeholder-slate-500 focus:border-emerald-500"
+                      : "bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400 focus:border-emerald-500 focus:bg-white"
+                  )}
+                />
+
+                {/* Add Note Button BELOW text area */}
+                <button
+                  type="button"
+                  onClick={handleAddNoteInline}
+                  disabled={!newNoteText.trim() || isSubmittingNote}
+                  className={cn(
+                    "w-full h-8.5 flex items-center justify-center gap-1.5 px-3 rounded-xl font-semibold text-xs transition-all cursor-pointer shadow-xs disabled:opacity-50 disabled:cursor-not-allowed",
+                    isDark
+                      ? "bg-emerald-600 hover:bg-emerald-500 text-white"
+                      : "bg-emerald-600 hover:bg-emerald-700 text-white"
                   )}
                 >
-                  <Plus className="w-3.5 h-3.5 text-emerald-500" />
-                  <span>Add Internal Note</span>
+                  {isSubmittingNote ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                  <span>Add Note</span>
                 </button>
               </div>
 
