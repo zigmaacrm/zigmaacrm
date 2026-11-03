@@ -109,11 +109,27 @@ function cleanDisplayCaption(text?: string | null, fileName?: string | null): st
   return t;
 }
 
-function VoiceNotePlayer({ audioUrl, isOutbound, isDark }: { audioUrl: string; isOutbound: boolean; isDark: boolean }) {
+function VoiceNotePlayer({
+  audioUrl,
+  isOutbound,
+  isDark,
+  durationHint = 0
+}: {
+  audioUrl: string;
+  isOutbound: boolean;
+  isDark: boolean;
+  durationHint?: number;
+}) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
+  const [duration, setDuration] = useState(durationHint);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    if (durationHint > 0 && duration <= 0) {
+      setDuration(durationHint);
+    }
+  }, [durationHint, duration]);
 
   const togglePlay = () => {
     if (!audioRef.current) return;
@@ -121,19 +137,28 @@ function VoiceNotePlayer({ audioUrl, isOutbound, isDark }: { audioUrl: string; i
       audioRef.current.pause();
       setIsPlaying(false);
     } else {
-      audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+      audioRef.current.play().then(() => setIsPlaying(true)).catch((err) => {
+        console.warn("Audio play notice:", err?.message || err);
+      });
     }
   };
 
   const handleTimeUpdate = () => {
     if (audioRef.current) {
       setCurrentTime(audioRef.current.currentTime);
+      const d = audioRef.current.duration;
+      if (d && isFinite(d) && d > 0) {
+        setDuration(Math.round(d));
+      }
     }
   };
 
   const handleLoadedMetadata = () => {
     if (audioRef.current) {
-      setDuration(audioRef.current.duration || 0);
+      const d = audioRef.current.duration;
+      if (d && isFinite(d) && d > 0) {
+        setDuration(Math.round(d));
+      }
     }
   };
 
@@ -151,11 +176,13 @@ function VoiceNotePlayer({ audioUrl, isOutbound, isDark }: { audioUrl: string; i
   };
 
   const formatSecs = (sec: number) => {
-    if (isNaN(sec) || !isFinite(sec)) return "0:00";
+    if (isNaN(sec) || !isFinite(sec) || sec <= 0) return "0:00";
     const m = Math.floor(sec / 60);
     const s = Math.floor(sec % 60);
     return `${m}:${s < 10 ? "0" : ""}${s}`;
   };
+
+  const effectiveDuration = duration > 0 ? duration : (durationHint > 0 ? durationHint : 0);
 
   return (
     <div className={cn(
@@ -175,7 +202,7 @@ function VoiceNotePlayer({ audioUrl, isOutbound, isDark }: { audioUrl: string; i
         onClick={togglePlay}
         className={cn(
           "w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-transform active:scale-95 shadow-sm text-white",
-          isOutbound ? "bg-emerald-600 hover:bg-emerald-500" : "bg-emerald-600 hover:bg-emerald-500"
+          "bg-emerald-600 hover:bg-emerald-500"
         )}
       >
         {isPlaying ? <Pause className="w-4 h-4 fill-white" /> : <Play className="w-4 h-4 fill-white ml-0.5" />}
@@ -185,14 +212,14 @@ function VoiceNotePlayer({ audioUrl, isOutbound, isDark }: { audioUrl: string; i
         <input
           type="range"
           min={0}
-          max={duration || 100}
+          max={effectiveDuration || 100}
           value={currentTime}
           onChange={handleSeek}
           className="w-full h-1.5 bg-slate-300 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-emerald-500"
         />
         <div className="flex justify-between text-[10px] text-slate-500 dark:text-slate-400 mt-1 font-mono">
           <span>{formatSecs(currentTime)}</span>
-          <span>{duration > 0 ? formatSecs(duration) : "0:00"}</span>
+          <span>{effectiveDuration > 0 ? formatSecs(effectiveDuration) : "0:00"}</span>
         </div>
       </div>
 
@@ -1799,6 +1826,13 @@ export default function WhatsAppPage() {
                                 audioUrl={msg.attachment?.url || msg.mediaUrl || ""}
                                 isOutbound={isOutbound}
                                 isDark={isDark}
+                                durationHint={(() => {
+                                  const match = (msg.text || "").match(/\((\d+)s\)/);
+                                  if (match) return parseInt(match[1], 10);
+                                  const fileMatch = (msg.fileName || "").match(/voice_(\d+)s/);
+                                  if (fileMatch) return parseInt(fileMatch[1], 10);
+                                  return undefined;
+                                })()}
                               />
                             )}
 

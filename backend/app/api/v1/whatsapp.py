@@ -1012,6 +1012,18 @@ async def upload_and_send_voice_note(
                 res_data = resp.json()
                 meta_id = res_data.get("message_id") or meta_id
                 outbound_status = "SENT"
+                converted_b64 = res_data.get("converted_ogg_base64")
+                if converted_b64:
+                    try:
+                        ogg_bytes = base64.b64decode(converted_b64)
+                        ogg_file_name = file_name.rsplit(".", 1)[0] + ".ogg"
+                        ogg_path = os.path.join(uploads_dir, ogg_file_name)
+                        with open(ogg_path, "wb") as f_ogg:
+                            f_ogg.write(ogg_bytes)
+                        file_name = ogg_file_name
+                        media_url = f"/media/whatsapp/{ogg_file_name}"
+                    except Exception as e_ogg:
+                        logger.warning(f"Failed to save converted ogg: {e_ogg}")
             else:
                 outbound_status = "FAILED"
     except Exception as e:

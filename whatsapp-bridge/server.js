@@ -4,6 +4,56 @@ const qrcode = require('qrcode');
 const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
+const { spawn } = require('child_process');
+
+let ffmpegPath = null;
+try {
+  ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+} catch (e) {
+  console.warn('[WhatsApp Bridge] @ffmpeg-installer/ffmpeg not loaded:', e.message);
+}
+
+async function convertAudioToWhatsAppPtt(inputBuffer) {
+  if (!ffmpegPath || !inputBuffer || inputBuffer.length === 0) {
+    return inputBuffer;
+  }
+  return new Promise((resolve) => {
+    try {
+      const ffmpegProc = spawn(ffmpegPath, [
+        '-i', 'pipe:0',
+        '-c:a', 'libopus',
+        '-b:a', '32k',
+        '-ar', '48000',
+        '-ac', '1',
+        '-application', 'voip',
+        '-f', 'ogg',
+        'pipe:1'
+      ]);
+
+      const chunks = [];
+      ffmpegProc.stdout.on('data', (d) => chunks.push(d));
+      ffmpegProc.stderr.on('data', () => {});
+      ffmpegProc.on('close', (code) => {
+        if (code === 0 && chunks.length > 0) {
+          resolve(Buffer.concat(chunks));
+        } else {
+          console.warn(`[FFmpeg Audio Convert] Exit code ${code}, falling back to original buffer`);
+          resolve(inputBuffer);
+        }
+      });
+      ffmpegProc.on('error', (err) => {
+        console.warn('[FFmpeg Audio Convert Error]:', err.message);
+        resolve(inputBuffer);
+      });
+
+      ffmpegProc.stdin.write(inputBuffer);
+      ffmpegProc.stdin.end();
+    } catch (err) {
+      console.warn('[FFmpeg Spawn Error]:', err.message);
+      resolve(inputBuffer);
+    }
+  });
+}
 
 // Global crash guards so Bad MAC / Session Errors NEVER terminate the bridge process
 process.on('uncaughtException', (err) => {
@@ -816,9 +866,10 @@ app.post('/send', async (req, res) => {
           mimetype: mime
         });
       } else if (mime.startsWith('audio/')) {
+        const oggBuffer = await convertAudioToWhatsAppPtt(fileBuffer);
         result = await sock.sendMessage(jid, {
-          audio: fileBuffer,
-          mimetype: mime,
+          audio: oggBuffer,
+          mimetype: 'audio/ogg; codecs=opus',
           ptt: true
         });
       } else {
@@ -861,19 +912,22 @@ app.post('/api/whatsapp/send-voice', async (req, res) => {
     const pureBase64 = audio_base64.includes(',') ? audio_base64.split(',')[1] : audio_base64;
     const fileBuffer = Buffer.from(pureBase64, 'base64');
 
-    let mime = (mimetype || 'audio/ogg; codecs=opus').toLowerCase();
-    if (mime.includes('webm')) {
-      mime = 'audio/ogg; codecs=opus';
-    }
+    // Transcode to clean WhatsApp PTT OGG Opus (RFC 7845)
+    const oggBuffer = await convertAudioToWhatsAppPtt(fileBuffer);
 
     const result = await sock.sendMessage(jid, {
-      audio: fileBuffer,
-      mimetype: mime,
+      audio: oggBuffer,
+      mimetype: 'audio/ogg; codecs=opus',
       ptt: true
     });
     const messageId = result?.key?.id || `wamid.voice_${Date.now()}`;
-    console.log(`[WhatsApp Voice Note Sent] To: ${cleanPhone}, ID: ${messageId}`);
-    res.json({ success: true, message_id: messageId, status: 'SENT' });
+    console.log(`[WhatsApp Voice Note Sent] To: ${cleanPhone}, ID: ${messageId}, Size: ${oggBuffer.length} bytes`);
+    res.json({
+      success: true,
+      message_id: messageId,
+      status: 'SENT',
+      converted_ogg_base64: oggBuffer.toString('base64')
+    });
   } catch (err) {
     console.error('[WhatsApp Voice Send Error]:', err);
     res.status(500).json({ success: false, error: err.message });
