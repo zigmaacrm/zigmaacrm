@@ -1794,7 +1794,8 @@ export default function WhatsAppPage() {
                                 <img
                                   src={msg.attachment.url}
                                   alt="WhatsApp Sticker"
-                                  className="w-32 h-32 object-contain"
+                                  className="w-36 h-36 max-w-[160px] max-h-[160px] object-contain drop-shadow-sm transition-transform hover:scale-105"
+                                  onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}
                                 />
                               </div>
                             )}

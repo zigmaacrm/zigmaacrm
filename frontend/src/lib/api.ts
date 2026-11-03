@@ -3149,11 +3149,13 @@ export const zigmaaApi = {
   async getWhatsAppMessages(params: {
     phone_number?: string;
     contact_id?: string;
+    limit?: number;
   }): Promise<any> {
     try {
       const query = new URLSearchParams();
       if (params.phone_number) query.set("phone_number", params.phone_number);
       if (params.contact_id) query.set("contact_id", params.contact_id);
+      query.set("limit", String(params.limit || 150));
 
       const res = await fetch(`${API_BASE}/whatsapp/messages?${query.toString()}`, {
         headers: {

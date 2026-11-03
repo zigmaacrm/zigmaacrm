@@ -378,7 +378,7 @@ async def send_whatsapp_message(
 async def get_whatsapp_messages(
     phone_number: Optional[str] = Query(None),
     contact_id: Optional[str] = Query(None),
-    limit: int = Query(50, le=200),
+    limit: int = Query(150, le=500),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -392,9 +392,11 @@ async def get_whatsapp_messages(
         search_suffix = clean[-10:] if len(clean) >= 10 else clean
         stmt = stmt.where(WhatsAppMessage.phone_number.like(f"%{search_suffix}%"))
 
-    stmt = stmt.order_by(WhatsAppMessage.created_at.asc()).limit(limit)
+    # Order DESC to get the latest messages first, then reverse for chronological display
+    stmt = stmt.order_by(WhatsAppMessage.created_at.desc()).limit(limit)
     res = await db.execute(stmt)
-    messages = res.scalars().all()
+    messages = list(res.scalars().all())
+    messages.reverse()
 
     return {
         "status": "success",
