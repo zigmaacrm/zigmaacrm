@@ -395,13 +395,18 @@ async def get_whatsapp_conversations(
 
     conv_map: Dict[str, Any] = {}
 
+    DUMMY_TEST_PHONES = {
+        '16315551181', '919655512345', '9197187', '9197229303', '9197633560',
+        '919940211876', '919840122345', '919444099881', '919811234567', '919789055432'
+    }
+
     if all_msgs:
         unique_phones = set()
         unique_contact_ids = set()
         for m in all_msgs:
             if m.phone_number:
                 clean = normalize_phone(m.phone_number)
-                if clean:
+                if clean and clean not in DUMMY_TEST_PHONES and len(clean) >= 7:
                     unique_phones.add(clean)
                     unique_phones.add(f"+{clean}")
                     unique_phones.add(m.phone_number)
@@ -430,6 +435,12 @@ async def get_whatsapp_conversations(
             reps_by_id = {u.id: u for u in u_res.scalars().all()}
 
         for m in all_msgs:
+            if not m.phone_number:
+                continue
+            clean_check = normalize_phone(m.phone_number)
+            if not clean_check or clean_check in DUMMY_TEST_PHONES or len(clean_check) < 7:
+                continue
+
             if m.phone_number not in conv_map:
                 contact = contacts_by_id.get(m.contact_id)
                 if not contact:
@@ -501,57 +512,16 @@ async def get_whatsapp_conversations(
                     "unread_count": unread_cnt
                 }
 
-    # Also include direct WhatsApp address-book contacts even without messages yet
-    existing_clean_phones = {normalize_phone(p) for p in conv_map.keys() if p}
-    sc_stmt = select(Contact).where(
-        or_(
-            Contact.source == "WHATSAPP",
-            Contact.lifecycle_stage == "LEAD"
-        )
-    ).order_by(desc(Contact.created_at)).limit(limit)
-    sc_res = await db.execute(sc_stmt)
-    synced_contacts = sc_res.scalars().all()
-
-    for sc in synced_contacts:
-        sc_clean = normalize_phone(sc.phone)
-        if not sc_clean or sc_clean in existing_clean_phones or (len(sc_clean) >= 10 and any(ep.endswith(sc_clean[-10:]) for ep in existing_clean_phones)):
-            continue
-
-        sc_name = sc.full_name if sc.full_name and not is_generic_or_placeholder_name(sc.full_name, sc_clean) else format_display_phone(sc_clean)
-        parts = sc_name.strip().split()
-        initials = (parts[0][0] + (parts[1][0] if len(parts) > 1 else ""))[:2].upper() if parts else "WA"
-        avatar_url = sc.custom_data.get("avatar_url") if isinstance(sc.custom_data, dict) else None
-
-        conv_map[sc.phone or sc_clean] = {
-            "id": f"conv-{sc.id}",
-            "phone_number": sc.phone or f"+{sc_clean}",
-            "contact_id": sc.id,
-            "assigned_user_id": sc.assigned_user_id,
-            "business_phone_number_id": None,
-            "contact_name": sc_name,
-            "company_name": sc.company_name or "Direct Prospect",
-            "email": sc.email or "",
-            "avatar_url": avatar_url,
-            "avatar_initials": initials,
-            "deal_stage": sc.lifecycle_stage or "Lead",
-            "deal_value": 0,
-            "assigned_rep": {
-                "id": sc.assigned_user_id,
-                "name": sc.assigned_user_name or "Madhavan R",
-                "avatar": "MR",
-                "role": "Sales Representative"
-            },
-            "last_message": "Ready to chat (WhatsApp Contact)",
-            "last_message_time": sc.created_at.isoformat() if sc.created_at else None,
-            "last_direction": "NONE",
-            "last_status": "READY",
-            "unread_count": 0
-        }
-        existing_clean_phones.add(sc_clean)
+    # Return ONLY real active conversations with actual sent or received messages
+    active_conversations = list(conv_map.values())
+    active_conversations.sort(
+        key=lambda c: c.get("last_message_time") or "",
+        reverse=True
+    )
 
     return {
         "status": "success",
-        "conversations": list(conv_map.values())[:limit]
+        "conversations": active_conversations[:limit]
     }
 
 @router.patch("/conversations/{phone_number}/assign")
