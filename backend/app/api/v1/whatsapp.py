@@ -1012,6 +1012,10 @@ async def upload_and_send_voice_note(
                 res_data = resp.json()
                 meta_id = res_data.get("message_id") or meta_id
                 outbound_status = "SENT"
+                bridge_dur = res_data.get("duration_seconds")
+                dur = bridge_dur or payload.duration_seconds
+                if dur:
+                    display_body = f"🎤 Voice message ({dur}s)"
                 converted_b64 = res_data.get("converted_ogg_base64")
                 if converted_b64:
                     try:

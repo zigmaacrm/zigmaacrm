@@ -13,48 +13,6 @@ try {
   console.warn('[WhatsApp Bridge] @ffmpeg-installer/ffmpeg not loaded:', e.message);
 }
 
-async function convertAudioToWhatsAppPtt(inputBuffer) {
-  if (!ffmpegPath || !inputBuffer || inputBuffer.length === 0) {
-    return inputBuffer;
-  }
-  return new Promise((resolve) => {
-    try {
-      const ffmpegProc = spawn(ffmpegPath, [
-        '-i', 'pipe:0',
-        '-c:a', 'libopus',
-        '-b:a', '32k',
-        '-ar', '48000',
-        '-ac', '1',
-        '-application', 'voip',
-        '-f', 'ogg',
-        'pipe:1'
-      ]);
-
-      const chunks = [];
-      ffmpegProc.stdout.on('data', (d) => chunks.push(d));
-      ffmpegProc.stderr.on('data', () => {});
-      ffmpegProc.on('close', (code) => {
-        if (code === 0 && chunks.length > 0) {
-          resolve(Buffer.concat(chunks));
-        } else {
-          console.warn(`[FFmpeg Audio Convert] Exit code ${code}, falling back to original buffer`);
-          resolve(inputBuffer);
-        }
-      });
-      ffmpegProc.on('error', (err) => {
-        console.warn('[FFmpeg Audio Convert Error]:', err.message);
-        resolve(inputBuffer);
-      });
-
-      ffmpegProc.stdin.write(inputBuffer);
-      ffmpegProc.stdin.end();
-    } catch (err) {
-      console.warn('[FFmpeg Spawn Error]:', err.message);
-      resolve(inputBuffer);
-    }
-  });
-}
-
 // Global crash guards so Bad MAC / Session Errors NEVER terminate the bridge process
 process.on('uncaughtException', (err) => {
   console.warn('[WhatsApp Error Guard] Caught exception:', err.message);
@@ -89,6 +47,104 @@ if (!fs.existsSync(UPLOADS_DIR)) {
 }
 app.use('/media/whatsapp', express.static(UPLOADS_DIR));
 app.use('/uploads/whatsapp', express.static(UPLOADS_DIR));
+
+async function convertAudioToWhatsAppPtt(inputBuffer) {
+  if (!ffmpegPath || !inputBuffer || inputBuffer.length === 0) {
+    const fallbackWaveform = new Uint8Array(64);
+    for (let i = 0; i < 64; i++) fallbackWaveform[i] = Math.floor(15 + Math.random() * 25);
+    return { filePath: null, buffer: inputBuffer, seconds: 1, waveform: fallbackWaveform };
+  }
+
+  const tmpId = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const tmpIn = path.join(UPLOADS_DIR, `ptt_in_${tmpId}.bin`);
+  const tmpOut = path.join(UPLOADS_DIR, `ptt_out_${tmpId}.ogg`);
+
+  try {
+    fs.writeFileSync(tmpIn, inputBuffer);
+
+    // Official WhatsApp PTT Audio Transcoder:
+    // -vn: strip video/metadata
+    // -c:a libopus: Opus compression
+    // -b:a 48k: optimal VoIP bitrate
+    // -ar 48000: strictly 48kHz (mandatory for WhatsApp)
+    // -ac 1: strictly mono (stereo causes "not available" playback error)
+    // -avoid_negative_ts make_zero: PREVENTS TIMELINE/TIMESTAMP SYNCHRONIZATION BUGS THAT CAUSE PLAYERS TO CRASH OR SHOW "NOT AVAILABLE"
+    // -f ogg: standard Ogg container
+    const { execFileSync } = require('child_process');
+    execFileSync(ffmpegPath, [
+      '-y',
+      '-i', tmpIn,
+      '-vn',
+      '-c:a', 'libopus',
+      '-b:a', '48k',
+      '-ar', '48000',
+      '-ac', '1',
+      '-avoid_negative_ts', 'make_zero',
+      '-f', 'ogg',
+      tmpOut
+    ], { stdio: 'pipe' });
+
+    const oggBuffer = fs.readFileSync(tmpOut);
+
+    // Compute duration
+    let durationSeconds = 1;
+    try {
+      const mm = await import('music-metadata');
+      const meta = await mm.parseFile(tmpOut);
+      if (meta?.format?.duration && isFinite(meta.format.duration)) {
+        durationSeconds = Math.max(1, Math.round(meta.format.duration));
+      }
+    } catch (_) {}
+
+    // Generate WhatsApp 64-point amplitude waveform
+    let waveform = null;
+    try {
+      const { default: decoder } = await import('audio-decode');
+      const audioBuffer = await decoder(oggBuffer);
+      const rawData = audioBuffer.getChannelData(0);
+      const samples = 64;
+      const blockSize = Math.floor(rawData.length / samples);
+      const filteredData = [];
+      for (let i = 0; i < samples; i++) {
+        const blockStart = blockSize * i;
+        let sum = 0;
+        for (let j = 0; j < blockSize; j++) {
+          sum += Math.abs(rawData[blockStart + j] || 0);
+        }
+        filteredData.push(sum / blockSize);
+      }
+      const maxVal = Math.max(...filteredData, 0.001);
+      const normalizedData = filteredData.map(n => Math.min(1, n / maxVal));
+      waveform = new Uint8Array(normalizedData.map(n => Math.max(5, Math.floor(100 * n))));
+    } catch (wErr) {
+      waveform = new Uint8Array(64);
+      for (let i = 0; i < 64; i++) {
+        waveform[i] = Math.floor(20 + Math.sin(i / 3) * 15 + Math.random() * 20);
+      }
+    }
+
+    try { fs.unlinkSync(tmpIn); } catch (_) {}
+
+    return {
+      filePath: tmpOut,
+      buffer: oggBuffer,
+      seconds: durationSeconds,
+      waveform: waveform
+    };
+  } catch (err) {
+    console.error('[WhatsApp PTT Audio Transcode Error]:', err.message);
+    try { if (fs.existsSync(tmpIn)) fs.unlinkSync(tmpIn); } catch (_) {}
+    try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch (_) {}
+    const fallbackWaveform = new Uint8Array(64);
+    for (let i = 0; i < 64; i++) fallbackWaveform[i] = Math.floor(15 + Math.random() * 25);
+    return {
+      filePath: null,
+      buffer: inputBuffer,
+      seconds: 1,
+      waveform: fallbackWaveform
+    };
+  }
+}
 
 // State
 let sock = null;
@@ -866,12 +922,17 @@ app.post('/send', async (req, res) => {
           mimetype: mime
         });
       } else if (mime.startsWith('audio/')) {
-        const oggBuffer = await convertAudioToWhatsAppPtt(fileBuffer);
+        const pttData = await convertAudioToWhatsAppPtt(fileBuffer);
         result = await sock.sendMessage(jid, {
-          audio: oggBuffer,
+          audio: pttData.buffer,
           mimetype: 'audio/ogg; codecs=opus',
-          ptt: true
+          ptt: true,
+          seconds: pttData.seconds || 1,
+          waveform: pttData.waveform
         });
+        if (pttData.filePath) {
+          setTimeout(() => { try { fs.unlinkSync(pttData.filePath); } catch (_) {} }, 30000);
+        }
       } else {
         result = await sock.sendMessage(jid, {
           document: fileBuffer,
@@ -913,20 +974,26 @@ app.post('/api/whatsapp/send-voice', async (req, res) => {
     const fileBuffer = Buffer.from(pureBase64, 'base64');
 
     // Transcode to clean WhatsApp PTT OGG Opus (RFC 7845)
-    const oggBuffer = await convertAudioToWhatsAppPtt(fileBuffer);
+    const pttData = await convertAudioToWhatsAppPtt(fileBuffer);
 
     const result = await sock.sendMessage(jid, {
-      audio: oggBuffer,
+      audio: pttData.buffer,
       mimetype: 'audio/ogg; codecs=opus',
-      ptt: true
+      ptt: true,
+      seconds: pttData.seconds || 1,
+      waveform: pttData.waveform
     });
     const messageId = result?.key?.id || `wamid.voice_${Date.now()}`;
-    console.log(`[WhatsApp Voice Note Sent] To: ${cleanPhone}, ID: ${messageId}, Size: ${oggBuffer.length} bytes`);
+    console.log(`[WhatsApp Voice Note Sent] To: ${cleanPhone}, ID: ${messageId}, Duration: ${pttData.seconds}s, Size: ${pttData.buffer.length} bytes`);
+    if (pttData.filePath) {
+      setTimeout(() => { try { fs.unlinkSync(pttData.filePath); } catch (_) {} }, 30000);
+    }
     res.json({
       success: true,
       message_id: messageId,
       status: 'SENT',
-      converted_ogg_base64: oggBuffer.toString('base64')
+      converted_ogg_base64: pttData.buffer.toString('base64'),
+      duration_seconds: pttData.seconds
     });
   } catch (err) {
     console.error('[WhatsApp Voice Send Error]:', err);

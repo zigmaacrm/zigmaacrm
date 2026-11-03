@@ -582,9 +582,12 @@ export default function WhatsAppPage() {
                       ...m,
                       id: savedData?.id || m.id,
                       status: "DELIVERED",
+                      text: savedData?.message_body || m.text,
+                      fileName: savedData?.file_name || m.fileName,
                       mediaUrl: fullMediaUrl || m.mediaUrl,
                       attachment: {
                         ...m.attachment!,
+                        name: savedData?.file_name || m.attachment!.name,
                         url: fullMediaUrl || m.attachment!.url
                       }
                     }
