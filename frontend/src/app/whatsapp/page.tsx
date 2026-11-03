@@ -113,7 +113,7 @@ function parseQuotedReply(rawText?: string | null): {
 } {
   if (!rawText) return { hasQuote: false, quotedSender: "", quotedText: "", body: "" };
   const raw = rawText.trim();
-  const match = raw.match(/^>\s*\*?([^*\n:]+)\*?:\s*([^\n]+)\n\n([\s\S]*)$/);
+  const match = raw.match(/^>\s*\*?([^*\n:]+)\*?:\s*([^\n]+)\n+([\s\S]*)$/);
   if (match) {
     return {
       hasQuote: true,
@@ -123,6 +123,24 @@ function parseQuotedReply(rawText?: string | null): {
     };
   }
   return { hasQuote: false, quotedSender: "", quotedText: "", body: raw };
+}
+
+function formatLastMessagePreview(text?: string | null): string {
+  if (!text) return "";
+  const raw = text.trim();
+  if (raw.startsWith(">")) {
+    const parsed = parseQuotedReply(raw);
+    if (parsed.hasQuote && parsed.body) {
+      return parsed.body;
+    }
+    const lines = raw.split("\n").map((l) => l.trim()).filter(Boolean);
+    const nonQuotes = lines.filter((l) => !l.startsWith(">") && !l.startsWith("*"));
+    if (nonQuotes.length > 0) {
+      return nonQuotes.join(" ");
+    }
+    return raw.replace(/^>\s*\*?[^*:]+\*?:\s*/, "").trim();
+  }
+  return raw;
 }
 
 function cleanDisplayCaption(text?: string | null, fileName?: string | null): string {
@@ -350,14 +368,14 @@ function VoiceNotePlayer({
         {/* Waveform Scrubber Bars with Starting Dot */}
         <div
           onClick={handleWaveformSeek}
-          className="relative min-w-0 flex-1 h-7 flex items-center gap-[1.5px] cursor-pointer py-1 overflow-hidden"
+          className="relative min-w-0 flex-1 h-7 flex items-center gap-[1.5px] cursor-pointer py-1 overflow-visible"
           title="Click to seek"
         >
-          {/* Progress scrubber dot */}
+          {/* Progress scrubber dot - Perfectly round and clamped to track bounds */}
           <div
-            className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full shadow-xs transition-all pointer-events-none z-10"
+            className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full shadow-sm pointer-events-none z-10 transition-[left] duration-100 ease-linear"
             style={{
-              left: `${progressRatio * 100}%`,
+              left: `calc(6px + ${progressRatio} * (100% - 12px))`,
               transform: 'translate(-50%, -50%)',
               backgroundColor: playedColor
             }}
@@ -370,12 +388,16 @@ function VoiceNotePlayer({
             return (
               <div
                 key={idx}
-                className="flex-1 rounded-full transition-colors"
-                style={{
-                  height: `${height}px`,
-                  backgroundColor: isPlayed ? playedColor : unplayedColor
-                }}
-              />
+                className="flex-1 flex items-center justify-center h-full"
+              >
+                <span
+                  className="w-[2px] rounded-full transition-colors duration-100"
+                  style={{
+                    height: `${Math.max(4, height)}px`,
+                    backgroundColor: isPlayed ? playedColor : unplayedColor
+                  }}
+                />
+              </div>
             );
           })}
         </div>
@@ -654,7 +676,7 @@ function MessageBubbleContainer({
           )}
         >
           <Ban className="w-3.5 h-3.5 text-slate-400" />
-          <span>This message was deleted</span>
+          <span>{isOutbound ? "You deleted this message" : "This message was deleted"}</span>
           <span className="text-[10px] ml-1 not-italic opacity-60">{msg.timeLabel}</span>
         </div>
       </div>
@@ -1310,7 +1332,7 @@ export default function WhatsAppPage() {
       dealCloseDate: "28 Oct 2026",
       unreadCount: raw.unread_count || 0,
       isAssignedToMe: isMine,
-      lastMessage: raw.last_message,
+      lastMessage: formatLastMessagePreview(raw.last_message),
       lastMessageTime: raw.last_message_time,
       notes: (() => {
         if (typeof window !== "undefined") {
@@ -2213,7 +2235,7 @@ export default function WhatsAppPage() {
                               : isDark ? "text-slate-400" : "text-slate-500"
                           )}>
                             <span className="truncate">
-                              {conv.lastMessage || "Click to open conversation"}
+                              {formatLastMessagePreview(conv.lastMessage) || "Click to open conversation"}
                             </span>
                           </div>
 
@@ -2681,7 +2703,7 @@ export default function WhatsAppPage() {
                                 <div
                                   className={cn(
                                     "rounded-2xl px-3 py-2 text-sm leading-relaxed transition-all shadow-xs w-fit",
-                                    parsed.hasQuote ? "min-w-[210px] sm:min-w-[230px]" : "min-w-[90px]",
+                                    parsed.hasQuote ? "min-w-[125px] sm:min-w-[135px]" : "min-w-[90px]",
                                     isOutbound
                                       ? (isDark
                                           ? "bg-[#005c4b] border border-emerald-600/30 text-white rounded-tr-xs"
@@ -2713,19 +2735,47 @@ export default function WhatsAppPage() {
                                     </div>
                                   )}
 
+                                  {/* Quoted Tag UI matching real WhatsApp Web (Image 3) */}
                                   {parsed.hasQuote && (
                                     <div className={cn(
-                                      "w-full rounded-lg px-2.5 py-1.5 mb-1.5 border-l-[3.5px] text-xs select-none flex flex-col justify-center transition-all",
+                                      "w-full rounded-[6px] px-2.5 py-1 mb-1.5 border-l-[3.5px] text-xs select-none transition-all overflow-hidden",
                                       isOutbound
-                                        ? (isDark ? "bg-black/25 border-l-[#53bdeb]" : "bg-black/8 border-l-[#00a884]")
-                                        : (isDark ? "bg-black/25 border-l-[#00a884]" : "bg-black/8 border-l-[#00a884]")
+                                        ? (isDark
+                                            ? "bg-black/20 border-l-[#53bdeb]"
+                                            : "bg-black/[0.06] border-l-[#00a884]")
+                                        : (isDark
+                                            ? "bg-black/20 border-l-[#00a884]"
+                                            : "bg-black/[0.06] border-l-[#00a884]")
                                     )}>
-                                      <div className="font-bold text-[12px] text-emerald-600 dark:text-[#53bdeb] truncate">
-                                        {parsed.quotedSender}
-                                      </div>
-                                      <div className="text-[11px] text-slate-700 dark:text-slate-300 mt-0.5 line-clamp-2 break-words">
-                                        {parsed.quotedText}
-                                      </div>
+                                      {parsed.quotedText && parsed.quotedText.length <= 18 ? (
+                                        <div className="flex items-center gap-1.5 leading-snug">
+                                          <span className={cn(
+                                            "font-semibold text-[12px] shrink-0",
+                                            isOutbound
+                                              ? (isDark ? "text-[#53bdeb]" : "text-[#00a884]")
+                                              : "text-[#00a884]"
+                                          )}>
+                                            {parsed.quotedSender}:
+                                          </span>
+                                          <span className="truncate text-[12px] opacity-85 text-slate-800 dark:text-slate-200">
+                                            {parsed.quotedText}
+                                          </span>
+                                        </div>
+                                      ) : (
+                                        <div className="flex flex-col leading-snug gap-0.5">
+                                          <span className={cn(
+                                            "font-semibold text-[12px] truncate",
+                                            isOutbound
+                                              ? (isDark ? "text-[#53bdeb]" : "text-[#00a884]")
+                                              : "text-[#00a884]"
+                                          )}>
+                                            {parsed.quotedSender}
+                                          </span>
+                                          <span className="text-[12px] line-clamp-1 break-words opacity-85 text-slate-800 dark:text-slate-200">
+                                            {parsed.quotedText}
+                                          </span>
+                                        </div>
+                                      )}
                                     </div>
                                   )}
 
