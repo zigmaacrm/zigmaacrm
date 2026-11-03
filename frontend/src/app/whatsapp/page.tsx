@@ -512,15 +512,16 @@ export default function WhatsAppPage() {
       reader.onloadend = async () => {
         const base64Audio = reader.result as string;
         const cleanPhone = activeChat.phone.replace(/[^0-9]/g, "");
+        const tempVoiceId = `voice-${Date.now()}`;
 
         const optimisticMsg: WhatsAppMessage = {
-          id: `voice-${Date.now()}`,
+          id: tempVoiceId,
           sender: "outbound",
           text: `🎤 Voice message (${duration}s)`,
-          timestamp: "Just now",
+          timestamp: new Date().toISOString(),
           timeLabel: formatTime(new Date().toISOString()),
           dateGroup: "Today",
-          status: "PENDING",
+          status: "SENT",
           messageType: "ptt",
           isVoiceNote: true,
           attachment: {
@@ -530,18 +531,48 @@ export default function WhatsAppPage() {
           }
         };
         setMessages((prev) => [...prev, optimisticMsg]);
+        setIsSending(true);
 
         try {
-          await api.uploadWhatsAppVoice({
+          const res = await api.uploadWhatsAppVoice({
             phone_number: cleanPhone,
             audio_base64: base64Audio,
             mimetype: mimeType,
             contact_id: activeChat.contact_id,
             duration_seconds: duration
           });
-          loadMessages(cleanPhone, true);
+          if (res && res.status === "success") {
+            const savedData = res.data;
+            const apiBase = process.env.NEXT_PUBLIC_API_URL?.replace("/api/v1", "") || "http://localhost:8000";
+            const fullMediaUrl = savedData?.media_url
+              ? (savedData.media_url.startsWith("http") ? savedData.media_url : `${apiBase}${savedData.media_url}`)
+              : undefined;
+
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === tempVoiceId
+                  ? {
+                      ...m,
+                      id: savedData?.id || m.id,
+                      status: "DELIVERED",
+                      mediaUrl: fullMediaUrl || m.mediaUrl,
+                      attachment: {
+                        ...m.attachment!,
+                        url: fullMediaUrl || m.attachment!.url
+                      }
+                    }
+                  : m
+              )
+            );
+            loadConversations(true);
+            toast.success("Voice Note Sent", `Voice note delivered to ${activeChat.contactName}`);
+          } else {
+            toast.error("Voice Note Failed", "Failed to deliver voice note.");
+          }
         } catch (e: any) {
           toast.error("Voice Note Failed", "Failed to deliver voice note.");
+        } finally {
+          setIsSending(false);
         }
       };
     };
@@ -816,7 +847,18 @@ export default function WhatsAppPage() {
           };
         });
 
-        setMessages(mappedMsgs);
+        setMessages((prev) => {
+          // Preserve any in-flight optimistic messages so messages NEVER disappear/stutter
+          const pendingOptimistic = prev.filter((m) =>
+            (m.id.startsWith("temp-") || m.id.startsWith("voice-")) &&
+            !mappedMsgs.some((serverM) =>
+              serverM.id === m.id ||
+              (serverM.sender === "outbound" &&
+               (serverM.text === m.text || (m.isVoiceNote && serverM.isVoiceNote)))
+            )
+          );
+          return [...mappedMsgs, ...pendingOptimistic];
+        });
 
         // Mark unread messages as read in backend and update conversation list badge
         api.markWhatsAppConversationRead(clean).catch(() => {});
@@ -889,7 +931,7 @@ export default function WhatsAppPage() {
       isPollingRef.current = true;
       try {
         await loadConversations(true);
-        if (activePhone) {
+        if (activePhone && !isSending) {
           await loadMessages(activePhone, true);
         }
       } catch (err) {
@@ -899,7 +941,7 @@ export default function WhatsAppPage() {
       }
     };
 
-    const interval = setInterval(poll, 3000);
+    const interval = setInterval(poll, 4000);
 
     const handleVisibility = () => {
       if (typeof document !== "undefined" && !document.hidden) {
@@ -990,12 +1032,20 @@ export default function WhatsAppPage() {
       });
 
       if (res && res.status === "success") {
-        // Update optimistic message status
+        const savedData = res.data;
+        // Seamlessly update optimistic message with real server ID and delivery status
         setMessages((prev) =>
-          prev.map((m) => (m.id === tempId ? { ...m, status: "DELIVERED" } : m))
+          prev.map((m) =>
+            m.id === tempId
+              ? {
+                  ...m,
+                  id: savedData?.id || m.id,
+                  status: (savedData?.status as any) || "DELIVERED",
+                  timeLabel: formatTime(savedData?.created_at) || m.timeLabel
+                }
+              : m
+          )
         );
-        // Silently reload messages
-        loadMessages(cleanPhone, true);
         loadConversations(true);
       }
     } catch (err: any) {
@@ -1214,10 +1264,28 @@ export default function WhatsAppPage() {
       });
 
       if (res && res.status === "success") {
+        const savedData = res.data;
+        const apiBase = process.env.NEXT_PUBLIC_API_URL?.replace("/api/v1", "") || "http://localhost:8000";
+        const fullMediaUrl = savedData?.media_url
+          ? (savedData.media_url.startsWith("http") ? savedData.media_url : `${apiBase}${savedData.media_url}`)
+          : undefined;
+
         setMessages((prev) =>
-          prev.map((m) => (m.id === tempId ? { ...m, status: "DELIVERED" } : m))
+          prev.map((m) =>
+            m.id === tempId
+              ? {
+                  ...m,
+                  id: savedData?.id || m.id,
+                  status: (savedData?.status as any) || "DELIVERED",
+                  mediaUrl: fullMediaUrl || m.mediaUrl,
+                  attachment: {
+                    ...m.attachment!,
+                    url: fullMediaUrl || m.attachment!.url
+                  }
+                }
+              : m
+          )
         );
-        loadMessages(cleanPhone, true);
         loadConversations(true);
         toast.success("Attachment Dispatched", `Sent ${file.name} to ${activeChat.contactName}`);
       }

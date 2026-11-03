@@ -861,9 +861,14 @@ app.post('/api/whatsapp/send-voice', async (req, res) => {
     const pureBase64 = audio_base64.includes(',') ? audio_base64.split(',')[1] : audio_base64;
     const fileBuffer = Buffer.from(pureBase64, 'base64');
 
+    let mime = (mimetype || 'audio/ogg; codecs=opus').toLowerCase();
+    if (mime.includes('webm')) {
+      mime = 'audio/ogg; codecs=opus';
+    }
+
     const result = await sock.sendMessage(jid, {
       audio: fileBuffer,
-      mimetype: mimetype || 'audio/mp4',
+      mimetype: mime,
       ptt: true
     });
     const messageId = result?.key?.id || `wamid.voice_${Date.now()}`;

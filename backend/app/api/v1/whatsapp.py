@@ -361,6 +361,10 @@ async def send_whatsapp_message(
             "phone_number": wa_message.phone_number,
             "direction": wa_message.direction,
             "message_body": wa_message.message_body,
+            "message_type": wa_message.message_type,
+            "media_url": wa_message.media_url,
+            "file_name": wa_message.file_name,
+            "is_voice_note": wa_message.is_voice_note,
             "meta_message_id": wa_message.meta_message_id,
             "status": wa_message.status,
             "contact_id": wa_message.contact_id,
@@ -921,7 +925,7 @@ async def sync_whatsapp_chat_history(
             db.add(contact)
             await db.flush()
 
-        dt = datetime.datetime.fromtimestamp(item.timestamp) if item.timestamp else dt_utcnow.utcnow()
+        dt = datetime.datetime.fromtimestamp(item.timestamp) if item.timestamp else datetime.datetime.utcnow()
         dir_val = (item.direction or "INBOUND").upper()
 
         wa_msg = WhatsAppMessage(
@@ -1031,8 +1035,8 @@ async def upload_and_send_voice_note(
         is_voice_note=True,
         meta_message_id=meta_id,
         status=outbound_status,
-        timestamp=dt_utcnow.utcnow(),
-        created_at=dt_utcnow.utcnow()
+        timestamp=datetime.datetime.utcnow(),
+        created_at=datetime.datetime.utcnow()
     )
     db.add(wa_msg)
     await db.commit()
