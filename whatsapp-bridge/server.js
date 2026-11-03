@@ -4,6 +4,14 @@ const qrcode = require('qrcode');
 const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
+
+// Global crash guards so Bad MAC / Session Errors NEVER terminate the bridge process
+process.on('uncaughtException', (err) => {
+  console.warn('[WhatsApp Error Guard] Caught exception:', err.message);
+});
+process.on('unhandledRejection', (reason) => {
+  console.warn('[WhatsApp Error Guard] Caught rejection:', reason?.message || reason);
+});
 const {
   default: makeWASocket,
   useMultiFileAuthState,
@@ -315,25 +323,65 @@ async function initWhatsApp(forceClean = false) {
       }
     });
 
-    // 1. Direct Contact Sync (Ignore @g.us group chats, only accept direct @c.us and @s.whatsapp.net)
-    sock.ev.on('messaging-history.set', ({ contacts }) => {
-      if (!contacts || !Array.isArray(contacts)) return;
-      for (const c of contacts) {
-        const jid = c.id || '';
-        if (jid.endsWith('@g.us') || jid === 'status@broadcast') continue;
-        if (!jid.endsWith('@c.us') && !jid.endsWith('@s.whatsapp.net')) continue;
-        const phone = jid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
-        if (!phone || phone.length < 7) continue;
+    // 1. Direct Contact & Recent Messages History Sync (Ignore @g.us group chats, only accept direct 1-on-1 chats)
+    sock.ev.on('messaging-history.set', async ({ contacts, chats, messages }) => {
+      if (contacts && Array.isArray(contacts)) {
+        for (const c of contacts) {
+          const jid = c.id || '';
+          if (jid.endsWith('@g.us') || jid === 'status@broadcast') continue;
+          if (!jid.endsWith('@c.us') && !jid.endsWith('@s.whatsapp.net')) continue;
+          const phone = jid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+          if (!phone || phone.length < 7) continue;
 
-        const name = c.name || c.notify || c.verifiedName || null;
-        pendingContacts.set(phone, {
-          phone,
-          name,
-          jid,
-          avatar_url: null
-        });
+          const name = c.name || c.notify || c.verifiedName || null;
+          pendingContacts.set(phone, {
+            phone,
+            name,
+            jid,
+            avatar_url: null
+          });
+        }
+        scheduleContactSync();
       }
-      scheduleContactSync();
+
+      if (messages && Array.isArray(messages) && messages.length > 0) {
+        console.log(`[WhatsApp History Sync] Processing ${messages.length} historical messages from WhatsApp...`);
+        let syncedCount = 0;
+        for (const msg of messages) {
+          const remoteJid = msg.key?.remoteJid || '';
+          if (
+            !remoteJid ||
+            remoteJid.endsWith('@g.us') ||
+            remoteJid === 'status@broadcast' ||
+            remoteJid.endsWith('@newsletter') ||
+            remoteJid.endsWith('@broadcast')
+          ) {
+            continue;
+          }
+          const phone = resolvePhoneFromJid(remoteJid);
+          const body = extractMessageBody(msg.message);
+          if (!phone || (!body && !msg.message?.imageMessage && !msg.message?.documentMessage && !msg.message?.audioMessage)) {
+            continue;
+          }
+
+          try {
+            await fetch(FASTAPI_WEBHOOK_URL, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                phone_number: phone,
+                contact_name: msg.pushName || '',
+                message_body: body || '[Attachment Received]',
+                meta_message_id: msg.key.id || `wamid.hist_${Date.now()}_${Math.random()}`,
+                timestamp: Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000),
+                direction: msg.key.fromMe ? 'OUTBOUND' : 'INBOUND'
+              })
+            });
+            syncedCount++;
+          } catch (_) {}
+        }
+        console.log(`[WhatsApp History Sync] Successfully synced ${syncedCount} 1-on-1 messages to CRM.`);
+      }
     });
 
     sock.ev.on('contacts.upsert', (contacts) => {
