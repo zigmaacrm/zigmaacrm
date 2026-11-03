@@ -274,7 +274,7 @@ function VoiceNotePlayer({
   const displaySecs = isPlaying ? currentTime : (effectiveDuration > 0 ? effectiveDuration : (durationHint && durationHint > 0 ? durationHint : 0));
 
   return (
-    <div className="w-[260px] sm:w-[290px] select-none flex flex-col justify-between">
+    <div className="w-[265px] sm:w-[295px] select-none flex flex-col justify-between gap-1">
       <audio
         ref={audioRef}
         src={audioUrl}
@@ -285,10 +285,10 @@ function VoiceNotePlayer({
       />
 
       {/* Main player row */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2.5">
         {/* Outbound: User Avatar with mic badge on left */}
         {isOutbound && (
-          <div className="relative shrink-0 w-9 h-9">
+          <div className="relative shrink-0 w-9 h-9 ml-0.5">
             <div className="w-9 h-9 rounded-full bg-emerald-700 text-white flex items-center justify-center font-bold text-xs shadow-xs overflow-hidden">
               {hasSenderAvatar && !senderImgFailed ? (
                 <img
@@ -356,7 +356,7 @@ function VoiceNotePlayer({
 
         {/* Inbound: Contact Avatar with mic badge on right */}
         {!isOutbound && (
-          <div className="relative shrink-0 w-9 h-9">
+          <div className="relative shrink-0 w-9 h-9 mr-0.5">
             <div className="w-9 h-9 rounded-full bg-slate-300 dark:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center justify-center font-bold text-xs shadow-xs overflow-hidden">
               {hasContactAvatar && !contactImgFailed ? (
                 <img
@@ -398,10 +398,10 @@ function VoiceNotePlayer({
         </div>
 
         {timeLabel && (
-          <div className="flex items-center gap-1 pr-1 font-sans text-[10px]">
+          <div className="flex items-center gap-1 pr-1 font-sans text-[10px] whitespace-nowrap shrink-0">
             <span>{timeLabel}</span>
             {isOutbound && (
-              <CheckCheck className={cn("w-3.5 h-3.5", status === "READ" ? "text-[#53bdeb]" : "text-slate-400")} />
+              <CheckCheck className={cn("w-3.5 h-3.5 shrink-0", status === "READ" ? "text-[#53bdeb]" : "text-slate-400")} />
             )}
           </div>
         )}
@@ -628,8 +628,8 @@ function MessageBubbleContainer({
   }
 
   return (
-    <div className={cn("flex w-full my-0.5", isOutbound ? "justify-end" : "justify-start")}>
-      <div className="relative group inline-block max-w-[85%] sm:max-w-[70%]">
+    <div className={cn("flex w-full my-1 sm:my-1.5", isOutbound ? "justify-end" : "justify-start")}>
+      <div className="relative group max-w-[85%] sm:max-w-[70%] w-fit">
         {/* Floating Quick Reaction Bar (WhatsApp style: appears above bubble on trigger) */}
         {showReaction && (
           <div
@@ -2513,9 +2513,9 @@ export default function WhatsAppPage() {
                             /* 6. Voice Note (PTT) */
                             <div
                               className={cn(
-                                "rounded-2xl p-2.5 text-sm transition-all shadow-xs",
+                                "rounded-2xl p-2.5 text-sm transition-all shadow-xs w-fit min-w-[280px] sm:min-w-[310px]",
                                 isOutbound
-                                  ? (isDark ? "bg-[#005c4b] border border-emerald-600/30 text-white rounded-tr-xs ml-auto" : "bg-[#D9FDD3] border border-[#C2EBC0] text-slate-900 rounded-tr-xs ml-auto shadow-2xs")
+                                  ? (isDark ? "bg-[#005c4b] border border-emerald-600/30 text-white rounded-tr-xs" : "bg-[#D9FDD3] border border-[#C2EBC0] text-slate-900 rounded-tr-xs shadow-2xs")
                                   : (isDark ? "bg-[#202c33] border border-white/10 text-white rounded-tl-xs" : "bg-white border border-slate-200 text-slate-900 rounded-tl-xs shadow-2xs")
                               )}
                             >
@@ -2541,14 +2541,14 @@ export default function WhatsAppPage() {
                             /* 7. Standard Text / Media with Caption */
                             <div
                               className={cn(
-                                "rounded-2xl p-2.5 sm:p-3 max-w-[85%] sm:max-w-[70%] text-sm leading-relaxed transition-all shadow-xs",
+                                "rounded-2xl px-3 py-2 text-sm leading-relaxed transition-all shadow-xs w-fit min-w-[90px]",
                                 isOutbound
                                   ? (isDark
-                                      ? "bg-[#005c4b] border border-emerald-600/30 text-white rounded-tr-xs ml-auto"
-                                      : "bg-[#D9FDD3] border border-[#C2EBC0] text-slate-900 rounded-tr-sm ml-auto shadow-2xs")
+                                      ? "bg-[#005c4b] border border-emerald-600/30 text-white rounded-tr-xs"
+                                      : "bg-[#D9FDD3] border border-[#C2EBC0] text-slate-900 rounded-tr-xs shadow-2xs")
                                   : (isDark
                                       ? "bg-[#202c33] border border-white/10 text-white rounded-tl-xs"
-                                      : "bg-white border border-slate-200/90 text-slate-900 rounded-tl-sm shadow-2xs")
+                                      : "bg-white border border-slate-200/90 text-slate-900 rounded-tl-xs shadow-2xs")
                               )}
                             >
                               {msg.attachment?.type === "image" && msg.attachment.url && (
@@ -2579,49 +2579,54 @@ export default function WhatsAppPage() {
                                   <>
                                     {parsed.hasQuote && (
                                       <div className={cn(
-                                        "rounded-lg px-2.5 py-1.5 mb-2 border-l-4 text-xs select-none flex flex-col justify-center transition-all",
+                                        "w-full min-w-[170px] sm:min-w-[210px] rounded-lg px-2.5 py-1.5 mb-2 border-l-[3.5px] text-xs select-none flex flex-col justify-center transition-all",
                                         isOutbound
-                                          ? (isDark ? "bg-black/30 border-l-[#53bdeb]" : "bg-black/5 border-l-[#00a884]")
-                                          : (isDark ? "bg-black/30 border-l-[#00a884]" : "bg-black/5 border-l-[#00a884]")
+                                          ? (isDark ? "bg-black/25 border-l-[#53bdeb]" : "bg-black/5 border-l-[#00a884]")
+                                          : (isDark ? "bg-black/25 border-l-[#00a884]" : "bg-black/5 border-l-[#00a884]")
                                       )}>
-                                        <div className="font-bold text-[11px] text-emerald-600 dark:text-[#53bdeb] truncate">
+                                        <div className="font-bold text-[12px] text-emerald-600 dark:text-[#53bdeb] truncate">
                                           {parsed.quotedSender}
                                         </div>
-                                        <div className="text-[11px] truncate text-slate-700 dark:text-slate-300 mt-0.5 opacity-90">
+                                        <div className="text-[11px] text-slate-700 dark:text-slate-300 mt-0.5 line-clamp-2 break-words">
                                           {parsed.quotedText}
                                         </div>
                                       </div>
                                     )}
-                                    {parsed.body ? (
-                                      <p className="whitespace-pre-wrap select-text">{parsed.body}</p>
-                                    ) : null}
+
+                                    <div className="flex flex-wrap items-baseline justify-end gap-x-2.5 gap-y-0.5 min-w-0">
+                                      {parsed.body ? (
+                                        <span className="whitespace-pre-wrap select-text break-words text-sm mr-auto">
+                                          {parsed.body}
+                                        </span>
+                                      ) : null}
+
+                                      <span className={cn(
+                                        "inline-flex items-center gap-1 text-[11px] font-sans whitespace-nowrap select-none shrink-0 ml-auto mt-0.5",
+                                        isDark ? "text-slate-400" : "text-slate-500"
+                                      )}>
+                                        <span>{msg.timeLabel}</span>
+                                        {msg.isEdited && (
+                                          <span className="text-[10px] italic opacity-75 mr-0.5">(edited)</span>
+                                        )}
+                                        {isOutbound && (
+                                          <span title={msg.status === "READ" ? "Read" : "Delivered"}>
+                                            {msg.status === "PENDING" ? (
+                                              <Clock className="w-3.5 h-3.5 text-slate-400" />
+                                            ) : (
+                                              <CheckCheck
+                                                className={cn(
+                                                  "w-3.5 h-3.5 shrink-0",
+                                                  msg.status === "READ" ? "text-[#53bdeb]" : "text-slate-400"
+                                                )}
+                                              />
+                                            )}
+                                          </span>
+                                        )}
+                                      </span>
+                                    </div>
                                   </>
                                 );
                               })()}
-
-                              <div className={cn(
-                                "flex items-center justify-end gap-1 mt-1 text-[10px] font-medium",
-                                isDark ? "text-slate-400" : "text-slate-500"
-                              )}>
-                                <span>{msg.timeLabel}</span>
-                                {msg.isEdited && (
-                                  <span className="text-[10px] italic opacity-75 mr-0.5">(edited)</span>
-                                )}
-                                {isOutbound && (
-                                  <span title={msg.status === "READ" ? "Read" : "Delivered"}>
-                                    {msg.status === "PENDING" ? (
-                                      <Clock className="w-3.5 h-3.5 text-slate-400" />
-                                    ) : (
-                                      <CheckCheck
-                                        className={cn(
-                                          "w-3.5 h-3.5",
-                                          msg.status === "READ" ? "text-[#53bdeb]" : "text-slate-400"
-                                        )}
-                                      />
-                                    )}
-                                  </span>
-                                )}
-                              </div>
                             </div>
                           )}
                         </MessageBubbleContainer>
