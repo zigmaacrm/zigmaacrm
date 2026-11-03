@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func, delete
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 
 from app.core.database import get_db
@@ -307,10 +307,148 @@ async def get_contact_ai_insights(
 
     return insights
 
+class BulkImportContactItem(BaseModel):
+    name: Optional[str] = None
+    full_name: Optional[str] = None
+    phone: Optional[str] = ""
+    email: Optional[str] = None
+    company_name: Optional[str] = None
+    company: Optional[str] = None
+    designation: Optional[str] = None
+    job_title: Optional[str] = None
+    source: Optional[str] = "Excel/CSV Import"
+    status: Optional[str] = "NEW"
+    lifecycle_stage: Optional[str] = "NEW"
+    custom_data: Optional[Dict[str, Any]] = None
+
+class BulkImportContactsPayload(BaseModel):
+    contacts: List[BulkImportContactItem]
+    upsert: Optional[bool] = True
+
+@router.post("/contacts/bulk-import")
+async def bulk_import_contacts(
+    payload: BulkImportContactsPayload,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    target_org_id = current_user.organization_id
+    if not target_org_id:
+        res = await db.execute(select(Organization))
+        org = res.scalars().first()
+        target_org_id = org.id if org else None
+
+    default_owner = current_user.full_name or "Mohamed Thoufiq"
+
+    # Pre-fetch existing contacts for fast lookup
+    existing_contacts_res = await db.execute(select(Contact))
+    all_existing = existing_contacts_res.scalars().all()
+
+    phone_map = {}
+    email_map = {}
+    for c in all_existing:
+        if c.phone:
+            clean = "".join(ch for ch in c.phone if ch.isdigit())
+            if len(clean) >= 7:
+                phone_map[clean[-10:]] = c
+        if c.email:
+            email_map[c.email.strip().lower()] = c
+
+    created_count = 0
+    updated_count = 0
+    skipped_count = 0
+
+    batch_seen_phones = set()
+    batch_seen_emails = set()
+
+    for item in payload.contacts:
+        c_name = (item.name or item.full_name or "Unnamed Contact").strip()
+        raw_phone = (item.phone or "").strip()
+        clean_digits = "".join(ch for ch in raw_phone if ch.isdigit())
+        phone_suffix = clean_digits[-10:] if len(clean_digits) >= 10 else (clean_digits if len(clean_digits) >= 7 else None)
+        clean_email = (item.email or "").strip().lower() if item.email else None
+        c_company = item.company_name or item.company
+        c_job = item.designation or item.job_title
+        c_status = item.status or item.lifecycle_stage or "NEW"
+        c_source = item.source or "Excel/CSV Import"
+
+        # Check existing
+        existing_contact = None
+        if phone_suffix and phone_suffix in phone_map:
+            existing_contact = phone_map[phone_suffix]
+        elif clean_email and clean_email in email_map:
+            existing_contact = email_map[clean_email]
+
+        if existing_contact:
+            if payload.upsert:
+                if c_name and c_name != "Unnamed Contact":
+                    existing_contact.full_name = c_name
+                if c_company:
+                    existing_contact.company_name = c_company
+                if c_job:
+                    existing_contact.designation = c_job
+                    existing_contact.job_title = c_job
+                if c_status:
+                    existing_contact.status = c_status
+                    existing_contact.lifecycle_stage = c_status
+                if item.custom_data:
+                    existing_contact.custom_data = {**(existing_contact.custom_data or {}), **item.custom_data}
+                updated_count += 1
+            else:
+                skipped_count += 1
+            continue
+
+        # Intra-batch duplicate check
+        if phone_suffix and phone_suffix in batch_seen_phones:
+            skipped_count += 1
+            continue
+        if clean_email and clean_email in batch_seen_emails:
+            skipped_count += 1
+            continue
+
+        # Create new
+        new_c = Contact(
+            organization_id=target_org_id,
+            full_name=c_name,
+            phone=raw_phone,
+            email=clean_email,
+            company_name=c_company,
+            designation=c_job,
+            job_title=c_job,
+            status=c_status,
+            lifecycle_stage=c_status,
+            source=c_source,
+            custom_data=item.custom_data or {},
+            assigned_user_id=current_user.id,
+            assigned_user_name=default_owner,
+            owner_id=current_user.id,
+            owner_name=default_owner
+        )
+        db.add(new_c)
+        if phone_suffix:
+            phone_map[phone_suffix] = new_c
+            batch_seen_phones.add(phone_suffix)
+        if clean_email:
+            email_map[clean_email] = new_c
+            batch_seen_emails.add(clean_email)
+        created_count += 1
+
+    await db.commit()
+
+    return {
+        "status": "success",
+        "total_processed": len(payload.contacts),
+        "created": created_count,
+        "updated": updated_count,
+        "skipped": skipped_count,
+        "total_ingested": created_count + updated_count,
+        "duplicates_skipped": skipped_count
+    }
+
 @router.post("/contacts", response_model=ContactOut, status_code=status.HTTP_201_CREATED)
 async def create_contact(
     contact_in: ContactCreate,
     org_id: Optional[str] = Query(None),
+    upsert: Optional[bool] = Query(False),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -323,30 +461,56 @@ async def create_contact(
     # 1. Validation: Prevent duplicate contacts by phone number
     raw_phone = contact_in.phone or ""
     clean_phone = "".join(c for c in raw_phone if c.isdigit())
+    dup_phone = None
     if clean_phone and len(clean_phone) >= 7:
         phone_suffix = clean_phone[-10:] if len(clean_phone) >= 10 else clean_phone
         dup_phone_res = await db.execute(
             select(Contact).where(Contact.phone.ilike(f"%{phone_suffix}%"))
         )
         dup_phone = dup_phone_res.scalars().first()
-        if dup_phone:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"A contact with mobile number '{contact_in.phone}' already exists: '{dup_phone.full_name}'. Duplicate contacts are not allowed."
-            )
 
     # 2. Validation: Prevent duplicate contacts by email
     clean_email = (contact_in.email or "").strip().lower()
+    dup_email = None
     if clean_email:
         dup_email_res = await db.execute(
             select(Contact).where(func.lower(Contact.email) == clean_email)
         )
         dup_email = dup_email_res.scalars().first()
-        if dup_email:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"A contact with email '{contact_in.email}' already exists: '{dup_email.full_name}'. Duplicate contacts are not allowed."
-            )
+
+    existing_contact = dup_phone or dup_email
+    if existing_contact:
+        if upsert:
+            designation = contact_in.designation or contact_in.job_title
+            c_name = contact_in.name or contact_in.full_name
+            c_company = contact_in.company or contact_in.company_name
+            if c_name and c_name != "Unnamed Contact":
+                existing_contact.full_name = c_name
+            if c_company:
+                existing_contact.company_name = c_company
+            if designation:
+                existing_contact.designation = designation
+                existing_contact.job_title = designation
+            if contact_in.status or contact_in.lifecycle_stage:
+                existing_contact.status = contact_in.status or contact_in.lifecycle_stage
+                existing_contact.lifecycle_stage = contact_in.lifecycle_stage or contact_in.status
+            custom_props = contact_in.custom_properties or contact_in.custom_data or {}
+            if custom_props:
+                existing_contact.custom_data = {**(existing_contact.custom_data or {}), **custom_props}
+            await db.commit()
+            await db.refresh(existing_contact)
+            return existing_contact
+        else:
+            if dup_phone:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"A contact with mobile number '{contact_in.phone}' already exists: '{dup_phone.full_name}'. Duplicate contacts are not allowed."
+                )
+            if dup_email:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"A contact with email '{contact_in.email}' already exists: '{dup_email.full_name}'. Duplicate contacts are not allowed."
+                )
 
     designation = contact_in.designation or contact_in.job_title
     assigned_name = contact_in.assigned_to or contact_in.assigned_user_name or (current_user.full_name if current_user else "Mohamed Thoufiq")

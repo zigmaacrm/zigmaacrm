@@ -1927,7 +1927,7 @@ export const zigmaaApi = {
     return await res.json();
   },
 
-  async createContact(contactData: Partial<Contact>): Promise<Contact> {
+  async createContact(contactData: Partial<Contact>, upsert: boolean = true): Promise<Contact> {
     const currentUser = this.getCurrentUser();
     const defaultOwner = currentUser?.full_name || "Mohamed Thoufiq";
     const payload = {
@@ -1943,7 +1943,7 @@ export const zigmaaApi = {
       custom_data: contactData.custom_data || {},
       assigned_user_name: contactData.assigned_to || defaultOwner
     };
-    const res = await fetch(`${API_BASE}/contacts`, {
+    const res = await fetch(`${API_BASE}/contacts?upsert=${upsert ? "true" : "false"}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1976,62 +1976,83 @@ export const zigmaaApi = {
   },
 
   async bulkUploadContacts(rows: any[]): Promise<{ total_ingested: number; duplicates_skipped: number; records: Contact[] }> {
-    const createdList: Contact[] = [];
-    let duplicatesSkipped = 0;
-    let lastError: string | null = null;
-    const seenBatchPhones = new Set<string>();
-    const seenBatchEmails = new Set<string>();
+    if (!rows || !rows.length) {
+      return { total_ingested: 0, duplicates_skipped: 0, records: [] };
+    }
 
-    for (let idx = 0; idx < rows.length; idx++) {
-      const r = rows[idx];
-      if (!r || typeof r !== "object") continue;
+    const cleanKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+    const formattedContacts = rows.map((r, idx) => {
+      if (!r || typeof r !== "object") return null;
 
       const getField = (...keys: string[]): string => {
         for (const k of keys) {
-          if (r[k] !== undefined && r[k] !== null && String(r[k]).trim() !== "") {
-            return String(r[k]).trim();
-          }
-          const foundKey = Object.keys(r).find((rk) => rk.trim().toLowerCase() === k.toLowerCase());
-          if (foundKey && r[foundKey] !== undefined && r[foundKey] !== null && String(r[foundKey]).trim() !== "") {
-            return String(r[foundKey]).trim();
+          const ck = cleanKey(k);
+          for (const rowKey of Object.keys(r)) {
+            if (cleanKey(rowKey) === ck) {
+              const val = r[rowKey];
+              if (val !== undefined && val !== null && String(val).trim() !== "") {
+                return String(val).trim();
+              }
+            }
           }
         }
         return "";
       };
 
-      const contactName = getField("name", "full_name", "Contact Name", "Name", "Full Name") || `Contact ${idx + 1}`;
-      const phone = getField("phone", "mobile", "Phone", "Mobile", "Phone Number", "Mobile Number") || "+91 98000 00000";
-      const email = getField("email", "Email", "Email Address") || "";
-      const company = getField("company_name", "company", "Company", "Company Name") || "";
-      const jobTitle = getField("job_title", "designation", "Job Title", "Designation") || "";
-      const source = getField("source", "ad_source", "Source") || "Excel/CSV Import";
-      const stage = getField("stage", "lifecycle_stage", "status", "Lifecycle Stage", "Stage") || "New";
+      const contactName = getField("name", "full_name", "contact_name", "first_name", "customer_name", "client_name") || `Contact ${idx + 1}`;
+      const phone = getField("phone", "mobile", "contact_number", "contact_no", "phone_number", "mobile_number", "phone_no", "mobile_no", "cell", "telephone", "ph", "mob");
+      const email = getField("email", "email_address", "mail");
+      const company = getField("company_name", "company", "organization", "account_name");
+      const jobTitle = getField("job_title", "designation", "role", "title");
+      const source = getField("source", "lead_source", "ad_source") || "Excel/CSV Import";
+      const stage = getField("stage", "lifecycle_stage", "status") || "New";
 
-      // Intra-batch duplicate check
-      const phoneDigits = phone.replace(/\D/g, "");
-      const emailLower = email.trim().toLowerCase();
-      if (phoneDigits.length >= 7 && seenBatchPhones.has(phoneDigits.slice(-10))) {
-        duplicatesSkipped++;
-        continue;
-      }
-      if (emailLower && seenBatchEmails.has(emailLower)) {
-        duplicatesSkipped++;
-        continue;
-      }
+      return {
+        name: contactName,
+        full_name: contactName,
+        phone: phone,
+        email: email || undefined,
+        company_name: company || undefined,
+        job_title: jobTitle || undefined,
+        source: source,
+        lifecycle_stage: stage,
+        status: stage
+      };
+    }).filter(Boolean);
 
+    // 1. Try high-performance backend batch endpoint
+    try {
+      const res = await fetch(`${API_BASE}/contacts/bulk-import`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders()
+        },
+        body: JSON.stringify({ contacts: formattedContacts, upsert: true })
+      });
+      if (res.ok) {
+        invalidateClientCache("contacts");
+        const data = await res.json();
+        return {
+          total_ingested: data.total_ingested || (data.created + data.updated) || 0,
+          duplicates_skipped: data.skipped || 0,
+          records: []
+        };
+      }
+    } catch (bulkErr) {
+      console.warn("Backend /contacts/bulk-import not available, falling back to sequential upsert:", bulkErr);
+    }
+
+    // 2. Fallback to individual sequential upserts
+    const createdList: Contact[] = [];
+    let duplicatesSkipped = 0;
+    let lastError: string | null = null;
+
+    for (const item of formattedContacts) {
+      if (!item) continue;
       try {
-        const created = await this.createContact({
-          name: contactName,
-          phone: phone,
-          email: email,
-          company_name: company,
-          job_title: jobTitle,
-          source: source,
-          status: stage as any,
-          lifecycle_stage: stage as any
-        });
-        if (phoneDigits.length >= 7) seenBatchPhones.add(phoneDigits.slice(-10));
-        if (emailLower) seenBatchEmails.add(emailLower);
+        const created = await this.createContact(item as any, true);
         createdList.push(created);
       } catch (e: any) {
         const msg = e?.message || String(e);

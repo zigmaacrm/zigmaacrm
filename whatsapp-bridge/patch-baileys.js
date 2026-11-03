@@ -15,3 +15,4 @@ if (fs.existsSync(targetFile)) {
 } else {
   console.log('[Patch Baileys] Target file does not exist yet.');
 }
+
