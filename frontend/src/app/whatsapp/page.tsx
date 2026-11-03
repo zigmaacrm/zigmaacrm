@@ -71,11 +71,42 @@ export interface WhatsAppMessage {
   caption?: string | null;
   isVoiceNote?: boolean;
   attachment?: {
-    type: "pdf" | "image" | "audio" | "document";
+    type: "pdf" | "image" | "audio" | "document" | "video" | "sticker";
     name: string;
     size?: string;
     url?: string;
   };
+}
+
+function cleanDisplayCaption(text?: string | null, fileName?: string | null): string {
+  if (!text) return "";
+  const t = text.trim();
+  const lower = t.toLowerCase();
+  const dummyPlaceholders = [
+    "[image attachment]",
+    "[voice note]",
+    "[document attachment]",
+    "[sticker]",
+    "[contact card]",
+    "[location]",
+    "[attachment received]",
+    "📷 photo",
+    "🎥 video",
+    "🎤 voice message",
+    "🎵 audio",
+    "document",
+    "image attachment",
+    "voice note",
+    "sticker"
+  ];
+  if (dummyPlaceholders.includes(lower)) return "";
+  if (lower.startsWith("📎 ") && lower.includes("attachment")) return "";
+  if (fileName && (t === fileName.trim() || t === `📎 ${fileName.trim()}`)) return "";
+  if (/^🎤\s*Voice message/i.test(t)) return "";
+  if (/^📷\s*Photo/i.test(t)) return "";
+  if (/^🎥\s*Video/i.test(t)) return "";
+  if (/^📄\s*.+$/i.test(t) && fileName && t.includes(fileName)) return "";
+  return t;
 }
 
 function VoiceNotePlayer({ audioUrl, isOutbound, isDark }: { audioUrl: string; isOutbound: boolean; isDark: boolean }) {
@@ -415,6 +446,7 @@ export default function WhatsAppPage() {
   const [isSavingName, setIsSavingName] = useState(false);
 
   const chatBottomRef = useRef<HTMLDivElement>(null);
+  const isUserScrolledUpRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isPollingRef = useRef(false);
 
@@ -730,11 +762,26 @@ export default function WhatsAppPage() {
           const mType = (m.message_type || "").toLowerCase();
           const isVoice = m.is_voice_note || mType === "ptt" || mType === "audio";
           const isImg = mType === "image" || (mediaFullUrl && (mediaFullUrl.endsWith(".jpg") || mediaFullUrl.endsWith(".png") || mediaFullUrl.endsWith(".jpeg")));
+          const isVideo = mType === "video" || (mediaFullUrl && (mediaFullUrl.endsWith(".mp4") || mediaFullUrl.endsWith(".mov") || mediaFullUrl.endsWith(".webm")));
+          const isSticker = mType === "sticker" || (mediaFullUrl && mediaFullUrl.endsWith(".webp"));
+          const isDoc = mType === "document" || (!isImg && !isVideo && !isVoice && !isSticker && !!mediaFullUrl);
 
           if (isImg) {
             attachment = {
               type: "image",
               name: m.file_name || "Photo",
+              url: mediaFullUrl
+            };
+          } else if (isVideo) {
+            attachment = {
+              type: "video",
+              name: m.file_name || "Video",
+              url: mediaFullUrl
+            };
+          } else if (isSticker) {
+            attachment = {
+              type: "sticker",
+              name: m.file_name || "Sticker",
               url: mediaFullUrl
             };
           } else if (isVoice) {
@@ -743,11 +790,11 @@ export default function WhatsAppPage() {
               name: m.file_name || "Voice note",
               url: mediaFullUrl
             };
-          } else if (mType === "document" || (m.message_body?.toLowerCase().includes("quote") && m.message_body?.toLowerCase().includes(".pdf"))) {
+          } else if (isDoc) {
             attachment = {
               type: "pdf",
-              name: m.file_name || "Quotation_Zigmaa_INV-2026.pdf",
-              size: "420 KB",
+              name: m.file_name || "Document",
+              size: "Document",
               url: mediaFullUrl
             };
           }
@@ -770,6 +817,14 @@ export default function WhatsAppPage() {
         });
 
         setMessages(mappedMsgs);
+
+        // Mark unread messages as read in backend and update conversation list badge
+        api.markWhatsAppConversationRead(clean).catch(() => {});
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.phone.replace(/[^0-9]/g, "") === clean ? { ...c, unreadCount: 0 } : c
+          )
+        );
       }
     } catch (e: any) {
       console.warn("Could not fetch messages for", phone, e);
@@ -863,9 +918,11 @@ export default function WhatsAppPage() {
     };
   }, [activePhone, loadConversations, loadMessages]);
 
-  // Auto-scroll when messages update
+  // Auto-scroll when messages update (only if user hasn't scrolled up to view older messages)
   useEffect(() => {
-    chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (!isUserScrolledUpRef.current) {
+      chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   }, [messages]);
 
   // Filter conversations
@@ -886,7 +943,8 @@ export default function WhatsAppPage() {
   }, [conversations, filterTab, searchQuery]);
 
   // Select conversation
-  const handleSelectChat = (phone: string) => {
+  const handleSelectChat = async (phone: string) => {
+    isUserScrolledUpRef.current = false;
     setActivePhone(phone);
     setConversations((prev) =>
       prev.map((c) =>
@@ -895,6 +953,9 @@ export default function WhatsAppPage() {
           : c
       )
     );
+    try {
+      await api.markWhatsAppConversationRead(phone.replace(/[^0-9]/g, ""));
+    } catch (_) {}
   };
 
   // Send message action
@@ -1119,19 +1180,23 @@ export default function WhatsAppPage() {
 
     const tempId = `temp-${Date.now()}`;
     const isImg = file.type.startsWith("image/");
+    const isVideo = file.type.startsWith("video/");
+    const isAudio = file.type.startsWith("audio/");
+    const attType: any = isImg ? "image" : isVideo ? "video" : isAudio ? "audio" : "pdf";
+
     const optimisticMsg: WhatsAppMessage = {
       id: tempId,
       sender: "outbound",
-      text: isImg ? "" : `📎 ${file.name}`,
+      text: (isImg || isVideo || isAudio) ? "" : `📎 ${file.name}`,
       timestamp: "Today",
       timeLabel: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       dateGroup: "Today",
       status: "SENT",
       attachment: {
-        type: isImg ? "image" : "pdf",
+        type: attType,
         name: file.name,
         size: `${Math.round(file.size / 1024)} KB`,
-        url: isImg ? base64Data : undefined
+        url: base64Data
       }
     };
 
@@ -1141,7 +1206,7 @@ export default function WhatsAppPage() {
     try {
       const res = await api.sendWhatsAppMessage({
         phone_number: cleanPhone,
-        message: isImg ? "" : `📎 ${file.name}`,
+        message: (isImg || isVideo || isAudio) ? "" : `📎 ${file.name}`,
         contact_id: activeChat.contact_id,
         file_base64: base64Data,
         file_name: file.name,
@@ -1390,10 +1455,6 @@ export default function WhatsAppPage() {
                           rounded="rounded-full"
                           textClass="text-xs"
                         />
-                        <span className={cn(
-                          "w-3 h-3 rounded-full bg-emerald-500 border-2 absolute -bottom-0.5 -right-0.5",
-                          isDark ? "border-[#090A0F]" : "border-white"
-                        )} />
                       </div>
 
                       {/* Content */}
@@ -1409,7 +1470,10 @@ export default function WhatsAppPage() {
                           >
                             {conv.contactName}
                           </h4>
-                          <span className="text-[10px] text-slate-400 shrink-0 font-medium ml-1">
+                          <span className={cn(
+                            "text-[10px] shrink-0 font-medium ml-1",
+                            conv.unreadCount > 0 && !isSelected ? "text-emerald-600 dark:text-emerald-400 font-bold" : "text-slate-400"
+                          )}>
                             {formatTime(conv.lastMessageTime)}
                           </span>
                         </div>
@@ -1424,7 +1488,9 @@ export default function WhatsAppPage() {
                         <div className="flex items-center justify-between gap-1">
                           <div className={cn(
                             "flex items-center gap-1 text-[11px] truncate min-w-0",
-                            isDark ? "text-slate-400" : "text-slate-500"
+                            conv.unreadCount > 0 && !isSelected
+                              ? isDark ? "text-slate-200 font-semibold" : "text-slate-900 font-semibold"
+                              : isDark ? "text-slate-400" : "text-slate-500"
                           )}>
                             <span className="truncate">
                               {conv.lastMessage || "Click to open conversation"}
@@ -1432,18 +1498,8 @@ export default function WhatsAppPage() {
                           </div>
 
                           <div className="flex items-center gap-1 shrink-0">
-                            {conv.assignedRep?.name && conv.assignedRep.name !== "Unassigned" && (
-                              <span className={cn(
-                                "text-[9px] font-semibold px-1.5 py-0.2 rounded border",
-                                isDark
-                                  ? "bg-white/5 text-slate-400 border-white/5"
-                                  : "bg-slate-100 text-slate-600 border-slate-200"
-                              )}>
-                                {conv.assignedRep.name.split(" ")[0]}
-                              </span>
-                            )}
-                            {conv.unreadCount > 0 && (
-                              <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-rose-500 text-white shadow-xs shadow-rose-500/50">
+                            {conv.unreadCount > 0 && !isSelected && (
+                              <span className="min-w-4.5 h-4.5 px-1.5 rounded-full bg-emerald-500 text-white text-[10px] font-bold flex items-center justify-center shrink-0 shadow-2xs">
                                 {conv.unreadCount}
                               </span>
                             )}
@@ -1502,13 +1558,15 @@ export default function WhatsAppPage() {
                       )}>
                         <span className="font-mono text-[11px] shrink-0 font-medium">{activeChat.phone}</span>
                         <span className="text-slate-300 dark:text-slate-700 hidden sm:inline">•</span>
-                        <span className="text-emerald-500 font-semibold hidden sm:flex items-center gap-1.5 whitespace-nowrap truncate">
-                          <span className="relative flex h-2 w-2 shrink-0">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                        {activeChat.lastMessageTime ? (
+                          <span className="text-slate-400 dark:text-slate-400 text-[11px] truncate">
+                            last seen {formatTime(activeChat.lastMessageTime)}
                           </span>
-                          <span className="truncate">Online</span>
-                        </span>
+                        ) : (
+                          <span className="text-slate-400 dark:text-slate-400 text-[11px] truncate">
+                            Direct WhatsApp
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1563,10 +1621,17 @@ export default function WhatsAppPage() {
                 </div>
 
                 {/* Message Stream Area */}
-                <div className={cn(
-                  "flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 scrollbar-thin",
-                  isDark ? "scrollbar-thumb-slate-800" : "scrollbar-thumb-slate-300"
-                )}>
+                <div
+                  onScroll={(e) => {
+                    const el = e.currentTarget;
+                    const isUp = el.scrollHeight - el.scrollTop - el.clientHeight > 80;
+                    isUserScrolledUpRef.current = isUp;
+                  }}
+                  className={cn(
+                    "flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 scrollbar-thin",
+                    isDark ? "scrollbar-thumb-slate-800" : "scrollbar-thumb-slate-300"
+                  )}
+                >
                   {/* Subtle Date Separator */}
                   <div className="flex items-center justify-center my-3">
                     <span className={cn(
@@ -1600,6 +1665,8 @@ export default function WhatsAppPage() {
                   ) : (
                     messages.map((msg) => {
                       const isOutbound = msg.sender === "outbound";
+                      const cleanText = cleanDisplayCaption(msg.text, msg.fileName);
+                      const isSticker = msg.attachment?.type === "sticker";
 
                       return (
                         <div
@@ -1612,23 +1679,48 @@ export default function WhatsAppPage() {
                           <div
                             className={cn(
                               "rounded-2xl p-3.5 max-w-[85%] sm:max-w-[70%] text-sm leading-relaxed transition-all shadow-xs",
-                              isOutbound
-                                ? (isDark
-                                    ? "bg-emerald-600/25 border border-emerald-500/30 text-white rounded-tr-sm ml-auto"
-                                    : "bg-[#D9FDD3] border border-[#C2EBC0] text-slate-900 rounded-tr-sm ml-auto shadow-2xs")
-                                : (isDark
-                                    ? "bg-white/5 border border-white/10 text-white rounded-tl-sm"
-                                    : "bg-white border border-slate-200/90 text-slate-900 rounded-tl-sm shadow-2xs")
+                              isSticker && !cleanText
+                                ? "bg-transparent border-0 shadow-none p-1"
+                                : (isOutbound
+                                    ? (isDark
+                                        ? "bg-emerald-600/25 border border-emerald-500/30 text-white rounded-tr-sm ml-auto"
+                                        : "bg-[#D9FDD3] border border-[#C2EBC0] text-slate-900 rounded-tr-sm ml-auto shadow-2xs")
+                                    : (isDark
+                                        ? "bg-white/5 border border-white/10 text-white rounded-tl-sm"
+                                        : "bg-white border border-slate-200/90 text-slate-900 rounded-tl-sm shadow-2xs"))
                             )}
                           >
+                            {/* Sticker Preview */}
+                            {msg.attachment?.type === "sticker" && msg.attachment.url && (
+                              <div className="my-1 cursor-pointer select-none">
+                                <img
+                                  src={msg.attachment.url}
+                                  alt="WhatsApp Sticker"
+                                  className="w-32 h-32 object-contain"
+                                />
+                              </div>
+                            )}
+
                             {/* Image Preview Card */}
                             {msg.attachment?.type === "image" && msg.attachment.url && (
                               <div className="mt-1 mb-2 rounded-xl overflow-hidden border border-black/10 dark:border-white/10 max-w-xs cursor-pointer group shadow-sm">
                                 <img
                                   src={msg.attachment.url}
                                   alt="WhatsApp Image"
-                                  className="w-full max-h-60 object-cover rounded-xl transition-transform group-hover:scale-102"
+                                  className="w-full max-h-64 object-cover rounded-xl transition-transform group-hover:scale-102"
                                   onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}
+                                />
+                              </div>
+                            )}
+
+                            {/* Video Player Card */}
+                            {msg.attachment?.type === "video" && msg.attachment.url && (
+                              <div className="mt-1 mb-2 rounded-xl overflow-hidden border border-black/10 dark:border-white/10 max-w-xs shadow-sm bg-black">
+                                <video
+                                  src={msg.attachment.url}
+                                  controls
+                                  preload="metadata"
+                                  className="w-full max-h-72 rounded-xl object-contain"
                                 />
                               </div>
                             )}
@@ -1643,7 +1735,7 @@ export default function WhatsAppPage() {
                             )}
 
                             {/* Document Card if present */}
-                            {msg.attachment?.type === "pdf" && (
+                            {(msg.attachment?.type === "pdf" || msg.attachment?.type === "document") && (
                               <div className={cn(
                                 "mt-2 p-3 rounded-xl flex items-center justify-between gap-3 border shadow-2xs",
                                 isDark
@@ -1659,7 +1751,7 @@ export default function WhatsAppPage() {
                                       {msg.attachment.name}
                                     </div>
                                     <div className={cn("text-[10px]", isDark ? "text-slate-400" : "text-slate-500")}>
-                                      {msg.attachment.size || "Document"} • PDF
+                                      {msg.attachment.size || "Document"}
                                     </div>
                                   </div>
                                 </div>
@@ -1685,13 +1777,10 @@ export default function WhatsAppPage() {
                               </div>
                             )}
 
-                            {/* Message Text (Hide if placeholder when attachment exists) */}
-                            {msg.text &&
-                              !msg.text.startsWith("🎤 Voice message") &&
-                              !msg.text.startsWith("📷 ") &&
-                              !msg.text.startsWith("📎 ") && (
-                              <p className="whitespace-pre-wrap select-text mt-1">{msg.text}</p>
-                            )}
+                            {/* Message Text (Hide if placeholder, only display real user message or caption) */}
+                            {cleanText ? (
+                              <p className="whitespace-pre-wrap select-text mt-1">{cleanText}</p>
+                            ) : null}
 
                             {/* Message Footer: Time + Status Tick */}
                             <div className={cn(
@@ -1913,7 +2002,7 @@ export default function WhatsAppPage() {
                         ref={fileInputRef}
                         onChange={handleFileUpload}
                         className="hidden"
-                        accept="application/pdf,image/*"
+                        accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.xls,.xlsx,.csv,.txt"
                       />
 
                       {/* Attachment Button */}
@@ -1924,7 +2013,7 @@ export default function WhatsAppPage() {
                           "h-9 w-9 flex items-center justify-center rounded-xl transition-all cursor-pointer shrink-0 hover:scale-105 active:scale-95",
                           isDark ? "text-slate-400 hover:text-emerald-400 hover:bg-white/5" : "text-slate-500 hover:text-emerald-600 hover:bg-slate-200/60"
                         )}
-                        title="Attach PDF quote or image"
+                        title="Attach photos, videos, audio, or documents"
                       >
                         <Paperclip className="w-4 h-4" />
                       </button>

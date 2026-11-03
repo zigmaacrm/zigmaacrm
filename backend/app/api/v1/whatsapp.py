@@ -1,6 +1,8 @@
 import os
 import re
 import uuid
+import base64
+import datetime
 import logging
 from pathlib import Path
 from dotenv import dotenv_values
@@ -9,7 +11,7 @@ from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, or_, update
+from sqlalchemy import select, desc, or_, update, func
 
 from app.core.config import settings
 from app.core.database import get_db
@@ -276,8 +278,43 @@ async def send_whatsapp_message(
             meta_message_id = f"wamid.sim_{uuid.uuid4().hex[:18]}"
             delivery_status = "SENT"
 
-    body_text = payload.message.strip() if has_text else f"📎 {payload.file_name or 'Document Attachment'}"
-    msg_type = "image" if (payload.file_type or "").startswith("image/") else ("document" if has_file else "text")
+    media_url = None
+    saved_file_name = payload.file_name
+    msg_type = "text"
+    is_voice = False
+
+    if has_file:
+        file_mime = (payload.file_type or "").lower()
+        if file_mime.startswith("image/"):
+            msg_type = "image"
+            ext = "png" if "png" in file_mime else ("webp" if "webp" in file_mime else "jpg")
+        elif file_mime.startswith("video/"):
+            msg_type = "video"
+            ext = "mp4"
+        elif file_mime.startswith("audio/"):
+            msg_type = "ptt"
+            is_voice = True
+            ext = "mp4" if "mp4" in file_mime else "ogg"
+        else:
+            msg_type = "document"
+            ext = "pdf" if "pdf" in file_mime else "bin"
+
+        try:
+            pure_b64 = payload.file_base64.split(",")[1] if "," in payload.file_base64 else payload.file_base64
+            file_bytes = base64.b64decode(pure_b64)
+            uploads_dir = os.path.join(os.getcwd(), "uploads", "whatsapp")
+            os.makedirs(uploads_dir, exist_ok=True)
+            if not saved_file_name:
+                saved_file_name = f"out_{int(datetime.datetime.utcnow().timestamp())}_{uuid.uuid4().hex[:6]}.{ext}"
+            unique_disk_name = f"{int(datetime.datetime.utcnow().timestamp())}_{uuid.uuid4().hex[:6]}_{saved_file_name}"
+            file_path = os.path.join(uploads_dir, unique_disk_name)
+            with open(file_path, "wb") as f:
+                f.write(file_bytes)
+            media_url = f"/media/whatsapp/{unique_disk_name}"
+        except Exception as save_err:
+            logger.error(f"[OUTBOUND FILE SAVE ERROR]: {save_err}")
+
+    body_text = payload.message.strip() if has_text else (f"📎 {saved_file_name or 'Document'}" if has_file else "")
 
     wa_message = WhatsAppMessage(
         organization_id=org_id,
@@ -288,6 +325,10 @@ async def send_whatsapp_message(
         direction="OUTBOUND",
         message_body=body_text,
         message_type=msg_type,
+        media_url=media_url,
+        file_name=saved_file_name,
+        caption=payload.message.strip() if has_text and has_file else None,
+        is_voice_note=is_voice,
         meta_message_id=meta_message_id,
         status=delivery_status
     )
@@ -442,6 +483,17 @@ async def get_whatsapp_conversations(
             u_res = await db.execute(select(User).where(User.id.in_(list(rep_ids))))
             reps_by_id = {u.id: u for u in u_res.scalars().all()}
 
+        # Calculate real unread counts per phone number
+        unread_stmt = select(WhatsAppMessage.phone_number, func.count(WhatsAppMessage.id)).where(
+            WhatsAppMessage.direction == "INBOUND",
+            WhatsAppMessage.status != "READ"
+        )
+        if current_user and getattr(current_user, "organization_id", None):
+            unread_stmt = unread_stmt.where(WhatsAppMessage.organization_id == current_user.organization_id)
+        unread_stmt = unread_stmt.group_by(WhatsAppMessage.phone_number)
+        unread_res = await db.execute(unread_stmt)
+        unread_counts = {str(row[0]): int(row[1]) for row in unread_res.fetchall()}
+
         for m in all_msgs:
             if not m.phone_number:
                 continue
@@ -492,7 +544,10 @@ async def get_whatsapp_conversations(
                 rep_parts = rep_name.strip().split()
                 rep_avatar = (rep_parts[0][0] + (rep_parts[1][0] if len(rep_parts) > 1 else ""))[:2].upper() if rep_parts else "SR"
 
-                unread_cnt = 1 if m.direction == "INBOUND" and m.status != "READ" else 0
+                clean_num = normalize_phone(m.phone_number)
+                unread_cnt = unread_counts.get(m.phone_number, 0)
+                if unread_cnt == 0 and clean_num:
+                    unread_cnt = unread_counts.get(clean_num, 0) or unread_counts.get(f"+{clean_num}", 0)
 
                 # WhatsApp Web style message preview snippets
                 m_type = (m.message_type or "").lower()

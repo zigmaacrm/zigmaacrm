@@ -60,3 +60,7 @@ next-env.d.ts
 # WhatsApp Gateway Baileys Sessions
 auth_info_baileys/
 **/auth_info_baileys/
+
+# media uploads
+uploads/
+**/uploads/

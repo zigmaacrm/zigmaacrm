@@ -221,6 +221,12 @@ async function decryptAndSaveMedia(msgObj) {
       extension = 'mp4';
       fileName = `vid_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${extension}`;
       caption = rawM.videoMessage.caption || '';
+    } else if (rawM.stickerMessage) {
+      mediaType = 'sticker';
+      mimeType = rawM.stickerMessage.mimetype || 'image/webp';
+      extension = 'webp';
+      fileName = `sticker_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${extension}`;
+      caption = '';
     } else if (rawM.documentMessage) {
       mediaType = 'document';
       mimeType = rawM.documentMessage.mimetype || 'application/pdf';
@@ -557,7 +563,7 @@ async function initWhatsApp(forceClean = false) {
           const contactName = msg.pushName || '';
           let mediaInfo = null;
           const rawM = unwrapMessage(msg.message);
-          if (rawM?.imageMessage || rawM?.documentMessage || rawM?.audioMessage || rawM?.videoMessage) {
+          if (rawM?.imageMessage || rawM?.documentMessage || rawM?.audioMessage || rawM?.videoMessage || rawM?.stickerMessage) {
             mediaInfo = await decryptAndSaveMedia(msg);
           }
 
@@ -568,6 +574,7 @@ async function initWhatsApp(forceClean = false) {
             else if (mediaInfo.message_type === 'audio') body = '🎵 Audio';
             else if (mediaInfo.message_type === 'document') body = `📄 ${mediaInfo.file_name || 'Document'}`;
             else if (mediaInfo.message_type === 'video') body = mediaInfo.caption || '🎥 Video';
+            else if (mediaInfo.message_type === 'sticker') body = 'Sticker';
           }
 
           if (!body && !mediaInfo) {
@@ -799,6 +806,12 @@ app.post('/send', async (req, res) => {
       if (mime.startsWith('image/')) {
         result = await sock.sendMessage(jid, {
           image: fileBuffer,
+          caption: (message || '').trim(),
+          mimetype: mime
+        });
+      } else if (mime.startsWith('video/')) {
+        result = await sock.sendMessage(jid, {
+          video: fileBuffer,
           caption: (message || '').trim(),
           mimetype: mime
         });
