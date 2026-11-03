@@ -572,11 +572,11 @@ async def receive_whatsapp_qr_inbound(
     # Precise message timestamp to ensure accurate chronological order
     if payload.timestamp:
         try:
-            msg_dt = datetime.utcfromtimestamp(payload.timestamp)
+            msg_dt = dt_utcnow.fromtimestamp(payload.timestamp, tz=datetime.timezone.utc).replace(tzinfo=None)
         except Exception:
-            msg_dt = datetime.utcnow()
+            msg_dt = dt_utcnow.utcnow()
     else:
-        msg_dt = datetime.utcnow()
+        msg_dt = dt_utcnow.utcnow()
 
     wa_msg = WhatsAppMessage(
         organization_id=default_org_id,
