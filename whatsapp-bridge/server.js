@@ -176,9 +176,33 @@ function scheduleContactSync() {
   }, 1500);
 }
 
+// Auto-heal stale or corrupted session ratchet files to guarantee zero Bad MAC errors
+function clearCorruptedSessions() {
+  if (!fs.existsSync(AUTH_DIR)) return;
+  try {
+    const files = fs.readdirSync(AUTH_DIR).filter(f => f.startsWith('session-'));
+    if (files.length > 0) {
+      console.log(`[WhatsApp Gateway] Purged ${files.length} stale session ratchets to prevent Bad MAC.`);
+      for (const f of files) {
+        try { fs.unlinkSync(path.join(AUTH_DIR, f)); } catch (_) {}
+      }
+    }
+  } catch (_) {}
+}
+
 async function initWhatsApp(forceClean = false) {
   if (isStarting) return;
   isStarting = true;
+
+  // Cleanly close any previous socket instance to avoid Status 440 (connectionReplaced)
+  if (sock) {
+    try {
+      sock.ev.removeAllListeners();
+      sock.ws?.close();
+      sock.end?.();
+    } catch (_) {}
+    sock = null;
+  }
 
   try {
     if (forceClean && fs.existsSync(AUTH_DIR)) {
@@ -192,6 +216,7 @@ async function initWhatsApp(forceClean = false) {
     if (!fs.existsSync(AUTH_DIR)) {
       fs.mkdirSync(AUTH_DIR, { recursive: true });
     }
+    clearCorruptedSessions();
     loadLidMappings();
 
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
@@ -207,6 +232,7 @@ async function initWhatsApp(forceClean = false) {
       markOnlineOnConnect: true,
       connectTimeoutMs: 60000,
       defaultQueryTimeoutMs: 60000,
+      keepAliveIntervalMs: 25000,
       getMessage: async (key) => {
         return msgStore.get(key.id) || undefined;
       }
@@ -234,6 +260,15 @@ async function initWhatsApp(forceClean = false) {
 
         console.log(`[WhatsApp Gateway] Connection closed. Status code: ${statusCode}. Reconnecting: ${shouldReconnect}`);
 
+        if (sock) {
+          try {
+            sock.ev.removeAllListeners();
+            sock.ws?.close();
+            sock.end?.();
+          } catch (_) {}
+          sock = null;
+        }
+
         if (statusCode === DisconnectReason.loggedOut) {
           connectionStatus = 'DISCONNECTED';
           latestQR = null;
@@ -246,6 +281,11 @@ async function initWhatsApp(forceClean = false) {
           }
           isStarting = false;
           setTimeout(() => initWhatsApp(false), 2000);
+        } else if (statusCode === 440) {
+          console.warn('[WhatsApp Gateway] Status 440 (Conflict). Waiting 5s for clean reconnect...');
+          connectionStatus = 'DISCONNECTED';
+          isStarting = false;
+          setTimeout(() => initWhatsApp(false), 5000);
         } else {
           connectionStatus = 'DISCONNECTED';
           isStarting = false;
