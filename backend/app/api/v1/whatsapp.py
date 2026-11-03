@@ -123,9 +123,12 @@ class ReassignConversationRequest(BaseModel):
 
 def get_gateway_url() -> str:
     url = (os.getenv("WHATSAPP_GATEWAY_URL") or getattr(settings, "WHATSAPP_GATEWAY_URL", "")).strip().rstrip("/")
-    if not url or url in ["http://localhost:5001", "http://127.0.0.1:5001"]:
-        if os.getenv("RENDER") or os.getenv("ENVIRONMENT") == "production":
+    if os.getenv("RENDER") or os.getenv("ENVIRONMENT") == "production":
+        # Always use the live deployed Render bridge in production / Render cloud
+        if not url or any(x in url.lower() for x in ["localhost", "127.0.0.1", "5001", "loca.lt", "ngrok"]):
             return "https://zigmaa-whatsapp-bridge.onrender.com"
+        return url
+    if not url:
         return "http://localhost:5001"
     return url
 
@@ -178,32 +181,38 @@ async def send_whatsapp_message(
 
     # 1. Attempt dispatch via Baileys QR Gateway if connected
     gateway_url = get_gateway_url()
+    targets = [gateway_url]
+    if gateway_url != "https://zigmaa-whatsapp-bridge.onrender.com" and (os.getenv("RENDER") or os.getenv("ENVIRONMENT") == "production"):
+        targets.append("https://zigmaa-whatsapp-bridge.onrender.com")
+
     dispatched_via_qr = False
 
-    try:
-        async with httpx.AsyncClient(timeout=10.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
-            st_res = await client.get(f"{gateway_url}/status")
-            if st_res.status_code == 200 and st_res.json().get("status") == "CONNECTED":
-                send_payload = {
-                    "phone_number": clean_phone,
-                    "message": payload.message or "",
-                    "file_base64": payload.file_base64,
-                    "file_name": payload.file_name,
-                    "file_type": payload.file_type
-                }
-                send_res = await client.post(
-                    f"{gateway_url}/send",
-                    json=send_payload
-                )
-                if send_res.status_code == 200 and send_res.json().get("success"):
-                    meta_message_id = send_res.json().get("message_id") or f"wamid.qr_out_{uuid.uuid4().hex[:16]}"
-                    delivery_status = "SENT"
-                    dispatched_via_qr = True
-                    logger.info(f"[OUTBOUND QR DISPATCH SUCCESS] Message {meta_message_id} sent to {clean_phone}")
-                else:
-                    logger.warning(f"[OUTBOUND QR DISPATCH FAILED] {send_res.text}")
-    except Exception as e:
-        logger.debug(f"QR Gateway check skipped or failed: {e}")
+    for target in targets:
+        try:
+            async with httpx.AsyncClient(timeout=25.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
+                st_res = await client.get(f"{target}/status")
+                if st_res.status_code == 200 and st_res.json().get("status") == "CONNECTED":
+                    send_payload = {
+                        "phone_number": clean_phone,
+                        "message": payload.message or "",
+                        "file_base64": payload.file_base64,
+                        "file_name": payload.file_name,
+                        "file_type": payload.file_type
+                    }
+                    send_res = await client.post(
+                        f"{target}/send",
+                        json=send_payload
+                    )
+                    if send_res.status_code == 200 and send_res.json().get("success"):
+                        meta_message_id = send_res.json().get("message_id") or f"wamid.qr_out_{uuid.uuid4().hex[:16]}"
+                        delivery_status = "SENT"
+                        dispatched_via_qr = True
+                        logger.info(f"[OUTBOUND QR DISPATCH SUCCESS] Message {meta_message_id} sent to {clean_phone}")
+                        break
+                    else:
+                        logger.warning(f"[OUTBOUND QR DISPATCH FAILED] {send_res.text}")
+        except Exception as e:
+            logger.debug(f"QR Gateway check at {target} skipped or failed: {e}")
 
     # 2. Fallback to Meta Cloud API if QR Gateway is not connected
     api_token, default_phone_number_id = get_whatsapp_credentials()
@@ -737,17 +746,23 @@ async def get_whatsapp_contact_avatar(
 async def get_whatsapp_qr_status():
     """
     Checks connection status, linked phone, and current QR code from Baileys gateway.
+    Supports cloud cold-start with fallback to Render bridge.
     """
     gateway_url = get_gateway_url()
-    try:
-        async with httpx.AsyncClient(timeout=8.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
-            resp = await client.get(f"{gateway_url}/status")
-            if resp.status_code == 200:
-                data = resp.json()
-                data["gateway_online"] = True
-                return data
-    except Exception as e:
-        logger.debug(f"WhatsApp QR Gateway not reachable: {e}")
+    targets = [gateway_url]
+    if gateway_url != "https://zigmaa-whatsapp-bridge.onrender.com" and (os.getenv("RENDER") or os.getenv("ENVIRONMENT") == "production"):
+        targets.append("https://zigmaa-whatsapp-bridge.onrender.com")
+
+    for target in targets:
+        try:
+            async with httpx.AsyncClient(timeout=25.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
+                resp = await client.get(f"{target}/status")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    data["gateway_online"] = True
+                    return data
+        except Exception as e:
+            logger.debug(f"WhatsApp QR Gateway at {target} not reachable: {e}")
 
     return {
         "status": "DISCONNECTED",
@@ -763,12 +778,20 @@ async def refresh_whatsapp_qr():
     Requests a fresh QR code from the Baileys gateway.
     """
     gateway_url = get_gateway_url()
-    try:
-        async with httpx.AsyncClient(timeout=10.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
-            resp = await client.post(f"{gateway_url}/refresh-qr")
-            return resp.json()
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Failed to connect to WhatsApp Gateway: {e}")
+    targets = [gateway_url]
+    if gateway_url != "https://zigmaa-whatsapp-bridge.onrender.com" and (os.getenv("RENDER") or os.getenv("ENVIRONMENT") == "production"):
+        targets.append("https://zigmaa-whatsapp-bridge.onrender.com")
+
+    last_err = None
+    for target in targets:
+        try:
+            async with httpx.AsyncClient(timeout=25.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
+                resp = await client.post(f"{target}/refresh-qr")
+                return resp.json()
+        except Exception as e:
+            last_err = e
+
+    raise HTTPException(status_code=503, detail=f"Failed to connect to WhatsApp Gateway: {last_err}")
 
 @router.post("/qr/disconnect")
 async def disconnect_whatsapp_qr():
@@ -776,9 +799,17 @@ async def disconnect_whatsapp_qr():
     Disconnects and logs out the Baileys QR session.
     """
     gateway_url = get_gateway_url()
-    try:
-        async with httpx.AsyncClient(timeout=8.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
-            resp = await client.post(f"{gateway_url}/disconnect")
-            return resp.json()
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Failed to disconnect WhatsApp Gateway: {e}")
+    targets = [gateway_url]
+    if gateway_url != "https://zigmaa-whatsapp-bridge.onrender.com" and (os.getenv("RENDER") or os.getenv("ENVIRONMENT") == "production"):
+        targets.append("https://zigmaa-whatsapp-bridge.onrender.com")
+
+    last_err = None
+    for target in targets:
+        try:
+            async with httpx.AsyncClient(timeout=25.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
+                resp = await client.post(f"{target}/disconnect")
+                return resp.json()
+        except Exception as e:
+            last_err = e
+
+    raise HTTPException(status_code=503, detail=f"Failed to disconnect WhatsApp Gateway: {last_err}")

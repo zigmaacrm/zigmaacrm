@@ -192,30 +192,30 @@ export default function WhatsAppQRModal({
               </div>
             </div>
           ) : !gatewayOnline ? (
-            /* Gateway offline warning */
-            <div className="text-center py-6 space-y-4">
-              <div className="w-12 h-12 rounded-full bg-amber-100 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 mx-auto flex items-center justify-center">
-                <AlertTriangle className="w-6 h-6" />
+            /* Cloud Gateway Connecting / Waking Up State */
+            <div className="text-center py-8 space-y-4">
+              <div className="w-14 h-14 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 mx-auto flex items-center justify-center ring-8 ring-emerald-50/50 dark:ring-emerald-900/10">
+                <Loader2 className="w-7 h-7 animate-spin" />
               </div>
-              <div>
+              <div className="space-y-1">
                 <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-                  WhatsApp Gateway Starting...
+                  Connecting to WhatsApp Gateway...
                 </h4>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-xs mx-auto">
-                  The local WhatsApp bridge service is launching on port 5001. Please wait a moment or verify `start.bat`.
+                <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xs mx-auto leading-relaxed">
+                  Connecting to live cloud bridge service. If the server was idle, it automatically wakes up in a few seconds.
                 </p>
               </div>
-              <div className="flex items-center justify-center gap-2">
+              <div className="flex items-center justify-center gap-2 pt-2">
                 <button
                   onClick={checkStatus}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Retry Connection</span>
+                  <span>Check Now</span>
                 </button>
                 <button
                   onClick={onClose}
-                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 rounded-xl text-xs font-semibold inline-flex items-center transition-colors cursor-pointer"
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold inline-flex items-center transition-colors cursor-pointer"
                 >
                   <span>Close</span>
                 </button>

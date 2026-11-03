@@ -276,10 +276,15 @@ export default function WhatsAppPage() {
   const [qrPhone, setQrPhone] = useState<string | null>(null);
 
   useEffect(() => {
-    api.getWhatsAppQRStatus().then((data) => {
-      setQrStatus(data.status);
-      setQrPhone(data.phone);
-    }).catch(() => {});
+    const fetchStatus = () => {
+      api.getWhatsAppQRStatus().then((data) => {
+        setQrStatus(data.status);
+        setQrPhone(data.phone);
+      }).catch(() => {});
+    };
+    fetchStatus();
+    const keepAlive = setInterval(fetchStatus, 4 * 60 * 1000);
+    return () => clearInterval(keepAlive);
   }, []);
 
   const [currentUser, setCurrentUser] = useState<any>(null);
