@@ -185,7 +185,6 @@ function VoiceNotePlayer({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(durationHint);
   const [speed, setSpeed] = useState<1 | 1.5 | 2>(1);
-  const [showSpeedPill, setShowSpeedPill] = useState(false);
   const [senderImgFailed, setSenderImgFailed] = useState(false);
   const [contactImgFailed, setContactImgFailed] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -204,7 +203,6 @@ function VoiceNotePlayer({
     } else {
       audioRef.current.play().then(() => {
         setIsPlaying(true);
-        setShowSpeedPill(true);
       }).catch((err) => {
         console.warn("Audio play notice:", err?.message || err);
       });
@@ -233,6 +231,9 @@ function VoiceNotePlayer({
   const handleEnded = () => {
     setIsPlaying(false);
     setCurrentTime(0);
+    if (audioRef.current) {
+      audioRef.current.currentTime = 0;
+    }
   };
 
   const handleCycleSpeed = (e: React.MouseEvent) => {
@@ -273,13 +274,13 @@ function VoiceNotePlayer({
     ? (isOutbound ? "rgba(255, 255, 255, 0.4)" : "rgba(134, 150, 160, 0.4)")
     : (isOutbound ? "rgba(0, 0, 0, 0.28)" : "rgba(134, 150, 160, 0.4)");
 
-  const hasSenderAvatar = isValidImageUrl(senderAvatarUrl);
-  const hasContactAvatar = isValidImageUrl(avatarUrl);
+  const hasSenderAvatar = Boolean(senderAvatarUrl && isValidImageUrl(senderAvatarUrl) && !senderImgFailed);
+  const hasContactAvatar = Boolean(avatarUrl && isValidImageUrl(avatarUrl) && !contactImgFailed);
   const displaySecs = isPlaying ? currentTime : (effectiveDuration > 0 ? effectiveDuration : (durationHint && durationHint > 0 ? durationHint : 0));
-  const isSpeedPillActive = isPlaying || speed !== 1 || showSpeedPill;
+  const isSpeedPillActive = isPlaying;
 
   return (
-    <div className="w-[270px] sm:w-[305px] select-none flex flex-col justify-between gap-1">
+    <div className="w-[270px] sm:w-[295px] max-w-full select-none flex flex-col justify-between gap-1">
       <audio
         ref={audioRef}
         src={audioUrl}
@@ -291,7 +292,7 @@ function VoiceNotePlayer({
 
       {/* Main player row */}
       <div className="flex items-center gap-2.5">
-        {/* Outbound Left Side: Avatar OR Speed Pill (Photo 1) */}
+        {/* Outbound Left Side: DP (avatar) with mic badge OR Speed Pill when playing */}
         {isOutbound && (
           <div className="shrink-0 flex items-center justify-center">
             {isSpeedPillActive ? (
@@ -299,7 +300,7 @@ function VoiceNotePlayer({
                 type="button"
                 onClick={handleCycleSpeed}
                 className={cn(
-                  "w-11 h-7 rounded-full font-bold text-xs flex items-center justify-center transition-all cursor-pointer shadow-xs select-none",
+                  "w-11 h-8 rounded-full font-bold text-xs flex items-center justify-center transition-all cursor-pointer shadow-xs select-none",
                   isDark
                     ? "bg-black/50 hover:bg-black/70 text-white border border-white/10"
                     : "bg-black/15 hover:bg-black/25 text-slate-800 border border-black/10"
@@ -309,15 +310,12 @@ function VoiceNotePlayer({
                 {speed}x
               </button>
             ) : (
-              <div
-                onClick={() => setShowSpeedPill(true)}
-                className="relative w-9 h-9 cursor-pointer group/avatar"
-                title="Click to view playback speed"
-              >
-                <div className="w-9 h-9 rounded-full bg-emerald-700 text-white flex items-center justify-center font-bold text-xs shadow-xs overflow-hidden">
-                  {hasSenderAvatar && !senderImgFailed ? (
+              <div className="relative w-9 h-9">
+                <div className="w-9 h-9 rounded-full bg-emerald-800 text-white flex items-center justify-center font-bold text-xs shadow-xs overflow-hidden">
+                  {hasSenderAvatar ? (
                     <img
                       src={senderAvatarUrl!}
+                      alt=""
                       className="w-full h-full object-cover"
                       onError={() => setSenderImgFailed(true)}
                     />
@@ -355,7 +353,7 @@ function VoiceNotePlayer({
           className="relative min-w-0 flex-1 h-7 flex items-center gap-[1.5px] cursor-pointer py-1 overflow-hidden"
           title="Click to seek"
         >
-          {/* Progress scrubber dot (starts exactly at track beginning like Photo 1) */}
+          {/* Progress scrubber dot */}
           <div
             className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full shadow-xs transition-all pointer-events-none z-10"
             style={{
@@ -382,28 +380,47 @@ function VoiceNotePlayer({
           })}
         </div>
 
-        {/* Inbound: Contact Avatar with mic badge on right */}
+        {/* Inbound: Contact Avatar with mic badge on right OR speed pill when playing */}
         {!isOutbound && (
-          <div className="relative shrink-0 w-9 h-9 mr-0.5">
-            <div className="w-9 h-9 rounded-full bg-slate-300 dark:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center justify-center font-bold text-xs shadow-xs overflow-hidden">
-              {hasContactAvatar && !contactImgFailed ? (
-                <img
-                  src={avatarUrl!}
-                  className="w-full h-full object-cover"
-                  onError={() => setContactImgFailed(true)}
-                />
-              ) : (
-                <span>{(contactName || "U").charAt(0).toUpperCase()}</span>
-              )}
-            </div>
-            <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-[#00a884] text-white flex items-center justify-center shadow-xs border-2 border-white dark:border-[#202c33]">
-              <Mic className="w-2 h-2 fill-current" />
-            </div>
+          <div className="shrink-0 flex items-center justify-center mr-0.5">
+            {isSpeedPillActive ? (
+              <button
+                type="button"
+                onClick={handleCycleSpeed}
+                className={cn(
+                  "w-11 h-8 rounded-full font-bold text-xs flex items-center justify-center transition-all cursor-pointer shadow-xs select-none",
+                  isDark
+                    ? "bg-black/50 hover:bg-black/70 text-white border border-white/10"
+                    : "bg-black/15 hover:bg-black/25 text-slate-800 border border-black/10"
+                )}
+                title="Cycle playback speed (1x, 1.5x, 2x)"
+              >
+                {speed}x
+              </button>
+            ) : (
+              <div className="relative w-9 h-9">
+                <div className="w-9 h-9 rounded-full bg-slate-300 dark:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center justify-center font-bold text-xs shadow-xs overflow-hidden">
+                  {hasContactAvatar ? (
+                    <img
+                      src={avatarUrl!}
+                      alt=""
+                      className="w-full h-full object-cover"
+                      onError={() => setContactImgFailed(true)}
+                    />
+                  ) : (
+                    <span>{(contactName || "U").charAt(0).toUpperCase()}</span>
+                  )}
+                </div>
+                <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-[#00a884] text-white flex items-center justify-center shadow-xs border-2 border-white dark:border-[#202c33]">
+                  <Mic className="w-2 h-2 fill-current" />
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
 
-      {/* Bottom status row: Duration alone on left, Time + Double Tick on right (Photo 1) */}
+      {/* Bottom status row: Duration alone on left, Time + Double Tick on right */}
       <div className={cn(
         "flex items-center justify-between text-[11px] pt-0.5 font-mono",
         isDark ? "text-slate-400" : "text-slate-500"
@@ -650,6 +667,7 @@ function MessageBubbleContainer({
         {/* Floating Quick Reaction Bar (WhatsApp style: appears above or below bubble on trigger) */}
         {showReaction && (
           <div
+            data-msg-menu="true"
             className={cn(
               "absolute z-40 flex items-center gap-1 px-2.5 py-1.5 rounded-full shadow-xl border animate-in fade-in zoom-in-95 duration-150 select-none",
               isNearBottom ? "-bottom-12" : "-top-11",
@@ -685,6 +703,7 @@ function MessageBubbleContainer({
         {/* Hover Reaction Trigger Smiley Button (Photo 1 & 2 WhatsApp style) */}
         <button
           type="button"
+          data-msg-menu="true"
           onClick={(e) => {
             e.stopPropagation();
             setActiveReactionMenuId(showReaction ? null : msg.id);
@@ -705,6 +724,7 @@ function MessageBubbleContainer({
         {/* Hover Chevron / Action Dropdown Trigger - Strictly anchored to THIS bubble! */}
         <button
           type="button"
+          data-msg-menu="true"
           onClick={(e) => {
             e.stopPropagation();
             setActiveContextMenuId(showContext ? null : msg.id);
@@ -724,6 +744,7 @@ function MessageBubbleContainer({
         {/* Context Menu Dropdown - Opens UPWARDS if near bottom, DOWNWARDS otherwise */}
         {showContext && (
           <div
+            data-msg-menu="true"
             className={cn(
               "absolute z-50 w-44 rounded-xl shadow-2xl border py-1.5 animate-in fade-in zoom-in-95 duration-100 select-none",
               isNearBottom ? "bottom-8" : "top-8",
@@ -855,6 +876,25 @@ export default function WhatsAppPage() {
   const [activeReactionMenuId, setActiveReactionMenuId] = useState<string | null>(null);
   const [infoModalMessage, setInfoModalMessage] = useState<WhatsAppMessage | null>(null);
   const [deleteConfirmMessage, setDeleteConfirmMessage] = useState<WhatsAppMessage | null>(null);
+
+  // Dismiss context menu & reaction menu immediately on click anywhere outside
+  useEffect(() => {
+    if (!activeContextMenuId && !activeReactionMenuId) return;
+
+    const handleWindowClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest?.('[data-msg-menu="true"]')) {
+        return;
+      }
+      setActiveContextMenuId(null);
+      setActiveReactionMenuId(null);
+    };
+
+    window.addEventListener("mousedown", handleWindowClick);
+    return () => {
+      window.removeEventListener("mousedown", handleWindowClick);
+    };
+  }, [activeContextMenuId, activeReactionMenuId]);
 
   const handleOpenQuotePicker = async () => {
     setShowQuotePickerModal(true);
@@ -996,12 +1036,20 @@ export default function WhatsAppPage() {
   const [showNewChatModal, setShowNewChatModal] = useState(false);
   const [qrStatus, setQrStatus] = useState<"DISCONNECTED" | "SCAN_QR" | "CONNECTED">("DISCONNECTED");
   const [qrPhone, setQrPhone] = useState<string | null>(null);
+  const [linkedUserAvatar, setLinkedUserAvatar] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchStatus = () => {
       api.getWhatsAppQRStatus().then((data) => {
         setQrStatus(data.status);
         setQrPhone(data.phone);
+        if (data.avatar_url) {
+          setLinkedUserAvatar(data.avatar_url);
+        } else if (data.phone) {
+          api.getWhatsAppContactAvatar(data.phone).then((res) => {
+            if (res?.avatar_url) setLinkedUserAvatar(res.avatar_url);
+          }).catch(() => {});
+        }
       }).catch(() => {});
     };
     fetchStatus();
@@ -2620,66 +2668,66 @@ export default function WhatsAppPage() {
                                 })()}
                                 avatarUrl={activeChat?.avatar_url || null}
                                 contactName={activeChat?.contactName || null}
-                                senderAvatarUrl={currentUser?.picture || currentUser?.avatar_url || null}
+                                senderAvatarUrl={linkedUserAvatar || currentUser?.picture || currentUser?.avatar_url || null}
                                 timeLabel={msg.timeLabel}
                                 status={msg.status}
                               />
                             </div>
                           ) : (
                             /* 7. Standard Text / Media with Caption */
-                            <div
-                              className={cn(
-                                "rounded-2xl px-3 py-2 text-sm leading-relaxed transition-all shadow-xs w-fit min-w-[90px]",
-                                isOutbound
-                                  ? (isDark
-                                      ? "bg-[#005c4b] border border-emerald-600/30 text-white rounded-tr-xs"
-                                      : "bg-[#D9FDD3] border border-[#C2EBC0] text-slate-900 rounded-tr-xs shadow-2xs")
-                                  : (isDark
-                                      ? "bg-[#202c33] border border-white/10 text-white rounded-tl-xs"
-                                      : "bg-white border border-slate-200/90 text-slate-900 rounded-tl-xs shadow-2xs")
-                              )}
-                            >
-                              {msg.attachment?.type === "image" && msg.attachment.url && (
-                                <div className="mb-2 rounded-xl overflow-hidden cursor-pointer group shadow-sm">
-                                  <img
-                                    src={msg.attachment.url}
-                                    alt="WhatsApp Image"
-                                    className="w-full max-h-64 object-cover rounded-xl transition-transform hover:scale-101"
-                                    onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}
-                                  />
-                                </div>
-                              )}
+                            (() => {
+                              const parsed = parseQuotedReply(cleanText);
+                              return (
+                                <div
+                                  className={cn(
+                                    "rounded-2xl px-3 py-2 text-sm leading-relaxed transition-all shadow-xs w-fit",
+                                    parsed.hasQuote ? "min-w-[210px] sm:min-w-[230px]" : "min-w-[90px]",
+                                    isOutbound
+                                      ? (isDark
+                                          ? "bg-[#005c4b] border border-emerald-600/30 text-white rounded-tr-xs"
+                                          : "bg-[#D9FDD3] border border-[#C2EBC0] text-slate-900 rounded-tr-xs shadow-2xs")
+                                      : (isDark
+                                          ? "bg-[#202c33] border border-white/10 text-white rounded-tl-xs"
+                                          : "bg-white border border-slate-200/90 text-slate-900 rounded-tl-xs shadow-2xs")
+                                  )}
+                                >
+                                  {msg.attachment?.type === "image" && msg.attachment.url && (
+                                    <div className="mb-2 rounded-xl overflow-hidden cursor-pointer group shadow-sm">
+                                      <img
+                                        src={msg.attachment.url}
+                                        alt="WhatsApp Image"
+                                        className="w-full max-h-64 object-cover rounded-xl transition-transform hover:scale-101"
+                                        onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}
+                                      />
+                                    </div>
+                                  )}
 
-                              {msg.attachment?.type === "video" && msg.attachment.url && (
-                                <div className="mb-2 rounded-xl overflow-hidden shadow-sm bg-black">
-                                  <video
-                                    src={msg.attachment.url}
-                                    controls
-                                    preload="metadata"
-                                    className="w-full max-h-72 rounded-xl object-contain"
-                                  />
-                                </div>
-                              )}
+                                  {msg.attachment?.type === "video" && msg.attachment.url && (
+                                    <div className="mb-2 rounded-xl overflow-hidden shadow-sm bg-black">
+                                      <video
+                                        src={msg.attachment.url}
+                                        controls
+                                        preload="metadata"
+                                        className="w-full max-h-72 rounded-xl object-contain"
+                                      />
+                                    </div>
+                                  )}
 
-                              {(() => {
-                                const parsed = parseQuotedReply(cleanText);
-                                return (
-                                  <>
-                                    {parsed.hasQuote && (
-                                      <div className={cn(
-                                        "w-full min-w-[170px] sm:min-w-[210px] rounded-lg px-2.5 py-1.5 mb-2 border-l-[3.5px] text-xs select-none flex flex-col justify-center transition-all",
-                                        isOutbound
-                                          ? (isDark ? "bg-black/25 border-l-[#53bdeb]" : "bg-black/5 border-l-[#00a884]")
-                                          : (isDark ? "bg-black/25 border-l-[#00a884]" : "bg-black/5 border-l-[#00a884]")
-                                      )}>
-                                        <div className="font-bold text-[12px] text-emerald-600 dark:text-[#53bdeb] truncate">
-                                          {parsed.quotedSender}
-                                        </div>
-                                        <div className="text-[11px] text-slate-700 dark:text-slate-300 mt-0.5 line-clamp-2 break-words">
-                                          {parsed.quotedText}
-                                        </div>
+                                  {parsed.hasQuote && (
+                                    <div className={cn(
+                                      "w-full rounded-lg px-2.5 py-1.5 mb-1.5 border-l-[3.5px] text-xs select-none flex flex-col justify-center transition-all",
+                                      isOutbound
+                                        ? (isDark ? "bg-black/25 border-l-[#53bdeb]" : "bg-black/8 border-l-[#00a884]")
+                                        : (isDark ? "bg-black/25 border-l-[#00a884]" : "bg-black/8 border-l-[#00a884]")
+                                    )}>
+                                      <div className="font-bold text-[12px] text-emerald-600 dark:text-[#53bdeb] truncate">
+                                        {parsed.quotedSender}
                                       </div>
-                                    )}
+                                      <div className="text-[11px] text-slate-700 dark:text-slate-300 mt-0.5 line-clamp-2 break-words">
+                                        {parsed.quotedText}
+                                      </div>
+                                    </div>
+                                  )}
 
                                     <div className="flex flex-wrap items-baseline justify-end gap-x-2.5 gap-y-0.5 min-w-0">
                                       {parsed.body ? (
@@ -2712,11 +2760,10 @@ export default function WhatsAppPage() {
                                         )}
                                       </span>
                                     </div>
-                                  </>
+                                  </div>
                                 );
-                              })()}
-                            </div>
-                          )}
+                              })()
+                            )}
                         </MessageBubbleContainer>
                       );
                     })

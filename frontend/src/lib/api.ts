@@ -3574,6 +3574,7 @@ export const zigmaaApi = {
     status: "DISCONNECTED" | "SCAN_QR" | "CONNECTED";
     phone: string | null;
     name: string | null;
+    avatar_url?: string | null;
     qr: string | null;
     gateway_online: boolean;
   }> {

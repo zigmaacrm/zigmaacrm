@@ -152,6 +152,7 @@ let latestQR = null;
 let connectionStatus = 'DISCONNECTED'; // 'DISCONNECTED' | 'SCAN_QR' | 'CONNECTED'
 let connectedPhone = null;
 let connectedName = null;
+let connectedAvatarUrl = null;
 let isStarting = false;
 
 // In-Memory Caches
@@ -523,6 +524,16 @@ async function initWhatsApp(forceClean = false) {
         connectedPhone = phone ? `+${phone}` : null;
         connectedName = sock?.user?.name || 'Zigmaa Linked Account';
 
+        try {
+          const clean = phone ? phone.replace(/[^0-9]/g, '') : '';
+          if (clean) {
+            const jid = `${clean}@s.whatsapp.net`;
+            sock.profilePictureUrl(jid, 'image')
+              .then(url => { connectedAvatarUrl = url || null; })
+              .catch(() => { connectedAvatarUrl = null; });
+          }
+        } catch (_) {}
+
         console.log(`[WhatsApp Gateway] Connected successfully! Phone: ${connectedPhone} (${connectedName})`);
         isStarting = false;
 
@@ -890,11 +901,21 @@ async function initWhatsApp(forceClean = false) {
 }
 
 // REST Endpoints
-app.get('/status', (req, res) => {
+app.get('/status', async (req, res) => {
+  if (connectionStatus === 'CONNECTED' && connectedPhone && !connectedAvatarUrl && sock) {
+    try {
+      const clean = connectedPhone.replace(/[^0-9]/g, '');
+      if (clean) {
+        const jid = `${clean}@s.whatsapp.net`;
+        connectedAvatarUrl = await sock.profilePictureUrl(jid, 'image').catch(() => null);
+      }
+    } catch (_) {}
+  }
   res.json({
     status: connectionStatus,
     phone: connectedPhone,
     name: connectedName,
+    avatar_url: connectedAvatarUrl,
     qr: latestQR
   });
 });
@@ -942,6 +963,7 @@ app.post('/disconnect', async (req, res) => {
     latestQR = null;
     connectedPhone = null;
     connectedName = null;
+    connectedAvatarUrl = null;
     if (fs.existsSync(AUTH_DIR)) {
       try {
         fs.rmSync(AUTH_DIR, { recursive: true, force: true });
