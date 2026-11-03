@@ -666,9 +666,78 @@ async function initWhatsApp(forceClean = false) {
             continue;
           }
 
+          const rawM = unwrapMessage(msg.message);
+
+          // Handle incoming message reaction
+          if (rawM?.reactionMessage) {
+            const rMsg = rawM.reactionMessage;
+            const targetId = rMsg.key?.id;
+            const emoji = rMsg.text || '';
+            console.log(`[WhatsApp Reaction Received] Target ID: ${targetId}, Emoji: "${emoji}", From: ${phone}`);
+            if (targetId) {
+              try {
+                await fetch(`${BACKEND_BASE}/api/v1/webhooks/whatsapp/reaction`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    phone_number: phone,
+                    meta_message_id: targetId,
+                    reaction: emoji
+                  })
+                });
+              } catch (rErr) {
+                console.warn('[WhatsApp Reaction Forward Error]:', rErr.message);
+              }
+            }
+            continue;
+          }
+
+          // Handle protocol message (Delete for everyone / Message Edit)
+          if (rawM?.protocolMessage) {
+            const pMsg = rawM.protocolMessage;
+            const targetId = pMsg.key?.id;
+            // Type 0 = REVOKE (Delete for everyone)
+            if (pMsg.type === 0 && targetId) {
+              console.log(`[WhatsApp Revoke Received] Target ID: ${targetId}, From: ${phone}`);
+              try {
+                await fetch(`${BACKEND_BASE}/api/v1/webhooks/whatsapp/revoke`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    phone_number: phone,
+                    meta_message_id: targetId
+                  })
+                });
+              } catch (vErr) {
+                console.warn('[WhatsApp Revoke Forward Error]:', vErr.message);
+              }
+              continue;
+            }
+            // Type 14 = MESSAGE_EDIT
+            if (pMsg.type === 14 && targetId && pMsg.editedMessage) {
+              const editedText = extractMessageBody(pMsg.editedMessage);
+              console.log(`[WhatsApp Edit Received] Target ID: ${targetId}, New text: "${editedText}", From: ${phone}`);
+              if (editedText) {
+                try {
+                  await fetch(`${BACKEND_BASE}/api/v1/webhooks/whatsapp/edit`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      phone_number: phone,
+                      meta_message_id: targetId,
+                      message_body: editedText
+                    })
+                  });
+                } catch (eErr) {
+                  console.warn('[WhatsApp Edit Forward Error]:', eErr.message);
+                }
+              }
+              continue;
+            }
+          }
+
           const contactName = msg.pushName || '';
           let mediaInfo = null;
-          const rawM = unwrapMessage(msg.message);
           if (rawM?.imageMessage || rawM?.documentMessage || rawM?.audioMessage || rawM?.videoMessage || rawM?.stickerMessage) {
             mediaInfo = await decryptAndSaveMedia(msg);
           }
@@ -997,6 +1066,94 @@ app.post('/api/whatsapp/send-voice', async (req, res) => {
     });
   } catch (err) {
     console.error('[WhatsApp Voice Send Error]:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// React to a message (or remove reaction with empty emoji)
+app.post('/api/whatsapp/react', async (req, res) => {
+  try {
+    const { phone_number, message_id, emoji, from_me } = req.body;
+    if (!phone_number || !message_id) {
+      return res.status(400).json({ success: false, error: 'phone_number and message_id are required' });
+    }
+    if (connectionStatus !== 'CONNECTED' || !sock) {
+      return res.status(503).json({ success: false, error: 'WhatsApp is not connected via QR.' });
+    }
+    const cleanPhone = phone_number.replace(/[^0-9]/g, '');
+    const jid = `${cleanPhone}@s.whatsapp.net`;
+    const messageKey = {
+      remoteJid: jid,
+      fromMe: Boolean(from_me),
+      id: message_id
+    };
+    await sock.sendMessage(jid, {
+      react: {
+        text: emoji || '',
+        key: messageKey
+      }
+    });
+    console.log(`[WhatsApp Reaction Sent] ID: ${message_id}, Emoji: "${emoji || ''}", To: ${cleanPhone}`);
+    res.json({ success: true, emoji: emoji || null });
+  } catch (err) {
+    console.error('[WhatsApp React Error]:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Edit an outbound message
+app.post('/api/whatsapp/edit-message', async (req, res) => {
+  try {
+    const { phone_number, message_id, text } = req.body;
+    if (!phone_number || !message_id || !text) {
+      return res.status(400).json({ success: false, error: 'phone_number, message_id and text are required' });
+    }
+    if (connectionStatus !== 'CONNECTED' || !sock) {
+      return res.status(503).json({ success: false, error: 'WhatsApp is not connected via QR.' });
+    }
+    const cleanPhone = phone_number.replace(/[^0-9]/g, '');
+    const jid = `${cleanPhone}@s.whatsapp.net`;
+    const messageKey = {
+      remoteJid: jid,
+      fromMe: true,
+      id: message_id
+    };
+    await sock.sendMessage(jid, {
+      text: text.trim(),
+      edit: messageKey
+    });
+    console.log(`[WhatsApp Edit Sent] ID: ${message_id}, New Text: "${text.trim()}", To: ${cleanPhone}`);
+    res.json({ success: true, text: text.trim() });
+  } catch (err) {
+    console.error('[WhatsApp Edit Error]:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Delete message (Delete for everyone using Baileys revoke)
+app.post('/api/whatsapp/delete-message', async (req, res) => {
+  try {
+    const { phone_number, message_id, delete_for_everyone, from_me } = req.body;
+    if (!phone_number || !message_id) {
+      return res.status(400).json({ success: false, error: 'phone_number and message_id are required' });
+    }
+    if (delete_for_everyone) {
+      if (connectionStatus !== 'CONNECTED' || !sock) {
+        return res.status(503).json({ success: false, error: 'WhatsApp is not connected via QR.' });
+      }
+      const cleanPhone = phone_number.replace(/[^0-9]/g, '');
+      const jid = `${cleanPhone}@s.whatsapp.net`;
+      const messageKey = {
+        remoteJid: jid,
+        fromMe: from_me !== undefined ? Boolean(from_me) : true,
+        id: message_id
+      };
+      await sock.sendMessage(jid, { delete: messageKey });
+      console.log(`[WhatsApp Delete Revoke Sent] ID: ${message_id}, To: ${cleanPhone}`);
+    }
+    res.json({ success: true, deleted: true });
+  } catch (err) {
+    console.error('[WhatsApp Delete Error]:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });

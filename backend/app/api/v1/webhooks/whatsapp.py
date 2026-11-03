@@ -635,3 +635,89 @@ async def update_whatsapp_message_status(
     res = await db.execute(stmt)
     await db.commit()
     return {"status": "success", "updated": res.rowcount}
+
+class WhatsAppInboundReactionPayload(BaseModel):
+    phone_number: str
+    meta_message_id: str
+    reaction: Optional[str] = ""
+
+@router.post("/whatsapp/reaction")
+@router.post("/reaction")
+async def receive_whatsapp_reaction(
+    payload: WhatsAppInboundReactionPayload,
+    db: AsyncSession = Depends(get_db)
+):
+    clean_id = payload.meta_message_id.strip()
+    stmt = (
+        update(WhatsAppMessage)
+        .where(
+            or_(
+                WhatsAppMessage.meta_message_id == clean_id,
+                WhatsAppMessage.meta_message_id == f"wamid.{clean_id}",
+                WhatsAppMessage.meta_message_id.like(f"%{clean_id}%")
+            )
+        )
+        .values(reaction=payload.reaction or None)
+    )
+    res = await db.execute(stmt)
+    await db.commit()
+    logger.info(f"[INBOUND REACTION] ID: {clean_id}, Emoji: {payload.reaction}")
+    return {"status": "success", "updated": res.rowcount}
+
+class WhatsAppInboundRevokePayload(BaseModel):
+    phone_number: str
+    meta_message_id: str
+
+@router.post("/whatsapp/revoke")
+@router.post("/revoke")
+async def receive_whatsapp_revoke(
+    payload: WhatsAppInboundRevokePayload,
+    db: AsyncSession = Depends(get_db)
+):
+    clean_id = payload.meta_message_id.strip()
+    stmt = (
+        update(WhatsAppMessage)
+        .where(
+            or_(
+                WhatsAppMessage.meta_message_id == clean_id,
+                WhatsAppMessage.meta_message_id == f"wamid.{clean_id}",
+                WhatsAppMessage.meta_message_id.like(f"%{clean_id}%")
+            )
+        )
+        .values(
+            is_deleted=True,
+            message_body="🚫 This message was deleted"
+        )
+    )
+    res = await db.execute(stmt)
+    await db.commit()
+    logger.info(f"[INBOUND REVOKE] ID: {clean_id} marked as deleted")
+    return {"status": "success", "updated": res.rowcount}
+
+class WhatsAppInboundEditPayload(BaseModel):
+    phone_number: str
+    meta_message_id: str
+    message_body: str
+
+@router.post("/whatsapp/edit")
+@router.post("/edit")
+async def receive_whatsapp_edit(
+    payload: WhatsAppInboundEditPayload,
+    db: AsyncSession = Depends(get_db)
+):
+    clean_id = payload.meta_message_id.strip()
+    stmt = (
+        update(WhatsAppMessage)
+        .where(
+            or_(
+                WhatsAppMessage.meta_message_id == clean_id,
+                WhatsAppMessage.meta_message_id == f"wamid.{clean_id}",
+                WhatsAppMessage.meta_message_id.like(f"%{clean_id}%")
+            )
+        )
+        .values(message_body=payload.message_body)
+    )
+    res = await db.execute(stmt)
+    await db.commit()
+    logger.info(f"[INBOUND EDIT] ID: {clean_id} updated to {payload.message_body[:30]}")
+    return {"status": "success", "updated": res.rowcount}

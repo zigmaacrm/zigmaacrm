@@ -219,6 +219,18 @@ export default function ContactsPage() {
         setShowAddDrawer(true);
       }
     }
+
+    const handleContactsUpdated = () => {
+      loadContacts(true);
+    };
+    if (typeof window !== "undefined") {
+      window.addEventListener("contacts_updated", handleContactsUpdated);
+    }
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("contacts_updated", handleContactsUpdated);
+      }
+    };
   }, []);
 
   const handleCreateContact = async (contactData: Partial<Contact>) => {

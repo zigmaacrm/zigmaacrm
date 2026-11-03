@@ -33,6 +33,8 @@ class WhatsAppMessage(TimeStampedBase):
     meta_message_id = Column(String(255), nullable=True, index=True)
     status = Column(String(50), default="SENT", index=True)  # SENT, DELIVERED, READ, FAILED
     timestamp = Column(DateTime, default=datetime.utcnow, nullable=True, index=True)
+    reaction = Column(String(50), nullable=True)
+    is_deleted = Column(Boolean, default=False, nullable=True)
 
     organization = relationship("Organization")
     contact = relationship("Contact")

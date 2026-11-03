@@ -11,6 +11,11 @@ import {
   Paperclip,
   Check,
   CheckCheck,
+  Pencil,
+  Ban,
+  Info,
+  Copy,
+  CornerUpLeft,
   Plus,
   FileText,
   Calendar,
@@ -70,6 +75,10 @@ export interface WhatsAppMessage {
   fileName?: string | null;
   caption?: string | null;
   isVoiceNote?: boolean;
+  reaction?: string | null;
+  isDeleted?: boolean;
+  isEdited?: boolean;
+  metaMessageId?: string | null;
   attachment?: {
     type: "pdf" | "image" | "audio" | "document" | "video" | "sticker";
     name: string;
@@ -109,20 +118,32 @@ function cleanDisplayCaption(text?: string | null, fileName?: string | null): st
   return t;
 }
 
+const WAVEFORM_BARS = [
+  10, 14, 22, 16, 26, 32, 24, 18, 28, 38, 26, 14, 18, 28, 24, 16,
+  20, 30, 26, 18, 14, 24, 32, 22, 16, 20, 14, 18, 12, 16, 10, 8
+];
+
 function VoiceNotePlayer({
   audioUrl,
   isOutbound,
   isDark,
-  durationHint = 0
+  durationHint = 0,
+  avatarUrl,
+  contactName,
+  senderAvatarUrl
 }: {
   audioUrl: string;
   isOutbound: boolean;
   isDark: boolean;
   durationHint?: number;
+  avatarUrl?: string | null;
+  contactName?: string | null;
+  senderAvatarUrl?: string | null;
 }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(durationHint);
+  const [speed, setSpeed] = useState<1 | 1.5 | 2>(1);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
@@ -167,11 +188,25 @@ function VoiceNotePlayer({
     setCurrentTime(0);
   };
 
-  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = parseFloat(e.target.value);
+  const handleCycleSpeed = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const nextSpeed: 1 | 1.5 | 2 = speed === 1 ? 1.5 : (speed === 1.5 ? 2 : 1);
+    setSpeed(nextSpeed);
     if (audioRef.current) {
-      audioRef.current.currentTime = val;
-      setCurrentTime(val);
+      audioRef.current.playbackRate = nextSpeed;
+    }
+  };
+
+  const handleWaveformSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const ratio = Math.max(0, Math.min(1, clickX / rect.width));
+    const effective = duration > 0 ? duration : (durationHint > 0 ? durationHint : 10);
+    const target = ratio * effective;
+    if (audioRef.current) {
+      audioRef.current.currentTime = target;
+      setCurrentTime(target);
     }
   };
 
@@ -183,12 +218,16 @@ function VoiceNotePlayer({
   };
 
   const effectiveDuration = duration > 0 ? duration : (durationHint > 0 ? durationHint : 0);
+  const progressRatio = effectiveDuration > 0 ? Math.min(1, currentTime / effectiveDuration) : 0;
+
+  // Colors matching official WhatsApp Web
+  const playedColor = isDark ? "#53bdeb" : (isOutbound ? "#00a884" : "#00a884");
+  const unplayedColor = isDark
+    ? (isOutbound ? "rgba(255, 255, 255, 0.35)" : "rgba(134, 150, 160, 0.4)")
+    : (isOutbound ? "rgba(0, 0, 0, 0.25)" : "rgba(134, 150, 160, 0.4)");
 
   return (
-    <div className={cn(
-      "flex items-center gap-3 p-2.5 rounded-xl mt-1.5 w-60 sm:w-72 transition-all border",
-      isDark ? "bg-black/40 border-white/10" : (isOutbound ? "bg-white/70 border-emerald-200" : "bg-slate-50 border-slate-200")
-    )}>
+    <div className="flex flex-col gap-1 w-64 sm:w-76 select-none">
       <audio
         ref={audioRef}
         src={audioUrl}
@@ -197,34 +236,105 @@ function VoiceNotePlayer({
         onEnded={handleEnded}
         preload="metadata"
       />
-      <button
-        type="button"
-        onClick={togglePlay}
-        className={cn(
-          "w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-transform active:scale-95 shadow-sm text-white",
-          "bg-emerald-600 hover:bg-emerald-500"
-        )}
-      >
-        {isPlaying ? <Pause className="w-4 h-4 fill-white" /> : <Play className="w-4 h-4 fill-white ml-0.5" />}
-      </button>
 
-      <div className="flex-1 min-w-0">
-        <input
-          type="range"
-          min={0}
-          max={effectiveDuration || 100}
-          value={currentTime}
-          onChange={handleSeek}
-          className="w-full h-1.5 bg-slate-300 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-emerald-500"
-        />
-        <div className="flex justify-between text-[10px] text-slate-500 dark:text-slate-400 mt-1 font-mono">
-          <span>{formatSecs(currentTime)}</span>
-          <span>{effectiveDuration > 0 ? formatSecs(effectiveDuration) : "0:00"}</span>
+      <div className="flex items-center gap-2.5">
+        {/* Outbound: User Avatar with mic badge on left */}
+        {isOutbound && (
+          <div className="relative shrink-0 w-10 h-10">
+            {senderAvatarUrl ? (
+              <img src={senderAvatarUrl} alt="You" className="w-10 h-10 rounded-full object-cover" />
+            ) : (
+              <div className="w-10 h-10 rounded-full bg-emerald-700 text-white flex items-center justify-center font-bold text-[11px] shadow-xs">
+                YOU
+              </div>
+            )}
+            <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-[#00a884] text-white flex items-center justify-center shadow-xs border border-white dark:border-[#005c4b]">
+              <Mic className="w-2.5 h-2.5 fill-current" />
+            </div>
+          </div>
+        )}
+
+        {/* Play / Pause button */}
+        <button
+          type="button"
+          onClick={togglePlay}
+          className={cn(
+            "w-8 h-8 rounded-full flex items-center justify-center shrink-0 transition-transform active:scale-95 cursor-pointer",
+            isDark ? "text-white hover:bg-white/10" : "text-slate-800 hover:bg-black/5"
+          )}
+        >
+          {isPlaying ? (
+            <Pause className="w-5 h-5 fill-current" />
+          ) : (
+            <Play className="w-5 h-5 fill-current ml-0.5" />
+          )}
+        </button>
+
+        {/* Waveform Scrubber Bars */}
+        <div
+          onClick={handleWaveformSeek}
+          className="relative flex-1 h-8 flex items-center gap-[2px] cursor-pointer py-1"
+          title="Click to seek"
+        >
+          {/* Progress scrubber dot */}
+          <div
+            className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full shadow-xs transition-all pointer-events-none z-10"
+            style={{
+              left: `calc(${progressRatio * 100}% - 6px)`,
+              backgroundColor: playedColor
+            }}
+          />
+
+          {/* Waveform vertical bars */}
+          {WAVEFORM_BARS.map((height, idx) => {
+            const barRatio = idx / WAVEFORM_BARS.length;
+            const isPlayed = progressRatio >= barRatio;
+            return (
+              <div
+                key={idx}
+                className="flex-1 rounded-full transition-colors"
+                style={{
+                  height: `${height}px`,
+                  backgroundColor: isPlayed ? playedColor : unplayedColor
+                }}
+              />
+            );
+          })}
         </div>
+
+        {/* Inbound: Contact Avatar with mic badge on right */}
+        {!isOutbound && (
+          <div className="relative shrink-0 w-10 h-10">
+            {avatarUrl ? (
+              <img src={avatarUrl} alt="Contact" className="w-10 h-10 rounded-full object-cover" />
+            ) : (
+              <div className="w-10 h-10 rounded-full bg-slate-300 dark:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center justify-center font-bold text-xs shadow-xs">
+                {(contactName || "U").charAt(0).toUpperCase()}
+              </div>
+            )}
+            <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-[#00a884] text-white flex items-center justify-center shadow-xs border border-white dark:border-[#202c33]">
+              <Mic className="w-2.5 h-2.5 fill-current" />
+            </div>
+          </div>
+        )}
       </div>
 
-      <div className="shrink-0 text-emerald-500">
-        <Mic className="w-4 h-4" />
+      {/* Duration and 1x / 1.5x / 2x Speed button */}
+      <div className="flex items-center justify-between text-[11px] px-1 font-mono text-slate-500 dark:text-slate-400">
+        <span>{isPlaying ? formatSecs(currentTime) : (effectiveDuration > 0 ? formatSecs(effectiveDuration) : "0:00")}</span>
+        <button
+          type="button"
+          onClick={handleCycleSpeed}
+          className={cn(
+            "px-2 py-0.5 rounded-full font-bold text-[10px] tracking-tight transition-all active:scale-95 cursor-pointer shadow-2xs border",
+            isDark
+              ? "bg-white/10 hover:bg-white/20 text-white border-white/10"
+              : "bg-black/5 hover:bg-black/10 text-slate-700 border-black/10"
+          )}
+          title="Change playback speed (1x, 1.5x, 2x)"
+        >
+          {speed}x
+        </button>
       </div>
     </div>
   );
@@ -390,6 +500,192 @@ function ContactAvatar({
   );
 }
 
+
+function MessageBubbleContainer({
+  msg,
+  isOutbound,
+  isDark,
+  activeContextMenuId,
+  activeReactionMenuId,
+  setActiveContextMenuId,
+  setActiveReactionMenuId,
+  onReact,
+  onReply,
+  onCopy,
+  onEdit,
+  onDelete,
+  onInfo,
+  children
+}: {
+  msg: WhatsAppMessage;
+  isOutbound: boolean;
+  isDark: boolean;
+  activeContextMenuId: string | null;
+  activeReactionMenuId: string | null;
+  setActiveContextMenuId: (id: string | null) => void;
+  setActiveReactionMenuId: (id: string | null) => void;
+  onReact: (emoji: string) => void;
+  onReply: () => void;
+  onCopy: () => void;
+  onEdit?: () => void;
+  onDelete: () => void;
+  onInfo: () => void;
+  children: React.ReactNode;
+}) {
+  if (msg.isDeleted) {
+    return (
+      <div className={cn("flex flex-col my-1 relative", isOutbound ? "items-end" : "items-start")}>
+        <div
+          className={cn(
+            "rounded-2xl px-3.5 py-2 text-xs transition-all shadow-2xs border flex items-center gap-2 italic select-none",
+            isOutbound
+              ? (isDark ? "bg-[#005c4b]/40 border-emerald-600/20 text-white/70" : "bg-[#D9FDD3]/50 border-[#C2EBC0] text-slate-500")
+              : (isDark ? "bg-[#202c33]/40 border-white/5 text-slate-400" : "bg-white border-slate-200 text-slate-500")
+          )}
+        >
+          <Ban className="w-3.5 h-3.5 text-slate-400" />
+          <span>This message was deleted</span>
+          <span className="text-[10px] ml-1 not-italic opacity-60">{msg.timeLabel}</span>
+        </div>
+      </div>
+    );
+  }
+
+  const isMenuOpen = activeContextMenuId === msg.id;
+  const isReactionOpen = activeReactionMenuId === msg.id;
+
+  return (
+    <div className={cn("flex flex-col my-1 relative group", isOutbound ? "items-end" : "items-start")}>
+      {/* Floating Reaction Bar */}
+      {isReactionOpen && (
+        <div
+          className={cn(
+            "absolute -top-10 z-40 flex items-center gap-1 px-2 py-1 rounded-full shadow-2xl border animate-in fade-in zoom-in-95 duration-100",
+            isOutbound ? "right-2" : "left-2",
+            isDark ? "bg-[#202c33] border-white/10" : "bg-white border-slate-200 shadow-xl"
+          )}
+        >
+          {["👍", "❤️", "😂", "😮", "😢", "🙏"].map((emoji) => (
+            <button
+              key={emoji}
+              type="button"
+              onClick={() => onReact(emoji)}
+              className="w-7 h-7 rounded-full flex items-center justify-center hover:scale-130 transition-transform text-sm cursor-pointer"
+            >
+              {emoji}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => setActiveReactionMenuId(null)}
+            className="w-5 h-5 rounded-full flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 text-xs ml-0.5 cursor-pointer"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      )}
+
+      {/* Down Chevron Trigger Button on Hover */}
+      <div className="absolute top-1.5 right-1.5 z-20 opacity-0 group-hover:opacity-100 transition-opacity">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setActiveContextMenuId(isMenuOpen ? null : msg.id);
+          }}
+          className="p-1 rounded-full bg-black/30 hover:bg-black/50 text-white backdrop-blur-xs shadow-xs cursor-pointer transition-transform active:scale-95"
+          title="Message options"
+        >
+          <ChevronDown className="w-3.5 h-3.5" />
+        </button>
+
+        {/* Dropdown Menu */}
+        {isMenuOpen && (
+          <div
+            className={cn(
+              "absolute right-0 top-6 w-40 rounded-xl shadow-2xl py-1 text-xs border z-50 animate-in fade-in zoom-in-95 duration-100 select-none",
+              isDark ? "bg-[#202c33] border-white/10 text-white" : "bg-white border-slate-200 text-slate-800"
+            )}
+          >
+            <button
+              type="button"
+              onClick={onInfo}
+              className="w-full px-3 py-2 flex items-center gap-2.5 hover:bg-black/5 dark:hover:bg-white/10 text-left cursor-pointer"
+            >
+              <Info className="w-3.5 h-3.5 text-slate-400" />
+              <span>Message info</span>
+            </button>
+            <button
+              type="button"
+              onClick={onReply}
+              className="w-full px-3 py-2 flex items-center gap-2.5 hover:bg-black/5 dark:hover:bg-white/10 text-left cursor-pointer"
+            >
+              <CornerUpLeft className="w-3.5 h-3.5 text-slate-400" />
+              <span>Reply</span>
+            </button>
+            <button
+              type="button"
+              onClick={onCopy}
+              className="w-full px-3 py-2 flex items-center gap-2.5 hover:bg-black/5 dark:hover:bg-white/10 text-left cursor-pointer"
+            >
+              <Copy className="w-3.5 h-3.5 text-slate-400" />
+              <span>Copy</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveReactionMenuId(msg.id);
+                setActiveContextMenuId(null);
+              }}
+              className="w-full px-3 py-2 flex items-center gap-2.5 hover:bg-black/5 dark:hover:bg-white/10 text-left cursor-pointer"
+            >
+              <Smile className="w-3.5 h-3.5 text-slate-400" />
+              <span>React</span>
+            </button>
+            {isOutbound && onEdit && (
+              <button
+                type="button"
+                onClick={onEdit}
+                className="w-full px-3 py-2 flex items-center gap-2.5 hover:bg-black/5 dark:hover:bg-white/10 text-left cursor-pointer"
+              >
+                <Pencil className="w-3.5 h-3.5 text-slate-400" />
+                <span>Edit</span>
+              </button>
+            )}
+            <div className="border-t border-slate-200 dark:border-white/10 my-0.5" />
+            <button
+              type="button"
+              onClick={onDelete}
+              className="w-full px-3 py-2 flex items-center gap-2.5 hover:bg-red-500/10 text-red-500 text-left cursor-pointer font-medium"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete</span>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Bubble Content */}
+      {children}
+
+      {/* Reaction Pill Badge */}
+      {msg.reaction && (
+        <button
+          type="button"
+          onClick={() => onReact(msg.reaction!)}
+          className={cn(
+            "absolute -bottom-2 right-2 px-1.5 py-0.2 rounded-full text-xs shadow-xs border flex items-center gap-1 z-20 cursor-pointer transition-transform hover:scale-110",
+            isDark ? "bg-[#202c33] border-white/10 text-white" : "bg-white border-slate-200 text-slate-800"
+          )}
+          title="Click to remove reaction"
+        >
+          <span>{msg.reaction}</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function WhatsAppPage() {
   const { toast } = useToast();
   const { theme } = useTheme();
@@ -408,6 +704,14 @@ export default function WhatsAppPage() {
   const [availableQuotes, setAvailableQuotes] = useState<Invoice[]>([]);
   const [loadingQuotes, setLoadingQuotes] = useState(false);
 
+  // Message Actions: Reply, Edit, React, Info, Delete
+  const [replyingToMessage, setReplyingToMessage] = useState<WhatsAppMessage | null>(null);
+  const [editingMessage, setEditingMessage] = useState<WhatsAppMessage | null>(null);
+  const [activeContextMenuId, setActiveContextMenuId] = useState<string | null>(null);
+  const [activeReactionMenuId, setActiveReactionMenuId] = useState<string | null>(null);
+  const [infoModalMessage, setInfoModalMessage] = useState<WhatsAppMessage | null>(null);
+  const [deleteConfirmMessage, setDeleteConfirmMessage] = useState<WhatsAppMessage | null>(null);
+
   const handleOpenQuotePicker = async () => {
     setShowQuotePickerModal(true);
     setLoadingQuotes(true);
@@ -418,6 +722,116 @@ export default function WhatsAppPage() {
       console.error("Failed to load quotations:", err);
     } finally {
       setLoadingQuotes(false);
+    }
+  };
+
+  // --- Message Action Handlers ---
+  const handleReactToMessage = async (msg: WhatsAppMessage, emoji: string) => {
+    if (!activeChat) return;
+    const newEmoji = msg.reaction === emoji ? "" : emoji;
+    setMessages((prev) =>
+      prev.map((m) => (m.id === msg.id ? { ...m, reaction: newEmoji || null } : m))
+    );
+    setActiveReactionMenuId(null);
+    setActiveContextMenuId(null);
+
+    const cleanPhone = activeChat.phone.replace(/[^0-9]/g, "");
+    const targetId = msg.metaMessageId || msg.id;
+    try {
+      await api.reactToWhatsAppMessage({
+        phoneNumber: cleanPhone,
+        messageId: targetId,
+        emoji: newEmoji,
+        fromMe: msg.sender === "outbound"
+      });
+    } catch (_) {}
+  };
+
+  const handleCopyMessage = (msg: WhatsAppMessage) => {
+    const content = msg.text || msg.attachment?.url || "";
+    if (content && typeof navigator !== "undefined") {
+      navigator.clipboard.writeText(content);
+      toast.success("Copied to clipboard", "Message content copied.");
+    }
+    setActiveContextMenuId(null);
+  };
+
+  const handleReplyMessage = (msg: WhatsAppMessage) => {
+    setReplyingToMessage(msg);
+    setEditingMessage(null);
+    setActiveContextMenuId(null);
+    if (messageInputRef.current) messageInputRef.current.focus();
+  };
+
+  const handleStartEditMessage = (msg: WhatsAppMessage) => {
+    setEditingMessage(msg);
+    setReplyingToMessage(null);
+    setMessageInput(msg.text || "");
+    setActiveContextMenuId(null);
+    if (messageInputRef.current) messageInputRef.current.focus();
+  };
+
+  const handleCancelEdit = () => {
+    setEditingMessage(null);
+    setMessageInput("");
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingMessage || !activeChat || !messageInput.trim()) return;
+    const updatedText = messageInput.trim();
+    const cleanPhone = activeChat.phone.replace(/[^0-9]/g, "");
+    const targetId = editingMessage.metaMessageId || editingMessage.id;
+
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === editingMessage.id ? { ...m, text: updatedText, isEdited: true } : m
+      )
+    );
+    setEditingMessage(null);
+    setMessageInput("");
+
+    try {
+      await api.editWhatsAppMessage({
+        phoneNumber: cleanPhone,
+        messageId: targetId,
+        text: updatedText
+      });
+      toast.success("Message Edited", "Updated message delivered.");
+    } catch (err: any) {
+      toast.error("Edit Failed", err.message || "Failed to update message.");
+    }
+  };
+
+  const handleDeleteMessage = async (deleteForEveryone: boolean) => {
+    if (!deleteConfirmMessage || !activeChat) return;
+    const cleanPhone = activeChat.phone.replace(/[^0-9]/g, "");
+    const targetId = deleteConfirmMessage.metaMessageId || deleteConfirmMessage.id;
+    const isOutbound = deleteConfirmMessage.sender === "outbound";
+
+    if (deleteForEveryone) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === deleteConfirmMessage.id
+            ? { ...m, isDeleted: true, text: "🚫 This message was deleted" }
+            : m
+        )
+      );
+    } else {
+      setMessages((prev) => prev.filter((m) => m.id !== deleteConfirmMessage.id));
+    }
+
+    setDeleteConfirmMessage(null);
+
+    try {
+      await api.deleteWhatsAppMessage({
+        phoneNumber: cleanPhone,
+        messageId: targetId,
+        deleteForEveryone,
+        fromMe: isOutbound
+      });
+      toast.success(deleteForEveryone ? "Deleted for Everyone" : "Deleted for You");
+    } catch (err: any) {
+      toast.error("Delete Failed", err.message || "Failed to delete message.");
     }
   };
 
@@ -465,6 +879,7 @@ export default function WhatsAppPage() {
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
   const emojiPickerRef = useRef<HTMLDivElement | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -873,6 +1288,9 @@ export default function WhatsAppPage() {
             fileName: m.file_name,
             caption: m.caption,
             isVoiceNote: isVoice,
+            reaction: m.reaction || null,
+            isDeleted: Boolean(m.is_deleted),
+            metaMessageId: m.meta_message_id || null,
             attachment
           };
         });
@@ -1037,6 +1455,14 @@ export default function WhatsAppPage() {
 
     const cleanPhone = activeChat.phone.replace(/[^0-9]/g, "");
 
+    let textPayload = text;
+    if (replyingToMessage) {
+      const quotedSender = replyingToMessage.sender === "outbound" ? "You" : activeChat.contactName;
+      const quotedSnippet = replyingToMessage.text?.slice(0, 80) || replyingToMessage.fileName || "Media";
+      textPayload = `> *${quotedSender}*: ${quotedSnippet}\n\n${text}`;
+      setReplyingToMessage(null);
+    }
+
     // 1. Optimistic message update
     const tempId = `temp-${Date.now()}`;
     const optimisticMsg: WhatsAppMessage = {
@@ -1057,7 +1483,7 @@ export default function WhatsAppPage() {
     try {
       const res = await api.sendWhatsAppMessage({
         phone_number: cleanPhone,
-        message: text,
+        message: textPayload,
         contact_id: activeChat.contact_id
       });
 
@@ -1106,7 +1532,11 @@ export default function WhatsAppPage() {
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSendMessage();
+      if (editingMessage) {
+        handleSaveEdit();
+      } else {
+        handleSendMessage();
+      }
     }
   };
 
@@ -1763,10 +2193,25 @@ export default function WhatsAppPage() {
                       const isVoice = msg.isVoiceNote || msg.messageType === "ptt" || msg.attachment?.type === "audio";
                       const isContactCard = msg.messageType === "contact" || msg.text === "[Contact Card]" || (typeof msg.text === "string" && (msg.text.startsWith('{"type":"contact"') || msg.text.includes("BEGIN:VCARD")));
 
-                      // 1. Sticker message (borderless, transparent)
-                      if (isSticker && msg.attachment?.url) {
-                        return (
-                          <div key={msg.id} className={cn("flex flex-col my-1", isOutbound ? "items-end" : "items-start")}>
+                      return (
+                        <MessageBubbleContainer
+                          key={msg.id}
+                          msg={msg}
+                          isOutbound={isOutbound}
+                          isDark={isDark}
+                          activeContextMenuId={activeContextMenuId}
+                          activeReactionMenuId={activeReactionMenuId}
+                          setActiveContextMenuId={setActiveContextMenuId}
+                          setActiveReactionMenuId={setActiveReactionMenuId}
+                          onReact={(emoji) => handleReactToMessage(msg, emoji)}
+                          onReply={() => handleReplyMessage(msg)}
+                          onCopy={() => handleCopyMessage(msg)}
+                          onEdit={isOutbound && !isVoice && !msg.attachment ? () => handleStartEditMessage(msg) : undefined}
+                          onDelete={() => setDeleteConfirmMessage(msg)}
+                          onInfo={() => setInfoModalMessage(msg)}
+                        >
+                          {/* 1. Sticker message (borderless, transparent) */}
+                          {isSticker && msg.attachment?.url ? (
                             <div className="cursor-pointer select-none">
                               <img
                                 src={msg.attachment.url}
@@ -1778,17 +2223,11 @@ export default function WhatsAppPage() {
                                 {msg.timeLabel}
                               </div>
                             </div>
-                          </div>
-                        );
-                      }
-
-                      // 2. Pure Image (No outer white box, exact WhatsApp Web style)
-                      if (isPureImage && msg.attachment?.url) {
-                        return (
-                          <div key={msg.id} className={cn("flex flex-col my-1", isOutbound ? "items-end" : "items-start")}>
+                          ) : isPureImage && msg.attachment?.url ? (
+                            /* 2. Pure Image */
                             <div
                               className={cn(
-                                "rounded-xl p-[3px] shadow-xs select-none transition-all group relative overflow-hidden",
+                                "rounded-xl p-[3px] shadow-xs select-none transition-all relative overflow-hidden",
                                 isOutbound
                                   ? (isDark ? "bg-[#005c4b] rounded-tr-xs ml-auto" : "bg-[#D9FDD3] rounded-tr-xs ml-auto shadow-2xs border border-[#C2EBC0]")
                                   : (isDark ? "bg-[#202c33] rounded-tl-xs" : "bg-white rounded-tl-xs shadow-2xs border border-slate-200/90")
@@ -1798,10 +2237,9 @@ export default function WhatsAppPage() {
                                 <img
                                   src={msg.attachment.url}
                                   alt="WhatsApp Image"
-                                  className="w-full max-h-[380px] object-cover rounded-lg block cursor-pointer transition-transform group-hover:scale-[1.01]"
+                                  className="w-full max-h-[380px] object-cover rounded-lg block cursor-pointer transition-transform hover:scale-[1.01]"
                                   onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}
                                 />
-                                {/* Floating bottom-right timestamp pill */}
                                 <div className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded-md bg-black/60 backdrop-blur-xs text-white text-[10px] font-medium flex items-center gap-1 shadow-sm pointer-events-none">
                                   <span>{msg.timeLabel}</span>
                                   {isOutbound && (
@@ -1815,14 +2253,8 @@ export default function WhatsAppPage() {
                                 </div>
                               </div>
                             </div>
-                          </div>
-                        );
-                      }
-
-                      // 3. Pure Video (Exact WhatsApp Web style)
-                      if (isPureVideo && msg.attachment?.url) {
-                        return (
-                          <div key={msg.id} className={cn("flex flex-col my-1", isOutbound ? "items-end" : "items-start")}>
+                          ) : isPureVideo && msg.attachment?.url ? (
+                            /* 3. Pure Video */
                             <div
                               className={cn(
                                 "rounded-xl p-[3px] shadow-xs select-none transition-all relative overflow-hidden",
@@ -1851,146 +2283,129 @@ export default function WhatsAppPage() {
                                 </div>
                               </div>
                             </div>
-                          </div>
-                        );
-                      }
-
-                      // 4. Contact Card (WhatsApp Web style)
-                      if (isContactCard) {
-                        let contactDisplayName = "+91 86100 68470";
-                        let contactPhone = "918610068470";
-                        if (typeof msg.text === "string" && msg.text.startsWith('{"type":"contact"')) {
-                          try {
-                            const p = JSON.parse(msg.text);
-                            contactDisplayName = p.displayName || p.phone || contactDisplayName;
-                            contactPhone = p.phone || contactPhone;
-                          } catch (_) {}
-                        }
-
-                        return (
-                          <div key={msg.id} className={cn("flex flex-col my-1", isOutbound ? "items-end" : "items-start")}>
-                            <div
-                              className={cn(
-                                "w-64 sm:w-72 rounded-xl overflow-hidden border shadow-xs transition-all",
-                                isOutbound
-                                  ? (isDark ? "bg-[#005c4b] border-emerald-600/30 text-white rounded-tr-xs ml-auto" : "bg-[#D9FDD3] border-[#C2EBC0] text-slate-900 rounded-tr-xs ml-auto shadow-2xs")
-                                  : (isDark ? "bg-[#202c33] border-white/10 text-white rounded-tl-xs" : "bg-white border-slate-200 text-slate-900 rounded-tl-xs shadow-2xs")
-                              )}
-                            >
-                              <div className="p-3 flex items-center justify-between gap-3">
-                                <div className="flex items-center gap-2.5 min-w-0">
-                                  <div className="w-10 h-10 rounded-full bg-pink-500 text-white flex items-center justify-center shrink-0 shadow-xs">
-                                    <User className="w-5 h-5" />
-                                  </div>
-                                  <div className="min-w-0">
-                                    <div className={cn("text-xs sm:text-sm font-bold truncate", isDark ? "text-white" : "text-slate-900")}>
-                                      {contactDisplayName}
-                                    </div>
-                                    <div className="text-[11px] text-slate-400">
-                                      WhatsApp Contact
-                                    </div>
-                                  </div>
-                                </div>
-                                <div className="text-[10px] text-slate-400 self-start shrink-0">
-                                  {msg.timeLabel}
-                                </div>
-                              </div>
-
-                              <div className="border-t border-slate-200 dark:border-white/10" />
-
-                              <div className="flex items-center divide-x divide-slate-200 dark:divide-white/10">
-                                <button
-                                  type="button"
-                                  onClick={() => handleSelectChat(contactPhone)}
-                                  className="flex-1 py-2 text-center text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
-                                >
-                                  Message
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    handleChatInitiated(contactPhone, contactDisplayName);
-                                    toast.success("Contact Saved", `Added ${contactDisplayName} to CRM contacts`);
-                                  }}
-                                  className="flex-1 py-2 text-center text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
-                                >
-                                  Save contact
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      }
-
-                      // 5. Document / File Attachment (Word, Excel, PDF, TXT)
-                      if (isDoc) {
-                        const ext = (msg.attachment?.name || msg.fileName || "").split(".").pop()?.toLowerCase();
-                        const isWord = ext === "doc" || ext === "docx";
-                        const isExcel = ext === "xls" || ext === "xlsx" || ext === "csv";
-                        const isPdf = ext === "pdf";
-
-                        return (
-                          <div key={msg.id} className={cn("flex flex-col my-1", isOutbound ? "items-end" : "items-start")}>
-                            <div
-                              className={cn(
-                                "w-64 sm:w-72 rounded-xl overflow-hidden border shadow-xs transition-all p-2.5",
-                                isOutbound
-                                  ? (isDark ? "bg-[#005c4b] border-emerald-600/30 text-white rounded-tr-xs ml-auto" : "bg-[#D9FDD3] border-[#C2EBC0] text-slate-900 rounded-tr-xs ml-auto shadow-2xs")
-                                  : (isDark ? "bg-[#202c33] border-white/10 text-white rounded-tl-xs" : "bg-white border-slate-200 text-slate-900 rounded-tl-xs shadow-2xs")
-                              )}
-                            >
-                              <div className="flex items-center justify-between gap-3">
-                                <div className="flex items-center gap-2.5 min-w-0">
-                                  <div className={cn(
-                                    "w-10 h-10 rounded-lg flex items-center justify-center shrink-0 font-bold text-xs shadow-xs text-white",
-                                    isWord ? "bg-blue-600" : isExcel ? "bg-emerald-600" : isPdf ? "bg-red-600" : "bg-teal-600"
-                                  )}>
-                                    {isWord ? "W" : isExcel ? "X" : isPdf ? "PDF" : <File className="w-5 h-5" />}
-                                  </div>
-
-                                  <div className="min-w-0 flex-1">
-                                    <div className={cn("text-xs font-semibold truncate", isDark ? "text-white" : "text-slate-900")} title={msg.attachment?.name || msg.fileName || undefined}>
-                                      {msg.attachment?.name || msg.fileName || "Document"}
-                                    </div>
-                                    <div className={cn("text-[10px] mt-0.5", isDark ? "text-slate-400" : "text-slate-500")}>
-                                      {ext?.toUpperCase() || "FILE"} • {msg.attachment?.size || "Document"}
-                                    </div>
-                                  </div>
-                                </div>
-
-                                <a
-                                  href={msg.attachment?.url || msg.mediaUrl || "#"}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  download={msg.attachment?.name || msg.fileName || undefined}
+                          ) : isContactCard ? (
+                            /* 4. Contact Card */
+                            (() => {
+                              let contactDisplayName = "+91 86100 68470";
+                              let contactPhone = "918610068470";
+                              if (typeof msg.text === "string" && msg.text.startsWith('{"type":"contact"')) {
+                                try {
+                                  const p = JSON.parse(msg.text);
+                                  contactDisplayName = p.displayName || p.phone || contactDisplayName;
+                                  contactPhone = p.phone || contactPhone;
+                                } catch (_) {}
+                              }
+                              return (
+                                <div
                                   className={cn(
-                                    "w-8 h-8 rounded-full border flex items-center justify-center shrink-0 transition-transform active:scale-95",
-                                    isDark ? "border-white/10 hover:bg-white/10 text-slate-300" : "border-slate-300 hover:bg-black/5 text-slate-700"
+                                    "w-64 sm:w-72 rounded-xl overflow-hidden border shadow-xs transition-all",
+                                    isOutbound
+                                      ? (isDark ? "bg-[#005c4b] border-emerald-600/30 text-white rounded-tr-xs ml-auto" : "bg-[#D9FDD3] border-[#C2EBC0] text-slate-900 rounded-tr-xs ml-auto shadow-2xs")
+                                      : (isDark ? "bg-[#202c33] border-white/10 text-white rounded-tl-xs" : "bg-white border-slate-200 text-slate-900 rounded-tl-xs shadow-2xs")
                                   )}
-                                  title="Download file"
                                 >
-                                  <Download className="w-4 h-4" />
-                                </a>
-                              </div>
-
-                              <div className={cn(
-                                "flex items-center justify-end gap-1 text-[10px] mt-1.5",
-                                isDark ? "text-slate-400" : "text-slate-500"
-                              )}>
-                                <span>{msg.timeLabel}</span>
-                                {isOutbound && (
-                                  <CheckCheck className={cn("w-3.5 h-3.5", msg.status === "READ" ? "text-[#53bdeb]" : "text-slate-400")} />
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      }
-
-                      // 6. Voice Note (PTT)
-                      if (isVoice) {
-                        return (
-                          <div key={msg.id} className={cn("flex flex-col my-1", isOutbound ? "items-end" : "items-start")}>
+                                  <div className="p-3 flex items-center justify-between gap-3">
+                                    <div className="flex items-center gap-2.5 min-w-0">
+                                      <div className="w-10 h-10 rounded-full bg-pink-500 text-white flex items-center justify-center shrink-0 shadow-xs">
+                                        <User className="w-5 h-5" />
+                                      </div>
+                                      <div className="min-w-0">
+                                        <div className={cn("text-xs sm:text-sm font-bold truncate", isDark ? "text-white" : "text-slate-900")}>
+                                          {contactDisplayName}
+                                        </div>
+                                        <div className="text-[11px] text-slate-400">
+                                          WhatsApp Contact
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 self-start shrink-0">
+                                      {msg.timeLabel}
+                                    </div>
+                                  </div>
+                                  <div className="border-t border-slate-200 dark:border-white/10" />
+                                  <div className="flex items-center divide-x divide-slate-200 dark:divide-white/10">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSelectChat(contactPhone)}
+                                      className="flex-1 py-2 text-center text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
+                                    >
+                                      Message
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        handleChatInitiated(contactPhone, contactDisplayName);
+                                        toast.success("Contact Saved", `Added ${contactDisplayName} to CRM contacts`);
+                                      }}
+                                      className="flex-1 py-2 text-center text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
+                                    >
+                                      Save contact
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })()
+                          ) : isDoc ? (
+                            /* 5. Document */
+                            (() => {
+                              const ext = (msg.attachment?.name || msg.fileName || "").split(".").pop()?.toLowerCase();
+                              const isWord = ext === "doc" || ext === "docx";
+                              const isExcel = ext === "xls" || ext === "xlsx" || ext === "csv";
+                              const isPdf = ext === "pdf";
+                              return (
+                                <div
+                                  className={cn(
+                                    "w-64 sm:w-72 rounded-xl overflow-hidden border shadow-xs transition-all p-2.5",
+                                    isOutbound
+                                      ? (isDark ? "bg-[#005c4b] border-emerald-600/30 text-white rounded-tr-xs ml-auto" : "bg-[#D9FDD3] border-[#C2EBC0] text-slate-900 rounded-tr-xs ml-auto shadow-2xs")
+                                      : (isDark ? "bg-[#202c33] border-white/10 text-white rounded-tl-xs" : "bg-white border-slate-200 text-slate-900 rounded-tl-xs shadow-2xs")
+                                  )}
+                                >
+                                  <div className="flex items-center justify-between gap-3">
+                                    <div className="flex items-center gap-2.5 min-w-0">
+                                      <div className={cn(
+                                        "w-10 h-10 rounded-lg flex items-center justify-center shrink-0 font-bold text-xs shadow-xs text-white",
+                                        isWord ? "bg-blue-600" : isExcel ? "bg-emerald-600" : isPdf ? "bg-red-600" : "bg-teal-600"
+                                      )}>
+                                        {isWord ? "W" : isExcel ? "X" : isPdf ? "PDF" : <File className="w-5 h-5" />}
+                                      </div>
+                                      <div className="min-w-0 flex-1">
+                                        <div className={cn("text-xs font-semibold truncate", isDark ? "text-white" : "text-slate-900")} title={msg.attachment?.name || msg.fileName || undefined}>
+                                          {msg.attachment?.name || msg.fileName || "Document"}
+                                        </div>
+                                        <div className={cn("text-[10px] mt-0.5", isDark ? "text-slate-400" : "text-slate-500")}>
+                                          {ext?.toUpperCase() || "FILE"} • {msg.attachment?.size || "Document"}
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <a
+                                      href={msg.attachment?.url || msg.mediaUrl || "#"}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      download={msg.attachment?.name || msg.fileName || undefined}
+                                      className={cn(
+                                        "w-8 h-8 rounded-full border flex items-center justify-center shrink-0 transition-transform active:scale-95",
+                                        isDark ? "border-white/10 hover:bg-white/10 text-slate-300" : "border-slate-300 hover:bg-black/5 text-slate-700"
+                                      )}
+                                      title="Download file"
+                                    >
+                                      <Download className="w-4 h-4" />
+                                    </a>
+                                  </div>
+                                  <div className={cn(
+                                    "flex items-center justify-end gap-1 text-[10px] mt-1.5",
+                                    isDark ? "text-slate-400" : "text-slate-500"
+                                  )}>
+                                    <span>{msg.timeLabel}</span>
+                                    {isOutbound && (
+                                      <CheckCheck className={cn("w-3.5 h-3.5", msg.status === "READ" ? "text-[#53bdeb]" : "text-slate-400")} />
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })()
+                          ) : isVoice ? (
+                            /* 6. Voice Note (PTT) */
                             <div
                               className={cn(
                                 "rounded-2xl p-2.5 max-w-[85%] sm:max-w-[70%] text-sm transition-all shadow-xs",
@@ -2010,6 +2425,9 @@ export default function WhatsAppPage() {
                                   if (fileMatch) return parseInt(fileMatch[1], 10);
                                   return undefined;
                                 })()}
+                                avatarUrl={activeChat?.avatar_url || null}
+                                contactName={activeChat?.contactName || null}
+                                senderAvatarUrl={currentUser?.picture || currentUser?.avatar_url || null}
                               />
                               <div className={cn(
                                 "flex items-center justify-end gap-1 text-[10px] mt-1 pr-1",
@@ -2021,80 +2439,72 @@ export default function WhatsAppPage() {
                                 )}
                               </div>
                             </div>
-                          </div>
-                        );
-                      }
-
-                      // 7. Standard Text / Media with Caption
-                      return (
-                        <div
-                          key={msg.id}
-                          className={cn(
-                            "flex flex-col my-1",
-                            isOutbound ? "items-end" : "items-start"
-                          )}
-                        >
-                          <div
-                            className={cn(
-                              "rounded-2xl p-2.5 sm:p-3 max-w-[85%] sm:max-w-[70%] text-sm leading-relaxed transition-all shadow-xs",
-                              isOutbound
-                                ? (isDark
-                                    ? "bg-[#005c4b] border border-emerald-600/30 text-white rounded-tr-xs ml-auto"
-                                    : "bg-[#D9FDD3] border border-[#C2EBC0] text-slate-900 rounded-tr-sm ml-auto shadow-2xs")
-                                : (isDark
-                                    ? "bg-[#202c33] border border-white/10 text-white rounded-tl-xs"
-                                    : "bg-white border border-slate-200/90 text-slate-900 rounded-tl-sm shadow-2xs")
-                            )}
-                          >
-                            {/* Attached Media with Caption if any */}
-                            {msg.attachment?.type === "image" && msg.attachment.url && (
-                              <div className="mb-2 rounded-xl overflow-hidden cursor-pointer group shadow-sm">
-                                <img
-                                  src={msg.attachment.url}
-                                  alt="WhatsApp Image"
-                                  className="w-full max-h-64 object-cover rounded-xl transition-transform group-hover:scale-101"
-                                  onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}
-                                />
-                              </div>
-                            )}
-
-                            {msg.attachment?.type === "video" && msg.attachment.url && (
-                              <div className="mb-2 rounded-xl overflow-hidden shadow-sm bg-black">
-                                <video
-                                  src={msg.attachment.url}
-                                  controls
-                                  preload="metadata"
-                                  className="w-full max-h-72 rounded-xl object-contain"
-                                />
-                              </div>
-                            )}
-
-                            {cleanText ? (
-                              <p className="whitespace-pre-wrap select-text">{cleanText}</p>
-                            ) : null}
-
-                            <div className={cn(
-                              "flex items-center justify-end gap-1 mt-1 text-[10px] font-medium",
-                              isDark ? "text-slate-400" : "text-slate-500"
-                            )}>
-                              <span>{msg.timeLabel}</span>
-                              {isOutbound && (
-                                <span title={msg.status === "READ" ? "Read" : "Delivered"}>
-                                  {msg.status === "PENDING" ? (
-                                    <Clock className="w-3.5 h-3.5 text-slate-400" />
-                                  ) : (
-                                    <CheckCheck
-                                      className={cn(
-                                        "w-3.5 h-3.5",
-                                        msg.status === "READ" ? "text-[#53bdeb]" : (isDark ? "text-slate-400" : "text-slate-400")
-                                      )}
-                                    />
-                                  )}
-                                </span>
+                          ) : (
+                            /* 7. Standard Text / Media with Caption */
+                            <div
+                              className={cn(
+                                "rounded-2xl p-2.5 sm:p-3 max-w-[85%] sm:max-w-[70%] text-sm leading-relaxed transition-all shadow-xs",
+                                isOutbound
+                                  ? (isDark
+                                      ? "bg-[#005c4b] border border-emerald-600/30 text-white rounded-tr-xs ml-auto"
+                                      : "bg-[#D9FDD3] border border-[#C2EBC0] text-slate-900 rounded-tr-sm ml-auto shadow-2xs")
+                                  : (isDark
+                                      ? "bg-[#202c33] border border-white/10 text-white rounded-tl-xs"
+                                      : "bg-white border border-slate-200/90 text-slate-900 rounded-tl-sm shadow-2xs")
                               )}
+                            >
+                              {msg.attachment?.type === "image" && msg.attachment.url && (
+                                <div className="mb-2 rounded-xl overflow-hidden cursor-pointer group shadow-sm">
+                                  <img
+                                    src={msg.attachment.url}
+                                    alt="WhatsApp Image"
+                                    className="w-full max-h-64 object-cover rounded-xl transition-transform hover:scale-101"
+                                    onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}
+                                  />
+                                </div>
+                              )}
+
+                              {msg.attachment?.type === "video" && msg.attachment.url && (
+                                <div className="mb-2 rounded-xl overflow-hidden shadow-sm bg-black">
+                                  <video
+                                    src={msg.attachment.url}
+                                    controls
+                                    preload="metadata"
+                                    className="w-full max-h-72 rounded-xl object-contain"
+                                  />
+                                </div>
+                              )}
+
+                              {cleanText ? (
+                                <p className="whitespace-pre-wrap select-text">{cleanText}</p>
+                              ) : null}
+
+                              <div className={cn(
+                                "flex items-center justify-end gap-1 mt-1 text-[10px] font-medium",
+                                isDark ? "text-slate-400" : "text-slate-500"
+                              )}>
+                                <span>{msg.timeLabel}</span>
+                                {msg.isEdited && (
+                                  <span className="text-[10px] italic opacity-75 mr-0.5">(edited)</span>
+                                )}
+                                {isOutbound && (
+                                  <span title={msg.status === "READ" ? "Read" : "Delivered"}>
+                                    {msg.status === "PENDING" ? (
+                                      <Clock className="w-3.5 h-3.5 text-slate-400" />
+                                    ) : (
+                                      <CheckCheck
+                                        className={cn(
+                                          "w-3.5 h-3.5",
+                                          msg.status === "READ" ? "text-[#53bdeb]" : "text-slate-400"
+                                        )}
+                                      />
+                                    )}
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                        </div>
+                          )}
+                        </MessageBubbleContainer>
                       );
                     })
                   )}
@@ -2177,6 +2587,58 @@ export default function WhatsAppPage() {
                         </div>
                       ))}
                     </div>
+                  </div>
+                )}
+
+                                {/* Reply Quoted Message Preview Banner */}
+                {replyingToMessage && (
+                  <div className={cn(
+                    "mx-4 mb-2 p-2.5 rounded-xl border-l-4 border-l-[#00a884] shadow-md flex items-center justify-between gap-3 text-xs animate-in fade-in slide-in-from-bottom-2",
+                    isDark ? "bg-[#202c33] border-t border-r border-b border-white/10 text-white" : "bg-emerald-50 border border-emerald-200 text-slate-800"
+                  )}>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-bold text-[#00a884] text-[11px] flex items-center gap-1">
+                        <CornerUpLeft className="w-3.5 h-3.5" />
+                        <span>Replying to {replyingToMessage.sender === "outbound" ? "You" : activeChat?.contactName}</span>
+                      </div>
+                      <p className="truncate text-slate-500 dark:text-slate-400 text-[11px] mt-0.5">
+                        {replyingToMessage.text || replyingToMessage.fileName || "[Attachment]"}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setReplyingToMessage(null)}
+                      className="p-1 rounded-full hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 cursor-pointer"
+                      title="Cancel reply"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Edit Message Banner */}
+                {editingMessage && (
+                  <div className={cn(
+                    "mx-4 mb-2 p-2.5 rounded-xl border-l-4 border-l-blue-500 shadow-md flex items-center justify-between gap-3 text-xs animate-in fade-in slide-in-from-bottom-2",
+                    isDark ? "bg-[#202c33] border-t border-r border-b border-white/10 text-white" : "bg-blue-50 border border-blue-200 text-slate-800"
+                  )}>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-bold text-blue-500 text-[11px] flex items-center gap-1">
+                        <Pencil className="w-3.5 h-3.5" />
+                        <span>Editing message</span>
+                      </div>
+                      <p className="truncate text-slate-500 dark:text-slate-400 text-[11px] mt-0.5">
+                        {editingMessage.text}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCancelEdit}
+                      className="p-1 rounded-full hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 cursor-pointer"
+                      title="Cancel edit"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
                   </div>
                 )}
 
@@ -2310,6 +2772,7 @@ export default function WhatsAppPage() {
 
                       {/* Text Area */}
                       <textarea
+                        ref={messageInputRef}
                         rows={1}
                         value={messageInput}
                         onChange={handleInputChange}
@@ -2850,6 +3313,113 @@ export default function WhatsAppPage() {
         onClose={() => setShowNewChatModal(false)}
         onChatInitiated={handleChatInitiated}
       />
+
+            {/* Message Info Modal */}
+      {infoModalMessage && (
+        <div className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className={cn(
+            "rounded-2xl shadow-2xl max-w-sm w-full border overflow-hidden animate-in fade-in zoom-in-95 duration-150",
+            isDark ? "bg-[#202c33] border-white/10 text-white" : "bg-white border-slate-200 text-slate-900"
+          )}>
+            <div className={cn(
+              "px-5 py-3.5 border-b flex items-center justify-between",
+              isDark ? "border-white/10 bg-black/20" : "border-slate-100 bg-slate-50"
+            )}>
+              <div className="flex items-center gap-2">
+                <Info className="w-4 h-4 text-[#00a884]" />
+                <h3 className="font-bold text-sm">Message info</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setInfoModalMessage(null)}
+                className="p-1 rounded-full hover:bg-black/5 dark:hover:bg-white/10 text-slate-400"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-xs">
+              <div className={cn(
+                "p-3 rounded-xl border",
+                isDark ? "bg-black/30 border-white/5 text-slate-200" : "bg-slate-50 border-slate-200 text-slate-800"
+              )}>
+                <p className="whitespace-pre-wrap">{infoModalMessage.text || "[Media attachment]"}</p>
+              </div>
+
+              <div className="space-y-3 pt-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500 dark:text-slate-400 flex items-center gap-1.5 font-medium">
+                    <CheckCheck className="w-4 h-4 text-[#53bdeb]" /> Read
+                  </span>
+                  <span className="font-mono text-slate-700 dark:text-slate-300">
+                    {infoModalMessage.status === "READ" ? infoModalMessage.timeLabel : "—"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500 dark:text-slate-400 flex items-center gap-1.5 font-medium">
+                    <CheckCheck className="w-4 h-4 text-slate-400" /> Delivered
+                  </span>
+                  <span className="font-mono text-slate-700 dark:text-slate-300">
+                    {infoModalMessage.status === "DELIVERED" || infoModalMessage.status === "READ" ? infoModalMessage.timeLabel : "—"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500 dark:text-slate-400 flex items-center gap-1.5 font-medium">
+                    <Clock className="w-4 h-4 text-slate-400" /> Sent
+                  </span>
+                  <span className="font-mono text-slate-700 dark:text-slate-300">{infoModalMessage.timeLabel}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirmMessage && (
+        <div className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className={cn(
+            "rounded-2xl shadow-2xl max-w-sm w-full border p-5 animate-in fade-in zoom-in-95 duration-150",
+            isDark ? "bg-[#202c33] border-white/10 text-white" : "bg-white border-slate-200 text-slate-900"
+          )}>
+            <h3 className="text-base font-bold">Delete message?</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">
+              {deleteConfirmMessage.sender === "outbound"
+                ? "You can delete this message for everyone in this chat or only for yourself."
+                : "Delete this message from your chat history."}
+            </p>
+
+            <div className="flex flex-col gap-2 mt-5">
+              {deleteConfirmMessage.sender === "outbound" && (
+                <button
+                  type="button"
+                  onClick={() => handleDeleteMessage(true)}
+                  className="w-full py-2.5 px-4 rounded-xl bg-red-600 hover:bg-red-700 text-white font-semibold text-xs transition-all cursor-pointer shadow-xs active:scale-98"
+                >
+                  Delete for everyone
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => handleDeleteMessage(false)}
+                className={cn(
+                  "w-full py-2.5 px-4 rounded-xl font-semibold text-xs transition-all cursor-pointer shadow-2xs active:scale-98",
+                  isDark ? "bg-white/10 hover:bg-white/20 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-800"
+                )}
+              >
+                Delete for me
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmMessage(null)}
+                className="w-full py-2 px-4 rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white text-xs transition-all cursor-pointer text-center"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Image Preview Lightbox Modal */}
       {selectedImagePreview && (

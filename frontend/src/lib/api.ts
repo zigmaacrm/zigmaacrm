@@ -2033,6 +2033,9 @@ export const zigmaaApi = {
       });
       if (res.ok) {
         invalidateClientCache("contacts");
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("contacts_updated"));
+        }
         const data = await res.json();
         return {
           total_ingested: data.total_ingested || (data.created + data.updated) || 0,
@@ -2063,6 +2066,11 @@ export const zigmaaApi = {
           lastError = msg;
         }
       }
+    }
+
+    invalidateClientCache("contacts");
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("contacts_updated"));
     }
 
     if (createdList.length === 0 && duplicatesSkipped === 0 && rows.length > 0) {
@@ -3291,6 +3299,85 @@ export const zigmaaApi = {
       console.warn("Failed to update contact name on backend", e);
     }
     return { status: "success" };
+  },
+
+  async reactToWhatsAppMessage(params: {
+    phoneNumber: string;
+    messageId: string;
+    emoji: string;
+    fromMe?: boolean;
+  }): Promise<any> {
+    try {
+      const res = await fetch(`${API_BASE}/whatsapp/react`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders()
+        },
+        body: JSON.stringify({
+          phone_number: params.phoneNumber,
+          meta_message_id: params.messageId,
+          emoji: params.emoji,
+          from_me: params.fromMe || false
+        })
+      });
+      if (res.ok) return await res.json();
+    } catch (e) {
+      console.warn("Failed to react to WhatsApp message", e);
+    }
+    return null;
+  },
+
+  async editWhatsAppMessage(params: {
+    phoneNumber: string;
+    messageId: string;
+    text: string;
+  }): Promise<any> {
+    try {
+      const res = await fetch(`${API_BASE}/whatsapp/edit-message`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders()
+        },
+        body: JSON.stringify({
+          phone_number: params.phoneNumber,
+          meta_message_id: params.messageId,
+          text: params.text
+        })
+      });
+      if (res.ok) return await res.json();
+    } catch (e) {
+      console.warn("Failed to edit WhatsApp message", e);
+    }
+    return null;
+  },
+
+  async deleteWhatsAppMessage(params: {
+    phoneNumber: string;
+    messageId: string;
+    deleteForEveryone?: boolean;
+    fromMe?: boolean;
+  }): Promise<any> {
+    try {
+      const res = await fetch(`${API_BASE}/whatsapp/delete-message`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders()
+        },
+        body: JSON.stringify({
+          phone_number: params.phoneNumber,
+          meta_message_id: params.messageId,
+          delete_for_everyone: Boolean(params.deleteForEveryone),
+          from_me: params.fromMe !== undefined ? params.fromMe : true
+        })
+      });
+      if (res.ok) return await res.json();
+    } catch (e) {
+      console.warn("Failed to delete WhatsApp message", e);
+    }
+    return null;
   },
 
   // ===== SUPER ADMIN MASTER PORTAL =====

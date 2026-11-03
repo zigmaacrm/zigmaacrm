@@ -119,6 +119,8 @@ class WhatsAppMessageOut(BaseModel):
     contact_id: Optional[str] = None
     assigned_user_id: Optional[str] = None
     business_phone_number_id: Optional[str] = None
+    reaction: Optional[str] = None
+    is_deleted: Optional[bool] = False
     created_at: Any
 
     class Config:
@@ -417,6 +419,8 @@ async def get_whatsapp_messages(
                 "contact_id": m.contact_id,
                 "assigned_user_id": m.assigned_user_id,
                 "business_phone_number_id": m.business_phone_number_id,
+                "reaction": m.reaction,
+                "is_deleted": bool(m.is_deleted),
                 "created_at": m.created_at.isoformat() if m.created_at else None
             }
             for m in messages
@@ -1076,3 +1080,158 @@ async def upload_and_send_voice_note(
             "created_at": wa_msg.created_at.isoformat() if wa_msg.created_at else None
         }
     }
+
+class WhatsAppReactionRequest(BaseModel):
+    phone_number: str
+    meta_message_id: str
+    emoji: Optional[str] = ""
+    from_me: Optional[bool] = False
+
+@router.post("/react")
+async def react_to_whatsapp_message(
+    payload: WhatsAppReactionRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Applies or removes an emoji reaction on a WhatsApp message.
+    Updates PostgreSQL and dispatches reaction to Baileys gateway.
+    """
+    clean_id = (payload.meta_message_id or "").strip()
+    if not clean_id:
+        raise HTTPException(status_code=400, detail="meta_message_id is required")
+
+    stmt = (
+        update(WhatsAppMessage)
+        .where(
+            or_(
+                WhatsAppMessage.meta_message_id == clean_id,
+                WhatsAppMessage.meta_message_id == f"wamid.{clean_id}",
+                WhatsAppMessage.meta_message_id.like(f"%{clean_id}%"),
+                WhatsAppMessage.id == clean_id
+            )
+        )
+        .values(reaction=payload.emoji or None)
+    )
+    await db.execute(stmt)
+    await db.commit()
+
+    gateway_url = get_gateway_url()
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            await client.post(
+                f"{gateway_url}/api/whatsapp/react",
+                json={
+                    "phone_number": payload.phone_number,
+                    "message_id": clean_id,
+                    "emoji": payload.emoji or "",
+                    "from_me": payload.from_me
+                }
+            )
+    except Exception as e:
+        logger.warning(f"Failed to forward reaction to gateway: {e}")
+
+    return {"status": "success", "reaction": payload.emoji or None}
+
+class WhatsAppEditRequest(BaseModel):
+    phone_number: str
+    meta_message_id: str
+    text: str
+
+@router.post("/edit-message")
+async def edit_whatsapp_message_endpoint(
+    payload: WhatsAppEditRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Edits the text of an outbound WhatsApp message.
+    Updates PostgreSQL and dispatches edit to Baileys gateway.
+    """
+    clean_id = (payload.meta_message_id or "").strip()
+    clean_text = (payload.text or "").strip()
+    if not clean_id or not clean_text:
+        raise HTTPException(status_code=400, detail="meta_message_id and text are required")
+
+    stmt = (
+        update(WhatsAppMessage)
+        .where(
+            or_(
+                WhatsAppMessage.meta_message_id == clean_id,
+                WhatsAppMessage.meta_message_id == f"wamid.{clean_id}",
+                WhatsAppMessage.meta_message_id.like(f"%{clean_id}%"),
+                WhatsAppMessage.id == clean_id
+            )
+        )
+        .values(message_body=clean_text)
+    )
+    await db.execute(stmt)
+    await db.commit()
+
+    gateway_url = get_gateway_url()
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            await client.post(
+                f"{gateway_url}/api/whatsapp/edit-message",
+                json={
+                    "phone_number": payload.phone_number,
+                    "message_id": clean_id,
+                    "text": clean_text
+                }
+            )
+    except Exception as e:
+        logger.warning(f"Failed to forward message edit to gateway: {e}")
+
+    return {"status": "success", "text": clean_text}
+
+class WhatsAppDeleteRequest(BaseModel):
+    phone_number: str
+    meta_message_id: str
+    delete_for_everyone: Optional[bool] = False
+    from_me: Optional[bool] = True
+
+@router.post("/delete-message")
+async def delete_whatsapp_message_endpoint(
+    payload: WhatsAppDeleteRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Deletes a message. If delete_for_everyone is true, sends revoke command to Baileys gateway.
+    """
+    clean_id = (payload.meta_message_id or "").strip()
+    if not clean_id:
+        raise HTTPException(status_code=400, detail="meta_message_id is required")
+
+    stmt = (
+        update(WhatsAppMessage)
+        .where(
+            or_(
+                WhatsAppMessage.meta_message_id == clean_id,
+                WhatsAppMessage.meta_message_id == f"wamid.{clean_id}",
+                WhatsAppMessage.meta_message_id.like(f"%{clean_id}%"),
+                WhatsAppMessage.id == clean_id
+            )
+        )
+        .values(
+            is_deleted=True,
+            message_body="🚫 This message was deleted"
+        )
+    )
+    await db.execute(stmt)
+    await db.commit()
+
+    if payload.delete_for_everyone:
+        gateway_url = get_gateway_url()
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                await client.post(
+                    f"{gateway_url}/api/whatsapp/delete-message",
+                    json={
+                        "phone_number": payload.phone_number,
+                        "message_id": clean_id,
+                        "delete_for_everyone": True,
+                        "from_me": payload.from_me
+                    }
+                )
+        except Exception as e:
+            logger.warning(f"Failed to forward delete revoke to gateway: {e}")
+
+    return {"status": "success", "is_deleted": True}
