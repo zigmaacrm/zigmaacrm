@@ -79,7 +79,7 @@ async def serve_whatsapp_media(filename: str):
                 except Exception:
                     if fn_lower.endswith(".ogg"):
                         mime_type = "audio/ogg"
-            return FileResponse(candidate, media_type=mime_type)
+            return FileResponse(candidate, media_type=mime_type, headers={"Access-Control-Allow-Origin": "*"})
 
     # 2. Cross-container cloud proxy: If Render backend doesn't have the file locally, proxy from WhatsApp bridge gateway
     gateway_url = (os.getenv("WHATSAPP_GATEWAY_URL") or "https://zigmaa-whatsapp-bridge.onrender.com").rstrip("/")
@@ -99,7 +99,7 @@ async def serve_whatsapp_media(filename: str):
                     except Exception:
                         pass
                     content_type = resp.headers.get("content-type") or "application/octet-stream"
-                    return Response(content=resp.content, media_type=content_type)
+                    return Response(content=resp.content, media_type=content_type, headers={"Access-Control-Allow-Origin": "*"})
         except Exception:
             pass
 

@@ -78,7 +78,12 @@ export default function WhatsAppQRModal({
       return;
     }
 
-    checkStatus();
+    checkStatus().then(() => {
+      // If no QR code and status is disconnected, auto-trigger a fresh session
+      if (!initialQR) {
+        api.refreshWhatsAppQR().catch(() => {});
+      }
+    });
     pollIntervalRef.current = setInterval(checkStatus, 3000);
 
     return () => {

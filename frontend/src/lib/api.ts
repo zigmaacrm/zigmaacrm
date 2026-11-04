@@ -33,6 +33,17 @@ function resolveApiBase(): string {
 
 const API_BASE = resolveApiBase();
 
+export function getMediaUrl(mediaPath?: string | null): string {
+  if (!mediaPath) return "";
+  const s = String(mediaPath).trim();
+  if (s.startsWith("http://") || s.startsWith("https://") || s.startsWith("blob:") || s.startsWith("data:")) {
+    return s;
+  }
+  const cleanPath = s.startsWith("/") ? s : `/${s}`;
+  const baseHost = API_BASE.replace(/\/api\/v1\/?$/, "");
+  return `${baseHost}${cleanPath}`;
+}
+
 function getStorage<T>(key: string, defaultValue: T): T {
   if (typeof window === "undefined") return defaultValue;
   try {
@@ -3639,6 +3650,10 @@ export const zigmaaApi = {
       console.warn("Failed to fetch contact avatar", e);
     }
     return { phone, avatar_url: null };
+  },
+
+  getMediaUrl(mediaPath?: string | null): string {
+    return getMediaUrl(mediaPath);
   },
 
 };

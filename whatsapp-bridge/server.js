@@ -371,7 +371,9 @@ async function decryptAndSaveMedia(msgObj) {
       mediaType = isVoiceNote ? 'ptt' : 'audio';
       mimeType = rawM.audioMessage.mimetype || 'audio/ogg';
       extension = mimeType.includes('mp4') || mimeType.includes('m4a') ? 'mp4' : 'ogg';
-      fileName = `voice_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${extension}`;
+      const durationSecs = rawM.audioMessage.seconds || 0;
+      const durTag = durationSecs > 0 ? `_${durationSecs}s` : '';
+      fileName = `voice${durTag}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${extension}`;
     } else if (rawM.videoMessage) {
       mediaType = 'video';
       mimeType = rawM.videoMessage.mimetype || 'video/mp4';
@@ -413,6 +415,7 @@ async function decryptAndSaveMedia(msgObj) {
       file_name: fileName,
       caption: caption || '',
       is_voice_note: isVoiceNote,
+      duration: durationSecs,
       file_size: buffer.length
     };
   } catch (err) {
@@ -535,12 +538,25 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
           session.qr = null;
           session.phone = null;
           session.name = null;
+          session.avatarUrl = null;
           if (fs.existsSync(session.authDir)) {
             try {
               fs.rmSync(session.authDir, { recursive: true, force: true });
             } catch (_) {}
           }
           session.isStarting = false;
+          try {
+            fetch(FASTAPI_STATUS_UPDATE_URL, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                session_id: session.id,
+                assigned_user_id: session.id !== 'default' ? session.id : null,
+                phone: null,
+                status: 'DISCONNECTED'
+              })
+            }).catch(() => {});
+          } catch (_) {}
           setTimeout(() => initWhatsApp(session.id, false), 2000);
         } else if (statusCode === 440) {
           console.warn(`[WhatsApp Gateway:${session.id}] Status 440 (Conflict). Waiting 5s for clean reconnect...`);
@@ -617,7 +633,12 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
 
           let body = extractMessageBody(msg.message);
           if (!body && mediaPayload) {
-            body = mediaPayload.caption || `[${(mediaPayload.message_type || 'Attachment').toUpperCase()}]`;
+            if (mediaPayload.is_voice_note) {
+              const d = mediaPayload.duration || 3;
+              body = `🎤 Voice message (${d}s)`;
+            } else {
+              body = mediaPayload.caption || `[${(mediaPayload.message_type || 'Attachment').toUpperCase()}]`;
+            }
           }
           if (!body) continue;
 
@@ -754,7 +775,12 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
 
           let body = extractMessageBody(msg.message);
           if (!body && mediaPayload) {
-            body = mediaPayload.caption || `[${(mediaPayload.message_type || 'Attachment').toUpperCase()}]`;
+            if (mediaPayload.is_voice_note) {
+              const d = mediaPayload.duration || 3;
+              body = `🎤 Voice message (${d}s)`;
+            } else {
+              body = mediaPayload.caption || `[${(mediaPayload.message_type || 'Attachment').toUpperCase()}]`;
+            }
           }
           if (!body) continue;
 
@@ -827,16 +853,21 @@ async function disconnectSession(sessionId) {
 
 app.get('/status', (req, res) => {
   const sId = sanitizeSessionId(req.query.sessionId || req.query.session_id || req.query.userId || req.query.user_id);
-  const session = getSession(sId, false);
+  let session = getSession(sId, false);
   if (!session) {
-    return res.json({
-      status: 'DISCONNECTED',
-      phone: null,
-      name: null,
-      avatar_url: null,
-      qr: null,
-      session_id: sId
-    });
+    if (sId && sId !== 'default') {
+      session = getSession(sId, true);
+      initWhatsApp(sId, false);
+    } else {
+      return res.json({
+        status: 'DISCONNECTED',
+        phone: null,
+        name: null,
+        avatar_url: null,
+        qr: null,
+        session_id: sId
+      });
+    }
   }
 
   if (session.status === 'CONNECTED' && session.phone && !session.avatarUrl && session.sock && !session.isFetchingAvatar) {
@@ -911,6 +942,18 @@ app.post('/disconnect', async (req, res) => {
   try {
     const sId = sanitizeSessionId(req.query.sessionId || req.query.session_id || req.body?.sessionId || req.body?.session_id);
     await disconnectSession(sId);
+    try {
+      fetch(FASTAPI_STATUS_UPDATE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sId,
+          assigned_user_id: sId !== 'default' ? sId : null,
+          phone: null,
+          status: 'DISCONNECTED'
+        })
+      }).catch(() => {});
+    } catch (_) {}
     res.json({ success: true, session_id: sId, message: `WhatsApp session ${sId} disconnected and logged out successfully.` });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -1187,8 +1230,10 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Bulk sync destination: ${FASTAPI_BULK_SYNC_URL}`);
   console.log(`========================================================`);
 
-  // 1. Initialize default session
-  initWhatsApp('default', false);
+  // 1. Initialize default session only if legacy credentials exist
+  if (fs.existsSync(path.join(AUTH_DIR, 'creds.json'))) {
+    initWhatsApp('default', false);
+  }
 
   // 2. Automatically restore all saved user sessions
   try {

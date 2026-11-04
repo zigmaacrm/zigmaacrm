@@ -252,6 +252,8 @@ function VoiceNotePlayer({
       const d = audioRef.current.duration;
       if (d && isFinite(d) && d > 0) {
         setDuration(Math.round(d));
+      } else if (duration <= 0 && durationHint && durationHint > 0) {
+        setDuration(durationHint);
       }
     }
   };
@@ -261,6 +263,8 @@ function VoiceNotePlayer({
       const d = audioRef.current.duration;
       if (d && isFinite(d) && d > 0) {
         setDuration(Math.round(d));
+      } else if (durationHint && durationHint > 0) {
+        setDuration(durationHint);
       }
     }
   };
@@ -315,6 +319,7 @@ function VoiceNotePlayer({
       <audio
         ref={audioRef}
         src={audioUrl}
+        crossOrigin="anonymous"
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
         onTimeUpdate={handleTimeUpdate}
@@ -1205,10 +1210,7 @@ export default function WhatsAppPage() {
           });
           if (res && res.status === "success") {
             const savedData = res.data;
-            const apiBase = process.env.NEXT_PUBLIC_API_URL?.replace("/api/v1", "") || "http://localhost:8000";
-            const fullMediaUrl = savedData?.media_url
-              ? (savedData.media_url.startsWith("http") ? savedData.media_url : `${apiBase}${savedData.media_url}`)
-              : undefined;
+            const fullMediaUrl = api.getMediaUrl(savedData?.media_url) || undefined;
 
             setMessages((prev) =>
               prev.map((m) =>
@@ -1362,7 +1364,7 @@ export default function WhatsAppPage() {
       const repParam = activeFilter === "ALL" ? undefined : activeFilter;
       const data = await api.getWhatsAppConversations(40, repParam);
       if (data && data.status === "success" && Array.isArray(data.conversations)) {
-        if (data.is_connected === false && activeFilter !== "ALL") {
+        if (data.is_connected === false || qrStatus !== "CONNECTED") {
           setConversations([]);
           setActivePhone("");
           setMessages([]);
@@ -1454,11 +1456,7 @@ export default function WhatsAppPage() {
 
       if (data && data.status === "success" && Array.isArray(data.messages)) {
         const mappedMsgs: WhatsAppMessage[] = data.messages.map((m: any) => {
-          let mediaFullUrl = m.media_url;
-          if (mediaFullUrl && !mediaFullUrl.startsWith("http")) {
-            const apiBase = process.env.NEXT_PUBLIC_API_URL?.replace("/api/v1", "") || "http://localhost:8000";
-            mediaFullUrl = `${apiBase}${mediaFullUrl}`;
-          }
+          const mediaFullUrl = api.getMediaUrl(m.media_url);
 
           let attachment: WhatsAppMessage["attachment"] = undefined;
           const mType = (m.message_type || "").toLowerCase();
@@ -2028,10 +2026,7 @@ export default function WhatsAppPage() {
 
       if (res && res.status === "success") {
         const savedData = res.data;
-        const apiBase = process.env.NEXT_PUBLIC_API_URL?.replace("/api/v1", "") || "http://localhost:8000";
-        const fullMediaUrl = savedData?.media_url
-          ? (savedData.media_url.startsWith("http") ? savedData.media_url : `${apiBase}${savedData.media_url}`)
-          : undefined;
+        const fullMediaUrl = api.getMediaUrl(savedData?.media_url) || undefined;
 
         setMessages((prev) =>
           prev.map((m) =>

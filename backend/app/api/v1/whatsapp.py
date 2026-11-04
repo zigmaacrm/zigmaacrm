@@ -431,7 +431,7 @@ async def get_whatsapp_messages(
         search_suffix = clean[-10:] if len(clean) >= 10 else clean
         stmt = stmt.where(WhatsAppMessage.phone_number.like(f"%{search_suffix}%"))
 
-    if current_user and not (current_user.role or "").lower() in ["super_admin", "owner"]:
+    if current_user:
         if current_user.whatsapp_phone_number:
             stmt = stmt.where(
                 or_(
@@ -921,10 +921,14 @@ async def get_whatsapp_qr_status(
                     data["gateway_online"] = True
                     _qr_status_cache[session_id] = {"data": data, "ts": time.time()}
 
-                    # Update User.whatsapp_phone_number if connected
-                    if data.get("status") == "CONNECTED" and data.get("phone") and current_user:
+                    # Update User.whatsapp_phone_number strictly for the matching user session
+                    if data.get("status") == "CONNECTED" and data.get("phone") and current_user and session_id != "default":
                         if current_user.whatsapp_phone_number != data.get("phone"):
                             current_user.whatsapp_phone_number = data.get("phone")
+                            await db.commit()
+                    elif data.get("status") == "DISCONNECTED" and current_user and session_id != "default":
+                        if current_user.whatsapp_phone_number is not None:
+                            current_user.whatsapp_phone_number = None
                             await db.commit()
 
                     return data
