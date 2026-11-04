@@ -58,12 +58,27 @@ async def serve_whatsapp_media(filename: str):
                 mime_type = "image/png"
             elif fn_lower.endswith(".webp"):
                 mime_type = "image/webp"
-            elif fn_lower.endswith(".ogg"):
-                mime_type = "audio/ogg"
-            elif fn_lower.endswith((".mp4", ".mov")):
-                mime_type = "video/mp4"
             elif fn_lower.endswith(".pdf"):
                 mime_type = "application/pdf"
+            elif fn_lower.endswith((".mp4", ".mov")):
+                mime_type = "video/mp4"
+            else:
+                try:
+                    with open(candidate, "rb") as probe_f:
+                        head = probe_f.read(16)
+                    if head.startswith(b"\x1aE\xdf\xa3"):
+                        mime_type = "audio/webm"
+                    elif head.startswith(b"OggS"):
+                        mime_type = "audio/ogg"
+                    elif head.startswith(b"ID3") or head[:2] == b"\xff\xfb":
+                        mime_type = "audio/mpeg"
+                    elif b"ftyp" in head:
+                        mime_type = "audio/mp4"
+                    elif fn_lower.endswith(".ogg"):
+                        mime_type = "audio/ogg"
+                except Exception:
+                    if fn_lower.endswith(".ogg"):
+                        mime_type = "audio/ogg"
             return FileResponse(candidate, media_type=mime_type)
 
     # 2. Cross-container cloud proxy: If Render backend doesn't have the file locally, proxy from WhatsApp bridge gateway
@@ -90,8 +105,28 @@ async def serve_whatsapp_media(filename: str):
 
     raise HTTPException(status_code=404, detail="Media file not found")
 
-app.mount("/media", StaticFiles(directory=uploads_dir), name="media")
-app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
+class SmartStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope):
+        resp = await super().get_response(path, scope)
+        if isinstance(resp, FileResponse):
+            try:
+                with open(resp.path, "rb") as f:
+                    head = f.read(16)
+                if head.startswith(b"\x1aE\xdf\xa3"):
+                    resp.media_type = "audio/webm"
+                    resp.headers["content-type"] = "audio/webm"
+                elif head.startswith(b"OggS"):
+                    resp.media_type = "audio/ogg"
+                    resp.headers["content-type"] = "audio/ogg"
+                elif head.startswith(b"ID3") or head[:2] == b"\xff\xfb":
+                    resp.media_type = "audio/mpeg"
+                    resp.headers["content-type"] = "audio/mpeg"
+            except Exception:
+                pass
+        return resp
+
+app.mount("/media", SmartStaticFiles(directory=uploads_dir), name="media")
+app.mount("/uploads", SmartStaticFiles(directory=uploads_dir), name="uploads")
 
 # Router includes
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["Auth"])

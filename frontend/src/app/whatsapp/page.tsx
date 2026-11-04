@@ -1062,6 +1062,11 @@ export default function WhatsAppPage() {
       api.getWhatsAppQRStatus().then((data) => {
         setQrStatus(data.status);
         setQrPhone(data.phone);
+        if (data.status !== "CONNECTED") {
+          setConversations([]);
+          setActivePhone("");
+          setMessages([]);
+        }
         if (data.qr) {
           setCachedQR(data.qr);
         }
@@ -1357,6 +1362,12 @@ export default function WhatsAppPage() {
       const repParam = activeFilter === "ALL" ? undefined : activeFilter;
       const data = await api.getWhatsAppConversations(40, repParam);
       if (data && data.status === "success" && Array.isArray(data.conversations)) {
+        if (data.is_connected === false && activeFilter !== "ALL") {
+          setConversations([]);
+          setActivePhone("");
+          setMessages([]);
+          return;
+        }
         const mapped = data.conversations.map(mapBackendConv);
         setConversations(mapped);
 
@@ -2236,6 +2247,25 @@ export default function WhatsAppPage() {
                       </div>
                     </div>
                   ))}
+                </div>
+              ) : qrStatus !== "CONNECTED" ? (
+                <div className="p-8 text-center flex flex-col items-center justify-center my-auto space-y-3">
+                  <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-inner">
+                    <QrCode className="w-7 h-7" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-800 dark:text-white">Device Not Linked</h4>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-[200px] leading-relaxed mx-auto">
+                      Link your WhatsApp device to view your private conversations securely.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowQRModal(true)}
+                    className="mt-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm hover:scale-105 active:scale-95 cursor-pointer"
+                  >
+                    Scan QR Code
+                  </button>
                 </div>
               ) : filteredConversations.length === 0 ? (
                 <div className="p-8 text-center text-slate-400 text-xs">
@@ -3223,6 +3253,28 @@ export default function WhatsAppPage() {
                   )}
                 </div>
               </>
+            ) : qrStatus !== "CONNECTED" ? (
+              <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-4">
+                <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-inner">
+                  <ShieldCheck className="w-8 h-8" />
+                </div>
+                <div className="text-center space-y-1">
+                  <h3 className={cn("font-bold text-lg", isDark ? "text-white" : "text-slate-900")}>
+                    WhatsApp Session Logged Out
+                  </h3>
+                  <p className={cn("text-xs text-center max-w-sm leading-relaxed", isDark ? "text-slate-400" : "text-slate-500")}>
+                    Your WhatsApp device is not connected. All conversations are hidden for security until you scan your personal QR code.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowQRModal(true)}
+                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-md hover:scale-105 active:scale-95 cursor-pointer flex items-center gap-2"
+                >
+                  <QrCode className="w-4 h-4" />
+                  <span>Scan QR Code to Connect</span>
+                </button>
+              </div>
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-3">
                 <MessageSquare className={cn("w-12 h-12 opacity-40", isDark ? "text-slate-600" : "text-slate-400")} />
@@ -3696,6 +3748,13 @@ export default function WhatsAppPage() {
         onStatusChange={(status, phone) => {
           setQrStatus(status);
           setQrPhone(phone);
+          if (status !== "CONNECTED") {
+            setConversations([]);
+            setMessages([]);
+            setActivePhone("");
+          } else {
+            loadConversations(false);
+          }
         }}
       />
 

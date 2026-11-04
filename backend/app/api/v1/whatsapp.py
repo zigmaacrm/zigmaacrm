@@ -499,17 +499,29 @@ async def get_whatsapp_conversations(
                 stmt = stmt.where(WhatsAppMessage.assigned_user_id == current_user.id)
     else:
         # Default Inbox View: ALWAYS show only the logged-in user's assigned chats
-        # so team members never see another member's WhatsApp contacts or messages!
+        # Security Guard: If user has no linked WhatsApp phone or is logged out, show ZERO chats!
         if current_user:
-            if current_user.whatsapp_phone_number:
-                stmt = stmt.where(
-                    or_(
-                        WhatsAppMessage.assigned_user_id == current_user.id,
-                        WhatsAppMessage.business_phone_number_id == current_user.whatsapp_phone_number
-                    )
+            if not current_user.whatsapp_phone_number:
+                return {
+                    "status": "success",
+                    "count": 0,
+                    "conversations": [],
+                    "is_connected": False,
+                    "message": "WhatsApp device is not connected. Please scan QR to access inbox."
+                }
+            stmt = stmt.where(
+                or_(
+                    WhatsAppMessage.assigned_user_id == current_user.id,
+                    WhatsAppMessage.business_phone_number_id == current_user.whatsapp_phone_number
                 )
-            else:
-                stmt = stmt.where(WhatsAppMessage.assigned_user_id == current_user.id)
+            )
+        else:
+            return {
+                "status": "success",
+                "count": 0,
+                "conversations": [],
+                "is_connected": False
+            }
 
     stmt = stmt.order_by(desc(WhatsAppMessage.created_at)).limit(limit * 5)
     res = await db.execute(stmt)
@@ -1131,12 +1143,15 @@ async def upload_and_send_voice_note(
     # Dispatch to WhatsApp Bridge
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
+            voice_session_id = current_user.id if current_user else "default"
             resp = await client.post(
                 f"{gateway_url}/api/whatsapp/send-voice",
                 json={
                     "phone_number": clean_phone,
                     "audio_base64": pure_base64,
-                    "mimetype": payload.mimetype or "audio/mp4"
+                    "mimetype": payload.mimetype or "audio/mp4",
+                    "session_id": voice_session_id,
+                    "assigned_user_id": current_user.id if current_user else None
                 }
             )
             if resp.status_code in [200, 201]:
