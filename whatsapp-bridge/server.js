@@ -657,6 +657,28 @@ async function initWhatsApp(forceClean = false) {
       scheduleContactSync();
     });
 
+    sock.ev.on('contacts.update', (updates) => {
+      if (!updates || !Array.isArray(updates)) return;
+      for (const c of updates) {
+        const jid = c.id || '';
+        if (jid.endsWith('@g.us') || jid === 'status@broadcast') continue;
+        if (!jid.endsWith('@c.us') && !jid.endsWith('@s.whatsapp.net')) continue;
+        const phone = jid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+        if (!phone || phone.length < 7) continue;
+
+        const name = c.name || c.notify || c.verifiedName || null;
+        if (name) {
+          pendingContacts.set(phone, {
+            phone,
+            name,
+            jid,
+            avatar_url: null
+          });
+        }
+      }
+      scheduleContactSync();
+    });
+
     // 2. Live Messages (Both Inbound from customers and Outbound from web/mobile)
     sock.ev.on('messages.upsert', async (chatUpdate) => {
       try {

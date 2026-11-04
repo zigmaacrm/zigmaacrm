@@ -1451,10 +1451,11 @@ export default function WhatsAppPage() {
 
           let attachment: WhatsAppMessage["attachment"] = undefined;
           const mType = (m.message_type || "").toLowerCase();
-          const isVoice = m.is_voice_note || mType === "ptt" || mType === "audio";
-          const isImg = mType === "image" || (mediaFullUrl && (mediaFullUrl.endsWith(".jpg") || mediaFullUrl.endsWith(".png") || mediaFullUrl.endsWith(".jpeg")));
-          const isVideo = mType === "video" || (mediaFullUrl && (mediaFullUrl.endsWith(".mp4") || mediaFullUrl.endsWith(".mov") || mediaFullUrl.endsWith(".webm")));
-          const isSticker = mType === "sticker" || (mediaFullUrl && mediaFullUrl.endsWith(".webp"));
+          const lowerUrl = (mediaFullUrl || "").toLowerCase();
+          const isVoice = m.is_voice_note || mType === "ptt" || mType === "audio" || lowerUrl.includes(".ogg") || lowerUrl.includes(".opus") || lowerUrl.includes(".mp3");
+          const isImg = mType === "image" || lowerUrl.includes(".jpg") || lowerUrl.includes(".jpeg") || lowerUrl.includes(".png");
+          const isVideo = mType === "video" || lowerUrl.includes(".mp4") || lowerUrl.includes(".mov") || lowerUrl.includes(".webm");
+          const isSticker = mType === "sticker" || lowerUrl.includes(".webp");
           const isDoc = mType === "document" || (!isImg && !isVideo && !isVoice && !isSticker && !!mediaFullUrl);
 
           if (isImg) {

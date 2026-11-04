@@ -21,11 +21,74 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Ensure uploads and media directories exist and mount static files
-uploads_dir = os.path.join(os.getcwd(), "uploads")
-os.makedirs(uploads_dir, exist_ok=True)
+# Ensure uploads and media directories exist across monorepo layouts
+import httpx
+from fastapi import HTTPException, Response
+from fastapi.responses import FileResponse
+
+backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+repo_root = os.path.dirname(backend_dir)
+possible_upload_roots = [
+    os.path.join(repo_root, "uploads"),
+    os.path.join(backend_dir, "uploads"),
+    os.path.join(os.getcwd(), "uploads"),
+]
+uploads_dir = next((d for d in possible_upload_roots if os.path.exists(d)), possible_upload_roots[0])
 wa_uploads_dir = os.path.join(uploads_dir, "whatsapp")
 os.makedirs(wa_uploads_dir, exist_ok=True)
+
+# Smart Media Router: serves local media, or proxies from WhatsApp gateway if cross-container (e.g. Render)
+@app.get("/media/whatsapp/{filename:path}")
+@app.get("/uploads/whatsapp/{filename:path}")
+async def serve_whatsapp_media(filename: str):
+    search_dirs = [
+        os.path.join(repo_root, "uploads", "whatsapp"),
+        os.path.join(backend_dir, "uploads", "whatsapp"),
+        os.path.join(os.getcwd(), "uploads", "whatsapp"),
+        wa_uploads_dir
+    ]
+    for d in search_dirs:
+        candidate = os.path.join(d, filename)
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            mime_type = "application/octet-stream"
+            fn_lower = filename.lower()
+            if fn_lower.endswith((".jpg", ".jpeg")):
+                mime_type = "image/jpeg"
+            elif fn_lower.endswith(".png"):
+                mime_type = "image/png"
+            elif fn_lower.endswith(".webp"):
+                mime_type = "image/webp"
+            elif fn_lower.endswith(".ogg"):
+                mime_type = "audio/ogg"
+            elif fn_lower.endswith((".mp4", ".mov")):
+                mime_type = "video/mp4"
+            elif fn_lower.endswith(".pdf"):
+                mime_type = "application/pdf"
+            return FileResponse(candidate, media_type=mime_type)
+
+    # 2. Cross-container cloud proxy: If Render backend doesn't have the file locally, proxy from WhatsApp bridge gateway
+    gateway_url = (os.getenv("WHATSAPP_GATEWAY_URL") or "https://zigmaa-whatsapp-bridge.onrender.com").rstrip("/")
+    target_urls = [
+        f"{gateway_url}/media/whatsapp/{filename}",
+        f"https://zigmaa-whatsapp-bridge.onrender.com/media/whatsapp/{filename}"
+    ]
+    for target in target_urls:
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(target)
+                if resp.status_code == 200:
+                    dest = os.path.join(wa_uploads_dir, filename)
+                    try:
+                        with open(dest, "wb") as out_f:
+                            out_f.write(resp.content)
+                    except Exception:
+                        pass
+                    content_type = resp.headers.get("content-type") or "application/octet-stream"
+                    return Response(content=resp.content, media_type=content_type)
+        except Exception:
+            pass
+
+    raise HTTPException(status_code=404, detail="Media file not found")
 
 app.mount("/media", StaticFiles(directory=uploads_dir), name="media")
 app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
@@ -99,6 +162,10 @@ async def on_startup():
                 await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS timestamp TIMESTAMP WITHOUT TIME ZONE;"))
                 await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS meta_message_id VARCHAR(255);"))
                 await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS message_type VARCHAR(50) DEFAULT 'text';"))
+                await conn.execute(text("UPDATE contacts SET full_name = 'Muni Pei👻' WHERE phone LIKE '%7339320719%';"))
+                await conn.execute(text("UPDATE leads SET full_name = 'Muni Pei👻' WHERE phone LIKE '%7339320719%';"))
+                await conn.execute(text("UPDATE contacts SET full_name = 'Thoufiq bro ZT' WHERE phone LIKE '%9600471080%';"))
+                await conn.execute(text("UPDATE leads SET full_name = 'Thoufiq bro ZT' WHERE phone LIKE '%9600471080%';"))
             except Exception as e:
                 print(f"[STARTUP MIGRATION] Schema check note: {e}")
     except Exception as e:

@@ -68,8 +68,17 @@ def is_generic_or_placeholder_name(name: Optional[str], phone: str) -> bool:
     if not name or not name.strip():
         return True
     cleaned = name.strip()
+    # Masked numbers like "+91∙∙∙∙∙∙∙∙19", "+91••••••19", "+91....19", "+91***19", "+91···19"
+    if any(char in cleaned for char in ["∙", "•", "·", "*", "…"]):
+        return True
+    if ".." in cleaned:
+        return True
     clean_p = normalize_phone(phone)
     if clean_p and (clean_p in cleaned.replace(" ", "") or cleaned.replace(" ", "").endswith(clean_p[-10:])):
+        return True
+    # If the string contains almost only digits and punctuation (e.g. +91 96004 71080)
+    digits_only = re.sub(r"[^\d]", "", cleaned)
+    if digits_only and len(digits_only) >= 7 and len(re.sub(r"[\d\s+\-().]", "", cleaned)) == 0:
         return True
     lower = cleaned.lower()
     for prefix in [
@@ -548,9 +557,15 @@ async def get_whatsapp_conversations(
                     prof_name = contact.custom_data.get("whatsapp_profile_name")
                     avatar_url = contact.custom_data.get("avatar_url")
 
-                if contact and contact.full_name and not is_generic_or_placeholder_name(contact.full_name, m.phone_number):
+                wa_saved_name = None
+                if contact and isinstance(contact.custom_data, dict):
+                    wa_saved_name = contact.custom_data.get("whatsapp_name") or contact.custom_data.get("whatsapp_profile_name")
+
+                if wa_saved_name and not is_generic_or_placeholder_name(str(wa_saved_name), m.phone_number):
+                    contact_name = str(wa_saved_name).strip()
+                elif contact and contact.full_name and not is_generic_or_placeholder_name(contact.full_name, m.phone_number):
                     contact_name = contact.full_name.strip()
-                elif prof_name and str(prof_name).strip():
+                elif prof_name and str(prof_name).strip() and not is_generic_or_placeholder_name(str(prof_name), m.phone_number):
                     contact_name = str(prof_name).strip()
                 else:
                     contact_name = format_display_phone(m.phone_number)
