@@ -691,11 +691,11 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
       }
     });
 
-    // History sync
+    // History sync - Ranks conversations by REAL MESSAGE ACTIVITY (Exact WhatsApp Web behavior)
     session.sock.ev.on('messaging-history.set', async ({ contacts, chats, messages }) => {
       console.log(`[WhatsApp Gateway:${session.id}] Messaging history event: ${chats?.length || 0} chats, ${messages?.length || 0} messages.`);
       
-      // 1. Populate address-book names for lookup ONLY (DO NOT dump all phone contacts to CRM!)
+      // 1. Populate address-book names for lookup ONLY (Never create conversations from pure address book)
       if (Array.isArray(contacts)) {
         for (const c of contacts) {
           if (!c.id || (!c.id.endsWith('@s.whatsapp.net') && !c.id.endsWith('@c.us'))) continue;
@@ -721,44 +721,27 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
         }
       }
 
-      // 2. Extract STRICTLY the top 20 recent direct chatting conversations
-      let directChats = [];
+      // Also merge names from chats into contactsStore
       if (Array.isArray(chats)) {
-        directChats = chats
-          .filter(c => c.id && (c.id.endsWith('@s.whatsapp.net') || c.id.endsWith('@c.us')))
-          .sort((a, b) => {
-            const tsA = typeof a.conversationTimestamp === 'number' ? a.conversationTimestamp : (a.conversationTimestamp?.low || 0);
-            const tsB = typeof b.conversationTimestamp === 'number' ? b.conversationTimestamp : (b.conversationTimestamp?.low || 0);
-            return tsB - tsA;
-          })
-          .slice(0, 20);
-
-        for (const chat of directChats) {
-          const cleanPhone = resolvePhoneFromJid(chat.id, session);
-          if (!cleanPhone || cleanPhone.length < 8 || cleanPhone.length > 13) continue;
-
-          const savedContact = session.contactsStore ? session.contactsStore.get(cleanPhone) : null;
-          const bestName = savedContact?.phonebook_name || chat.name || savedContact?.name || null;
-          session.pendingContacts.set(cleanPhone, {
-            phone: cleanPhone,
-            name: bestName,
-            phonebook_name: savedContact?.phonebook_name || null,
-            push_name: savedContact?.push_name || null,
-            jid: chat.id,
-            avatar_url: null
-          });
-        }
-        if (session.pendingContacts.size > 0) {
-          scheduleContactSync(session);
+        for (const c of chats) {
+          if (!c.id || (!c.id.endsWith('@s.whatsapp.net') && !c.id.endsWith('@c.us'))) continue;
+          const clean = resolvePhoneFromJid(c.id, session);
+          if (clean && clean.length >= 8 && clean.length <= 13 && c.name) {
+            const existing = session.contactsStore.get(clean);
+            session.contactsStore.set(clean, {
+              ...(existing || {}),
+              phone: clean,
+              name: existing?.name || c.name,
+              jid: c.id
+            });
+          }
         }
       }
 
-      const activeChatPhoneSet = new Set(
-        directChats.map(c => resolvePhoneFromJid(c.id, session)).filter(p => p && p.length >= 8 && p.length <= 13)
-      );
+      // 2. Identify the direct contacts that have ACTUAL RECENT MESSAGES
+      const messagesByPhone = new Map();
+      const latestTsByPhone = new Map();
 
-      // 3. Extract recent messages belonging ONLY to these 20 active chatting conversations
-      const validMessages = [];
       if (Array.isArray(messages)) {
         for (const msg of messages) {
           const remoteJid = msg.key?.remoteJid || '';
@@ -767,8 +750,70 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
           }
           const cleanPhone = resolvePhoneFromJid(remoteJid, session);
           if (!cleanPhone || cleanPhone.length < 8 || cleanPhone.length > 13) continue;
-          if (activeChatPhoneSet.size > 0 && !activeChatPhoneSet.has(cleanPhone)) continue;
 
+          // Exclude own connected phone
+          if (session.ownerPhone && cleanPhone === session.ownerPhone) continue;
+
+          const ts = typeof msg.messageTimestamp === 'number'
+            ? msg.messageTimestamp
+            : (msg.messageTimestamp?.low || Math.floor(Date.now() / 1000));
+
+          if (!messagesByPhone.has(cleanPhone)) {
+            messagesByPhone.set(cleanPhone, []);
+          }
+          messagesByPhone.get(cleanPhone).push(msg);
+
+          const curLatest = latestTsByPhone.get(cleanPhone) || 0;
+          if (ts > curLatest) {
+            latestTsByPhone.set(cleanPhone, ts);
+          }
+        }
+      }
+
+      // Also consider direct chats that have conversationTimestamp
+      if (Array.isArray(chats)) {
+        for (const c of chats) {
+          if (!c.id || (!c.id.endsWith('@s.whatsapp.net') && !c.id.endsWith('@c.us'))) continue;
+          const cleanPhone = resolvePhoneFromJid(c.id, session);
+          if (!cleanPhone || cleanPhone.length < 8 || cleanPhone.length > 13) continue;
+          if (session.ownerPhone && cleanPhone === session.ownerPhone) continue;
+
+          const ts = typeof c.conversationTimestamp === 'number' ? c.conversationTimestamp : (c.conversationTimestamp?.low || 0);
+          if (ts > 0 && ts > (latestTsByPhone.get(cleanPhone) || 0)) {
+            latestTsByPhone.set(cleanPhone, ts);
+          }
+        }
+      }
+
+      // 3. Rank by latest message timestamp descending and take EXACTLY the top 20 active chats
+      const top20Phones = Array.from(latestTsByPhone.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 20)
+        .map(e => e[0]);
+
+      console.log(`[WhatsApp Gateway:${session.id}] Ranked top ${top20Phones.length} active direct chatting contacts:`, top20Phones);
+
+      // Register ONLY these 20 active direct chatting contacts
+      for (const phone of top20Phones) {
+        const savedContact = session.contactsStore ? session.contactsStore.get(phone) : null;
+        session.pendingContacts.set(phone, {
+          phone: phone,
+          name: savedContact?.name || null,
+          phonebook_name: savedContact?.phonebook_name || null,
+          push_name: savedContact?.push_name || null,
+          jid: `${phone}@s.whatsapp.net`,
+          avatar_url: null
+        });
+      }
+      if (session.pendingContacts.size > 0) {
+        scheduleContactSync(session);
+      }
+
+      // 4. Extract real messages for ONLY these top 20 active chatting conversations
+      const validMessages = [];
+      for (const phone of top20Phones) {
+        const msgs = messagesByPhone.get(phone) || [];
+        for (const msg of msgs) {
           let mediaPayload = null;
           try {
             mediaPayload = await decryptAndSaveMedia(msg);
@@ -786,14 +831,14 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
           if (!body) continue;
 
           const fromMe = Boolean(msg.key?.fromMe);
-          const savedContact = session.contactsStore ? session.contactsStore.get(cleanPhone) : null;
+          const savedContact = session.contactsStore ? session.contactsStore.get(phone) : null;
           const contactName = savedContact?.phonebook_name || savedContact?.name || msg.pushName || null;
           const ts = typeof msg.messageTimestamp === 'number'
             ? msg.messageTimestamp
             : (msg.messageTimestamp?.low || Math.floor(Date.now() / 1000));
 
           validMessages.push({
-            phone_number: cleanPhone,
+            phone_number: phone,
             contact_name: contactName,
             message_body: body,
             meta_message_id: msg.key?.id,
@@ -831,34 +876,22 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
       }
     });
 
-    // Chats upsert (Captures 20 active conversations on connection)
+    // Chats upsert (Update contactStore names only; do not dump arbitrary non-message chats into CRM)
     session.sock.ev.on('chats.upsert', async (newChats) => {
       if (!Array.isArray(newChats) || newChats.length === 0) return;
-      const directChats = newChats
-        .filter(c => c.id && (c.id.endsWith('@s.whatsapp.net') || c.id.endsWith('@c.us')))
-        .sort((a, b) => {
-          const tsA = typeof a.conversationTimestamp === 'number' ? a.conversationTimestamp : (a.conversationTimestamp?.low || 0);
-          const tsB = typeof b.conversationTimestamp === 'number' ? b.conversationTimestamp : (b.conversationTimestamp?.low || 0);
-          return tsB - tsA;
-        });
-
-      for (const chat of directChats.slice(0, 20)) {
+      for (const chat of newChats) {
+        if (!chat.id || (!chat.id.endsWith('@s.whatsapp.net') && !chat.id.endsWith('@c.us'))) continue;
         const cleanPhone = resolvePhoneFromJid(chat.id, session);
         if (!cleanPhone || cleanPhone.length < 8 || cleanPhone.length > 13) continue;
-        const savedContact = session.contactsStore ? session.contactsStore.get(cleanPhone) : null;
-        const bestName = savedContact?.phonebook_name || chat.name || savedContact?.name || null;
-        session.pendingContacts.set(cleanPhone, {
-          phone: cleanPhone,
-          name: bestName,
-          phonebook_name: savedContact?.phonebook_name || null,
-          push_name: savedContact?.push_name || null,
-          jid: chat.id,
-          avatar_url: null
-        });
-      }
-
-      if (session.pendingContacts.size > 0) {
-        scheduleContactSync(session);
+        if (chat.name && session.contactsStore) {
+          const existing = session.contactsStore.get(cleanPhone);
+          session.contactsStore.set(cleanPhone, {
+            ...(existing || {}),
+            phone: cleanPhone,
+            name: existing?.name || chat.name,
+            jid: chat.id
+          });
+        }
       }
     });
 
