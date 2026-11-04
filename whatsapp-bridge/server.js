@@ -317,6 +317,10 @@ function extractMessageBody(m) {
   if (typeof msg.documentMessage?.caption === 'string' && msg.documentMessage.caption.trim()) {
     return msg.documentMessage.caption.trim();
   }
+  if (msg.reactionMessage) {
+    const emoji = msg.reactionMessage.text || '';
+    return emoji ? `Reacted ${emoji}` : '';
+  }
   if (msg.buttonsResponseMessage?.selectedDisplayText) {
     return msg.buttonsResponseMessage.selectedDisplayText;
   }
@@ -368,6 +372,7 @@ async function decryptAndSaveMedia(msgObj) {
     let fileName = null;
     let caption = null;
     let isVoiceNote = false;
+    let durationSecs = 0;
 
     if (rawM.imageMessage) {
       mediaType = 'image';
@@ -380,7 +385,7 @@ async function decryptAndSaveMedia(msgObj) {
       mediaType = isVoiceNote ? 'ptt' : 'audio';
       mimeType = rawM.audioMessage.mimetype || 'audio/ogg';
       extension = mimeType.includes('mp4') || mimeType.includes('m4a') ? 'mp4' : 'ogg';
-      const durationSecs = rawM.audioMessage.seconds || 0;
+      durationSecs = rawM.audioMessage.seconds || 0;
       const durTag = durationSecs > 0 ? `_${durationSecs}s` : '';
       fileName = `voice${durTag}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${extension}`;
     } else if (rawM.videoMessage) {

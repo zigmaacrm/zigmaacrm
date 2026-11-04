@@ -12,7 +12,7 @@ from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, or_, update, func
+from sqlalchemy import select, desc, or_, update, func, not_, and_
 
 from app.core.config import settings
 from app.core.database import get_db
@@ -383,7 +383,7 @@ async def send_whatsapp_message(
         organization_id=org_id,
         contact_id=contact_id,
         assigned_user_id=current_user.id if current_user else None,
-        business_phone_number_id=phone_number_id or None,
+        business_phone_number_id=(current_user.whatsapp_phone_number if current_user and current_user.whatsapp_phone_number else phone_number_id) or None,
         phone_number=clean_phone,
         direction="OUTBOUND",
         message_body=body_text,
@@ -475,19 +475,11 @@ async def get_whatsapp_messages(
                 or_(
                     WhatsAppMessage.assigned_user_id == current_user.id,
                     WhatsAppMessage.business_phone_number_id == connected_phone,
-                    WhatsAppMessage.business_phone_number_id.like(f"%{user_suffix}%"),
-                    WhatsAppMessage.business_phone_number_id.in_(["default", None]),
-                    WhatsAppMessage.assigned_user_id.is_(None)
+                    WhatsAppMessage.business_phone_number_id.like(f"%{user_suffix}%")
                 )
             )
         else:
-            stmt = stmt.where(
-                or_(
-                    WhatsAppMessage.assigned_user_id == current_user.id,
-                    WhatsAppMessage.business_phone_number_id.in_(["default", None]),
-                    WhatsAppMessage.assigned_user_id.is_(None)
-                )
-            )
+            stmt = stmt.where(WhatsAppMessage.assigned_user_id == current_user.id)
 
     eff_limit = int(limit) if isinstance(limit, (int, str)) and str(limit).isdigit() else 150
     # Order DESC to get the latest messages first, then reverse for chronological display
@@ -579,11 +571,14 @@ async def get_whatsapp_conversations(
                 or_(
                     WhatsAppMessage.assigned_user_id == current_user.id,
                     WhatsAppMessage.business_phone_number_id == connected_phone,
-                    WhatsAppMessage.business_phone_number_id.like(f"%{user_suffix}%"),
-                    WhatsAppMessage.business_phone_number_id.in_(["default", None]),
-                    WhatsAppMessage.assigned_user_id.is_(None)
+                    WhatsAppMessage.business_phone_number_id.like(f"%{user_suffix}%")
                 )
             )
+            # Strictly exclude user's own phone number from incoming conversations list
+            if user_suffix:
+                stmt = stmt.where(
+                    not_(WhatsAppMessage.phone_number.like(f"%{user_suffix}%"))
+                )
         else:
             return {
                 "status": "success",
@@ -634,6 +629,13 @@ async def get_whatsapp_conversations(
         contacts_list = []
         if contact_conditions:
             c_query = select(Contact).where(or_(*contact_conditions))
+            if current_user:
+                c_query = c_query.where(
+                    or_(
+                        Contact.owner_id == current_user.id,
+                        Contact.assigned_user_id == current_user.id
+                    )
+                )
             c_res = await db.execute(c_query.limit(effective_limit * 3))
             contacts_list = c_res.scalars().all()
 
