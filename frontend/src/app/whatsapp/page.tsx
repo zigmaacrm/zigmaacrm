@@ -55,7 +55,8 @@ import {
   Pin,
   Archive,
   CheckSquare,
-  Square
+  Square,
+  LogOut
 } from "lucide-react";
 import Sidebar from "@/components/layout/Sidebar";
 import Header from "@/components/layout/Header";
@@ -890,7 +891,8 @@ export default function WhatsAppPage() {
   const [activePhone, setActivePhone] = useState<string>("");
   const [messages, setMessages] = useState<WhatsAppMessage[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
-  const [filterTab, setFilterTab] = useState<"All" | "My Chats" | "Pinned" | "Archived" | "Unassigned">("All");
+  const [filterTab, setFilterTab] = useState<"All" | "Unread" | "Pinned" | "Archived">("All");
+  const [isLoggingOutWhatsApp, setIsLoggingOutWhatsApp] = useState(false);
   const [isSearchInChatOpen, setIsSearchInChatOpen] = useState(false);
   const [chatSearchQuery, setChatSearchQuery] = useState("");
   const [showMoreMenu, setShowMoreMenu] = useState(false);
@@ -1661,9 +1663,8 @@ export default function WhatsAppPage() {
     return conversations.filter((c) => {
       if (filterTab === "Pinned") return Boolean(c.is_pinned);
       if (filterTab === "Archived") return Boolean(c.is_archived);
+      if (filterTab === "Unread") return c.unreadCount > 0 && !c.is_archived;
       if (!searchQuery.trim() && c.is_archived) return false;
-      if (filterTab === "My Chats" && !c.isAssignedToMe) return false;
-      if (filterTab === "Unassigned" && c.assignedRep.name !== "Unassigned") return false;
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
@@ -1677,6 +1678,26 @@ export default function WhatsAppPage() {
       return true;
     });
   }, [conversations, filterTab, searchQuery]);
+
+  const handleLogoutWhatsApp = async () => {
+    if (!confirm("Are you sure you want to log out and unlink your WhatsApp session? This will also disconnect WhatsApp on your mobile device.")) {
+      return;
+    }
+    setIsLoggingOutWhatsApp(true);
+    try {
+      await api.disconnectWhatsAppQR();
+      setQrStatus("DISCONNECTED");
+      setQrPhone(null);
+      setConversations([]);
+      setMessages([]);
+      setActivePhone("");
+      toast.success("Logged Out", "WhatsApp session unlinked successfully.");
+    } catch (err: any) {
+      toast.error("Logout Error", err.message || "Failed to disconnect WhatsApp session.");
+    } finally {
+      setIsLoggingOutWhatsApp(false);
+    }
+  };
 
   // Pin / Archive / Clear / Block / Delete Handlers
   const handleTogglePin = async (phone: string, e?: React.MouseEvent) => {
@@ -2234,41 +2255,36 @@ export default function WhatsAppPage() {
                 </button>
               </div>
 
-              {/* Linked Device Status Button */}
-              <button
-                onClick={() => setShowQRModal(true)}
-                className={cn(
-                  "w-full flex items-center justify-between px-3 py-2 rounded-xl border text-xs font-semibold transition-all cursor-pointer shadow-2xs hover:scale-[1.01] active:scale-[0.99]",
-                  qrStatus === "CONNECTED"
-                    ? isDark
-                      ? "bg-emerald-950/40 border-emerald-800/60 text-emerald-300 hover:bg-emerald-900/50"
-                      : "bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100"
-                    : isDark
-                      ? "bg-slate-800/80 border-slate-700/80 text-slate-300 hover:border-emerald-500 hover:text-emerald-400"
-                      : "bg-white border-slate-200 text-slate-700 hover:border-emerald-500 hover:text-emerald-700"
-                )}
-                title="WhatsApp Linked Device Status"
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className={cn(
-                    "w-2 h-2 rounded-full shrink-0",
-                    qrStatus === "CONNECTED" ? "bg-emerald-500 animate-pulse" : "bg-slate-400"
-                  )} />
-                  <span className="font-semibold truncate">
-                    {qrStatus === "CONNECTED"
-                      ? `Linked: ${qrPhone || "+91 96004 71080"}`
-                      : "Link WhatsApp Device (Scan QR)"}
-                  </span>
-                </div>
-                <span className={cn(
-                  "text-[10px] font-bold px-2 py-0.5 rounded-lg shrink-0",
-                  qrStatus === "CONNECTED"
-                    ? "bg-emerald-600 text-white"
-                    : "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600"
+              {/* Linked Device Status & Logout */}
+              {qrStatus === "CONNECTED" && (
+                <div className={cn(
+                  "w-full flex items-center justify-between px-3 py-2 rounded-xl border text-xs font-semibold transition-all shadow-2xs",
+                  isDark
+                    ? "bg-emerald-950/40 border-emerald-800/60 text-emerald-300"
+                    : "bg-emerald-50 border-emerald-300 text-emerald-800"
                 )}>
-                  {qrStatus === "CONNECTED" ? "Connected" : "Scan QR"}
-                </span>
-              </button>
+                  <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                    <span className="font-semibold truncate">
+                      Linked: {qrPhone || "+91 96004 71080"}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleLogoutWhatsApp}
+                    disabled={isLoggingOutWhatsApp}
+                    className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold text-rose-600 hover:text-white bg-rose-50 hover:bg-rose-600 dark:bg-rose-950/50 dark:hover:bg-rose-600 dark:text-rose-300 dark:hover:text-white border border-rose-200 dark:border-rose-800 rounded-lg transition-all cursor-pointer shrink-0 shadow-2xs"
+                    title="Logout WhatsApp Session"
+                  >
+                    {isLoggingOutWhatsApp ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <LogOut className="w-3 h-3" />
+                    )}
+                    <span>Logout</span>
+                  </button>
+                </div>
+              )}
 
               {/* Search Bar & New Chat Button */}
               <div className="flex items-center gap-2">
@@ -2306,29 +2322,27 @@ export default function WhatsAppPage() {
                 </button>
               </div>
 
-              {/* Segmented Filter Control */}
+              {/* Segmented Filter Control (4 Filters: All, Unread, Pinned, Archived) */}
               <div className={cn(
-                "flex items-center gap-1 p-1 rounded-xl border transition-colors",
+                "grid grid-cols-4 gap-1 p-1 rounded-xl border transition-colors w-full overflow-hidden",
                 isDark ? "bg-[#131B2E]/60 border-[#1E293B]" : "bg-slate-100/90 border-slate-200/80"
               )}>
-                {(["All", "My Chats", "Pinned", "Archived", "Unassigned"] as const).map((tab) => {
+                {(["All", "Unread", "Pinned", "Archived"] as const).map((tab) => {
                   const count =
                     tab === "All"
                       ? conversations.filter(c => !c.is_archived).length
-                      : tab === "My Chats"
-                      ? conversations.filter(c => c.isAssignedToMe && !c.is_archived).length
+                      : tab === "Unread"
+                      ? conversations.filter(c => c.unreadCount > 0 && !c.is_archived).length
                       : tab === "Pinned"
                       ? conversations.filter(c => c.is_pinned).length
-                      : tab === "Archived"
-                      ? conversations.filter(c => c.is_archived).length
-                      : conversations.filter(c => c.assignedRep.name === "Unassigned" && !c.is_archived).length;
+                      : conversations.filter(c => c.is_archived).length;
 
                   return (
                     <button
                       key={tab}
                       onClick={() => setFilterTab(tab)}
                       className={cn(
-                        "flex-1 py-1.5 px-1.5 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap",
+                        "w-full py-1.5 px-1 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1 cursor-pointer whitespace-nowrap min-w-0",
                         filterTab === tab
                           ? (isDark
                               ? "bg-emerald-600 text-white shadow-xs"
@@ -2338,10 +2352,10 @@ export default function WhatsAppPage() {
                               : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60")
                       )}
                     >
-                      <span>{tab}</span>
+                      <span className="truncate">{tab}</span>
                       <span
                         className={cn(
-                          "text-[10px] px-1.5 py-0.2 rounded-full font-bold",
+                          "text-[10px] px-1.5 py-0.2 rounded-full font-bold shrink-0",
                           filterTab === tab
                             ? (isDark ? "bg-emerald-700 text-white" : "bg-slate-100 text-slate-800")
                             : (isDark ? "bg-white/10 text-slate-400" : "bg-slate-200 text-slate-600")
