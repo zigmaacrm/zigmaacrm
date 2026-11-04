@@ -450,26 +450,48 @@ async def get_whatsapp_messages(
     strictly scoped to the active user.
     """
     stmt = select(WhatsAppMessage)
-    if contact_id:
-        stmt = stmt.where(WhatsAppMessage.contact_id == contact_id)
-    elif phone_number:
+    if isinstance(contact_id, str) and contact_id.strip():
+        stmt = stmt.where(WhatsAppMessage.contact_id == contact_id.strip())
+    elif isinstance(phone_number, str) and phone_number.strip():
         clean = normalize_phone(phone_number)
         search_suffix = clean[-10:] if len(clean) >= 10 else clean
         stmt = stmt.where(WhatsAppMessage.phone_number.like(f"%{search_suffix}%"))
 
     if current_user:
-        if current_user.whatsapp_phone_number:
+        connected_phone = current_user.whatsapp_phone_number
+        if not connected_phone:
+            for cache_key in [current_user.id, "default"]:
+                c_entry = _qr_status_cache.get(cache_key)
+                if c_entry and c_entry.get("data") and c_entry["data"].get("status") == "CONNECTED":
+                    p = c_entry["data"].get("phone")
+                    if p:
+                        connected_phone = p
+                        break
+
+        if connected_phone:
+            clean_user_phone = normalize_phone(connected_phone)
+            user_suffix = clean_user_phone[-10:] if len(clean_user_phone) >= 10 else clean_user_phone
             stmt = stmt.where(
                 or_(
                     WhatsAppMessage.assigned_user_id == current_user.id,
-                    WhatsAppMessage.business_phone_number_id == current_user.whatsapp_phone_number
+                    WhatsAppMessage.business_phone_number_id == connected_phone,
+                    WhatsAppMessage.business_phone_number_id.like(f"%{user_suffix}%"),
+                    WhatsAppMessage.business_phone_number_id.in_(["default", None]),
+                    WhatsAppMessage.assigned_user_id.is_(None)
                 )
             )
         else:
-            stmt = stmt.where(WhatsAppMessage.assigned_user_id == current_user.id)
+            stmt = stmt.where(
+                or_(
+                    WhatsAppMessage.assigned_user_id == current_user.id,
+                    WhatsAppMessage.business_phone_number_id.in_(["default", None]),
+                    WhatsAppMessage.assigned_user_id.is_(None)
+                )
+            )
 
+    eff_limit = int(limit) if isinstance(limit, (int, str)) and str(limit).isdigit() else 150
     # Order DESC to get the latest messages first, then reverse for chronological display
-    stmt = stmt.order_by(WhatsAppMessage.created_at.desc()).limit(limit)
+    stmt = stmt.order_by(WhatsAppMessage.created_at.desc()).limit(eff_limit)
     res = await db.execute(stmt)
     messages = list(res.scalars().all())
     messages.reverse()
@@ -677,14 +699,20 @@ async def get_whatsapp_conversations(
                     prof_name = contact.custom_data.get("whatsapp_profile_name")
                     avatar_url = contact.custom_data.get("avatar_url")
 
+                phonebook_name = None
                 wa_saved_name = None
                 if contact and isinstance(contact.custom_data, dict):
-                    wa_saved_name = contact.custom_data.get("whatsapp_name") or contact.custom_data.get("whatsapp_profile_name")
+                    phonebook_name = contact.custom_data.get("phonebook_name")
+                    wa_saved_name = contact.custom_data.get("whatsapp_name")
 
-                if wa_saved_name and not is_generic_or_placeholder_name(str(wa_saved_name), m.phone_number):
-                    contact_name = str(wa_saved_name).strip()
+                # Strictly prioritize saved phonebook address-book names (e.g. Riyaz_sathik)
+                # over push names (e.g. Arabic or custom strings set by the other person)
+                if phonebook_name and not is_generic_or_placeholder_name(str(phonebook_name), m.phone_number):
+                    contact_name = str(phonebook_name).strip()
                 elif contact and contact.full_name and not is_generic_or_placeholder_name(contact.full_name, m.phone_number):
                     contact_name = contact.full_name.strip()
+                elif wa_saved_name and not is_generic_or_placeholder_name(str(wa_saved_name), m.phone_number):
+                    contact_name = str(wa_saved_name).strip()
                 elif prof_name and str(prof_name).strip() and not is_generic_or_placeholder_name(str(prof_name), m.phone_number):
                     contact_name = str(prof_name).strip()
                 else:
@@ -759,81 +787,8 @@ async def get_whatsapp_conversations(
                     "unread_count": unread_cnt
                 }
 
-    # Also fetch Contacts assigned to current user so address-book contacts appear in inbox!
-    contact_q = select(Contact)
-    if current_user:
-        contact_q = contact_q.where(
-            or_(
-                Contact.assigned_user_id == current_user.id,
-                Contact.owner_id == current_user.id,
-                Contact.organization_id == getattr(current_user, "organization_id", None)
-            )
-        )
-    c_res = await db.execute(contact_q.order_by(desc(Contact.created_at)).limit(effective_limit * 2))
-    synced_contacts = c_res.scalars().all()
-
-    for sc in synced_contacts:
-        if not sc.phone:
-            continue
-        clean_p = normalize_phone(sc.phone)
-        if not is_valid_mobile_phone(clean_p):
-            continue
-
-        # Check if already present in conv_map
-        already_in_map = False
-        for k in conv_map.keys():
-            if normalize_phone(k) == clean_p:
-                already_in_map = True
-                break
-        if already_in_map:
-            continue
-
-        c_data = dict(sc.custom_data or {}) if isinstance(sc.custom_data, dict) else {}
-        prof_name = c_data.get("whatsapp_profile_name")
-        wa_saved = c_data.get("whatsapp_name")
-        if wa_saved and not is_generic_or_placeholder_name(str(wa_saved), sc.phone):
-            c_name = str(wa_saved).strip()
-        elif sc.full_name and not is_generic_or_placeholder_name(sc.full_name, sc.phone):
-            c_name = sc.full_name.strip()
-        elif prof_name and str(prof_name).strip() and not is_generic_or_placeholder_name(str(prof_name), sc.phone):
-            c_name = str(prof_name).strip()
-        else:
-            c_name = format_display_phone(sc.phone)
-
-        parts = c_name.strip().split()
-        initials = (parts[0][0] + (parts[1][0] if len(parts) > 1 else ""))[:2].upper() if parts else "WA"
-
-        conv_map[sc.phone] = {
-            "id": f"conv-{sc.phone}",
-            "phone_number": sc.phone,
-            "contact_id": sc.id,
-            "assigned_user_id": sc.assigned_user_id,
-            "business_phone_number_id": current_user.whatsapp_phone_number if current_user else None,
-            "contact_name": c_name,
-            "company_name": sc.company_name or "Direct Contact",
-            "email": sc.email or "",
-            "avatar_url": c_data.get("avatar_url"),
-            "avatar_initials": initials,
-            "deal_stage": sc.lifecycle_stage or "Lead",
-            "deal_value": 0,
-            "assigned_rep": {
-                "id": sc.assigned_user_id,
-                "name": sc.assigned_user_name or "Assigned",
-                "avatar": "SR",
-                "role": "Sales Representative"
-            },
-            "last_message": "💬 Contact synced from phone",
-            "last_message_type": "text",
-            "media_url": None,
-            "is_voice_note": False,
-            "is_pinned": bool(c_data.get("is_pinned", False)),
-            "is_archived": bool(c_data.get("is_archived", False)),
-            "is_blocked": bool(c_data.get("is_blocked", False)),
-            "last_message_time": sc.created_at.isoformat() if sc.created_at else None,
-            "last_direction": "INBOUND",
-            "last_status": "DELIVERED",
-            "unread_count": 0
-        }
+    # WhatsApp Inbox ONLY displays active conversations with real message threads.
+    # Standalone contacts without WhatsApp chat history belong in the Contacts section.
 
     # Sort pinned to the top, then by last message time
     active_conversations = list(conv_map.values())
@@ -968,6 +923,7 @@ async def bulk_sync_whatsapp_contacts(
             curr_data = dict(contact.custom_data or {})
             if item.name and not is_generic_or_placeholder_name(item.name, clean_phone):
                 curr_data["whatsapp_name"] = item.name.strip()
+                curr_data["phonebook_name"] = item.name.strip()
             if item.avatar_url and curr_data.get("avatar_url") != item.avatar_url:
                 curr_data["avatar_url"] = item.avatar_url
             if item.jid and not curr_data.get("jid"):
@@ -976,6 +932,7 @@ async def bulk_sync_whatsapp_contacts(
         else:
             c_data = {
                 "whatsapp_name": item.name.strip() if item.name and not is_generic_or_placeholder_name(item.name, clean_phone) else None,
+                "phonebook_name": item.name.strip() if item.name and not is_generic_or_placeholder_name(item.name, clean_phone) else None,
                 "jid": item.jid,
                 "avatar_url": item.avatar_url
             }

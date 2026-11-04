@@ -595,11 +595,13 @@ async def receive_whatsapp_qr_inbound(
         if effective_user_id:
             contact.assigned_user_id = effective_user_id
             contact.owner_id = effective_user_id
+        curr_data = dict(contact.custom_data or {})
         if payload.contact_name and not is_generic_or_placeholder_name(payload.contact_name, clean_phone):
-            contact.full_name = payload.contact_name.strip()
-            curr_data = dict(contact.custom_data or {})
-            curr_data["whatsapp_name"] = payload.contact_name.strip()
-            contact.custom_data = curr_data
+            curr_data["whatsapp_profile_name"] = payload.contact_name.strip()
+            # Only update full_name if contact does NOT already have a saved phonebook name
+            if not contact.full_name or is_generic_or_placeholder_name(contact.full_name, clean_phone):
+                contact.full_name = payload.contact_name.strip()
+        contact.custom_data = curr_data
 
     if not lead:
         lead = Lead(
