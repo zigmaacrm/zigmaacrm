@@ -1382,7 +1382,7 @@ export default function WhatsAppPage() {
       const repParam = activeFilter === "ALL" ? undefined : activeFilter;
       const data = await api.getWhatsAppConversations(40, repParam);
       if (data && data.status === "success" && Array.isArray(data.conversations)) {
-        if (data.is_connected === false || qrStatus !== "CONNECTED") {
+        if (data.is_connected === false) {
           setConversations([]);
           setActivePhone("");
           setMessages([]);
