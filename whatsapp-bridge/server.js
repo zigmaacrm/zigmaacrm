@@ -936,15 +936,24 @@ async function initWhatsApp(forceClean = false) {
 }
 
 // REST Endpoints
-app.get('/status', async (req, res) => {
-  if (connectionStatus === 'CONNECTED' && connectedPhone && !connectedAvatarUrl && sock) {
+let isFetchingConnectedAvatar = false;
+app.get('/status', (req, res) => {
+  if (connectionStatus === 'CONNECTED' && connectedPhone && !connectedAvatarUrl && sock && !isFetchingConnectedAvatar) {
+    isFetchingConnectedAvatar = true;
     try {
       const clean = connectedPhone.replace(/[^0-9]/g, '');
       if (clean) {
         const jid = `${clean}@s.whatsapp.net`;
-        connectedAvatarUrl = await sock.profilePictureUrl(jid, 'image').catch(() => null);
+        sock.profilePictureUrl(jid, 'image')
+          .then(url => { connectedAvatarUrl = url || null; })
+          .catch(() => { connectedAvatarUrl = null; })
+          .finally(() => { isFetchingConnectedAvatar = false; });
+      } else {
+        isFetchingConnectedAvatar = false;
       }
-    } catch (_) {}
+    } catch (_) {
+      isFetchingConnectedAvatar = false;
+    }
   }
   res.json({
     status: connectionStatus,

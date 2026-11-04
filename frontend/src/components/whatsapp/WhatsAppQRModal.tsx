@@ -19,38 +19,53 @@ import { useToast } from "@/components/common/ToastProvider";
 interface WhatsAppQRModalProps {
   isOpen: boolean;
   onClose: () => void;
+  initialQR?: string | null;
   onStatusChange?: (status: "DISCONNECTED" | "SCAN_QR" | "CONNECTED", phone: string | null) => void;
 }
 
 export default function WhatsAppQRModal({
   isOpen,
   onClose,
+  initialQR,
   onStatusChange
 }: WhatsAppQRModalProps) {
   const { toast } = useToast();
   const [status, setStatus] = useState<"DISCONNECTED" | "SCAN_QR" | "CONNECTED">("DISCONNECTED");
   const [phone, setPhone] = useState<string | null>(null);
   const [name, setName] = useState<string | null>(null);
-  const [qrCode, setQrCode] = useState<string | null>(null);
+  const [qrCode, setQrCode] = useState<string | null>(initialQR || null);
   const [gatewayOnline, setGatewayOnline] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
 
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isCheckingRef = useRef(false);
+
+  useEffect(() => {
+    if (initialQR && !qrCode) {
+      setQrCode(initialQR);
+    }
+  }, [initialQR]);
 
   const checkStatus = async () => {
+    if (isCheckingRef.current) return;
+    isCheckingRef.current = true;
     try {
       const data = await api.getWhatsAppQRStatus();
       setStatus(data.status);
       setPhone(data.phone);
       setName(data.name);
-      setQrCode(data.qr);
+      if (data.qr) {
+        setQrCode(data.qr);
+      }
       setGatewayOnline(data.gateway_online);
       if (onStatusChange) {
         onStatusChange(data.status, data.phone);
       }
     } catch (e) {
       console.warn("Failed to check QR status", e);
+    } finally {
+      isCheckingRef.current = false;
     }
   };
 
@@ -64,7 +79,7 @@ export default function WhatsAppQRModal({
     }
 
     checkStatus();
-    pollIntervalRef.current = setInterval(checkStatus, 2500);
+    pollIntervalRef.current = setInterval(checkStatus, 3000);
 
     return () => {
       if (pollIntervalRef.current) {
@@ -191,7 +206,7 @@ export default function WhatsAppQRModal({
                 </button>
               </div>
             </div>
-          ) : !gatewayOnline ? (
+          ) : !gatewayOnline && !qrCode ? (
             /* Cloud Gateway Connecting / Waking Up State */
             <div className="text-center py-8 space-y-4">
               <div className="w-14 h-14 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 mx-auto flex items-center justify-center ring-8 ring-emerald-50/50 dark:ring-emerald-900/10">
@@ -202,7 +217,7 @@ export default function WhatsAppQRModal({
                   Connecting to WhatsApp Gateway...
                 </h4>
                 <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xs mx-auto leading-relaxed">
-                  Connecting to live cloud bridge service. If the server was idle, it automatically wakes up in a few seconds.
+                  Connecting to live cloud bridge service. The pairing QR code will appear automatically in a few seconds.
                 </p>
               </div>
               <div className="flex items-center justify-center gap-2 pt-2">

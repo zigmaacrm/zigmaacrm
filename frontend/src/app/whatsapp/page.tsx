@@ -1055,12 +1055,16 @@ export default function WhatsAppPage() {
   const [qrStatus, setQrStatus] = useState<"DISCONNECTED" | "SCAN_QR" | "CONNECTED">("DISCONNECTED");
   const [qrPhone, setQrPhone] = useState<string | null>(null);
   const [linkedUserAvatar, setLinkedUserAvatar] = useState<string | null>(null);
+  const [cachedQR, setCachedQR] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchStatus = () => {
       api.getWhatsAppQRStatus().then((data) => {
         setQrStatus(data.status);
         setQrPhone(data.phone);
+        if (data.qr) {
+          setCachedQR(data.qr);
+        }
         if (data.avatar_url) {
           setLinkedUserAvatar(data.avatar_url);
         } else if (data.phone) {
@@ -1071,7 +1075,8 @@ export default function WhatsAppPage() {
       }).catch(() => {});
     };
     fetchStatus();
-    const keepAlive = setInterval(fetchStatus, 4 * 60 * 1000);
+    // Warm keep-alive ping every 45s so cloud bridge never enters sleep/cold-start while tab is open
+    const keepAlive = setInterval(fetchStatus, 45 * 1000);
     return () => clearInterval(keepAlive);
   }, []);
 
@@ -3686,6 +3691,7 @@ export default function WhatsAppPage() {
       <WhatsAppQRModal
         isOpen={showQRModal}
         onClose={() => setShowQRModal(false)}
+        initialQR={cachedQR}
         onStatusChange={(status, phone) => {
           setQrStatus(status);
           setQrPhone(phone);

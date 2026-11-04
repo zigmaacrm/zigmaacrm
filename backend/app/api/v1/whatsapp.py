@@ -3,6 +3,7 @@ import re
 import uuid
 import base64
 import datetime
+import time
 import logging
 from pathlib import Path
 from dotenv import dotenv_values
@@ -819,12 +820,20 @@ async def get_whatsapp_contact_avatar(
 
     return {"phone": clean_phone, "avatar_url": None}
 
+_qr_status_cache: Dict[str, Any] = {"data": None, "ts": 0}
+
 @router.get("/qr/status")
 async def get_whatsapp_qr_status():
     """
     Checks connection status, linked phone, and current QR code from Baileys gateway.
-    Supports cloud cold-start with fallback to Render bridge.
+    Supports in-memory high-speed caching and fast cloud failover.
     """
+    global _qr_status_cache
+    now = time.time()
+    # Return fresh cache (within 2 seconds) instantly to prevent polling storm
+    if _qr_status_cache["data"] and (now - _qr_status_cache["ts"] < 2.0):
+        return _qr_status_cache["data"]
+
     gateway_url = get_gateway_url()
     targets = [gateway_url]
     if gateway_url != "https://zigmaa-whatsapp-bridge.onrender.com" and (os.getenv("RENDER") or os.getenv("ENVIRONMENT") == "production"):
@@ -832,14 +841,20 @@ async def get_whatsapp_qr_status():
 
     for target in targets:
         try:
-            async with httpx.AsyncClient(timeout=25.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
+            async with httpx.AsyncClient(timeout=8.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
                 resp = await client.get(f"{target}/status")
                 if resp.status_code == 200:
                     data = resp.json()
                     data["gateway_online"] = True
+                    _qr_status_cache["data"] = data
+                    _qr_status_cache["ts"] = time.time()
                     return data
         except Exception as e:
             logger.debug(f"WhatsApp QR Gateway at {target} not reachable: {e}")
+
+    # Fallback to slightly older cache (up to 15s) if bridge is temporarily slow, avoiding false offline states
+    if _qr_status_cache["data"] and (now - _qr_status_cache["ts"] < 15.0):
+        return _qr_status_cache["data"]
 
     return {
         "status": "DISCONNECTED",
@@ -854,6 +869,9 @@ async def refresh_whatsapp_qr():
     """
     Requests a fresh QR code from the Baileys gateway.
     """
+    global _qr_status_cache
+    _qr_status_cache["ts"] = 0  # Invalidate cache immediately
+
     gateway_url = get_gateway_url()
     targets = [gateway_url]
     if gateway_url != "https://zigmaa-whatsapp-bridge.onrender.com" and (os.getenv("RENDER") or os.getenv("ENVIRONMENT") == "production"):
@@ -862,7 +880,7 @@ async def refresh_whatsapp_qr():
     last_err = None
     for target in targets:
         try:
-            async with httpx.AsyncClient(timeout=25.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
+            async with httpx.AsyncClient(timeout=15.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
                 resp = await client.post(f"{target}/refresh-qr")
                 return resp.json()
         except Exception as e:
@@ -875,6 +893,8 @@ async def disconnect_whatsapp_qr():
     """
     Disconnects and logs out the Baileys QR session.
     """
+    global _qr_status_cache
+    _qr_status_cache["ts"] = 0  # Invalidate cache immediately
     gateway_url = get_gateway_url()
     targets = [gateway_url]
     if gateway_url != "https://zigmaa-whatsapp-bridge.onrender.com" and (os.getenv("RENDER") or os.getenv("ENVIRONMENT") == "production"):
