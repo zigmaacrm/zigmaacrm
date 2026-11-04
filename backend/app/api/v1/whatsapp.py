@@ -460,7 +460,7 @@ async def get_whatsapp_messages(
     if current_user:
         connected_phone = current_user.whatsapp_phone_number
         if not connected_phone:
-            for cache_key in [current_user.id, "default"]:
+            for cache_key in [current_user.id]:
                 c_entry = _qr_status_cache.get(cache_key)
                 if c_entry and c_entry.get("data") and c_entry["data"].get("status") == "CONNECTED":
                     p = c_entry["data"].get("phone")
@@ -472,10 +472,17 @@ async def get_whatsapp_messages(
             clean_user_phone = normalize_phone(connected_phone)
             user_suffix = clean_user_phone[-10:] if len(clean_user_phone) >= 10 else clean_user_phone
             stmt = stmt.where(
-                or_(
-                    WhatsAppMessage.assigned_user_id == current_user.id,
-                    WhatsAppMessage.business_phone_number_id == connected_phone,
-                    WhatsAppMessage.business_phone_number_id.like(f"%{user_suffix}%")
+                and_(
+                    or_(
+                        WhatsAppMessage.assigned_user_id == current_user.id,
+                        WhatsAppMessage.business_phone_number_id == current_user.id
+                    ),
+                    or_(
+                        WhatsAppMessage.business_phone_number_id == connected_phone,
+                        WhatsAppMessage.business_phone_number_id.like(f"%{user_suffix}%"),
+                        WhatsAppMessage.business_phone_number_id == current_user.id,
+                        WhatsAppMessage.business_phone_number_id.is_(None)
+                    )
                 )
             )
         else:
@@ -545,7 +552,7 @@ async def get_whatsapp_conversations(
         if current_user:
             connected_phone = current_user.whatsapp_phone_number
             if not connected_phone:
-                for cache_key in [current_user.id, "default"]:
+                for cache_key in [current_user.id]:
                     c_entry = _qr_status_cache.get(cache_key)
                     if c_entry and c_entry.get("data") and c_entry["data"].get("status") == "CONNECTED":
                         p = c_entry["data"].get("phone")
@@ -568,10 +575,17 @@ async def get_whatsapp_conversations(
             user_suffix = clean_user_phone[-10:] if len(clean_user_phone) >= 10 else clean_user_phone
 
             stmt = stmt.where(
-                or_(
-                    WhatsAppMessage.assigned_user_id == current_user.id,
-                    WhatsAppMessage.business_phone_number_id == connected_phone,
-                    WhatsAppMessage.business_phone_number_id.like(f"%{user_suffix}%")
+                and_(
+                    or_(
+                        WhatsAppMessage.assigned_user_id == current_user.id,
+                        WhatsAppMessage.business_phone_number_id == current_user.id
+                    ),
+                    or_(
+                        WhatsAppMessage.business_phone_number_id == connected_phone,
+                        WhatsAppMessage.business_phone_number_id.like(f"%{user_suffix}%"),
+                        WhatsAppMessage.business_phone_number_id == current_user.id,
+                        WhatsAppMessage.business_phone_number_id.is_(None)
+                    )
                 )
             )
             # Strictly exclude user's own phone number from incoming conversations list
@@ -1611,6 +1625,22 @@ async def pin_whatsapp_conversation(
         )
         db.add(contact)
         await db.commit()
+    # Reflect pin modification on WhatsApp device
+    try:
+        g_url = get_gateway_url()
+        targets = [g_url]
+        if g_url != "https://zigmaa-whatsapp-bridge.onrender.com":
+            targets.append("https://zigmaa-whatsapp-bridge.onrender.com")
+        for t in targets:
+            async with httpx.AsyncClient(timeout=4.0) as cl:
+                await cl.post(f"{t}/chat-modify", json={
+                    "phone_number": clean,
+                    "pin": is_pinned,
+                    "session_id": current_user.id if current_user else "default"
+                })
+    except Exception:
+        pass
+
     return {"status": "success", "is_pinned": is_pinned}
 
 @router.post("/conversations/{phone}/archive")
@@ -1649,4 +1679,80 @@ async def archive_whatsapp_conversation(
         )
         db.add(contact)
         await db.commit()
+    # Reflect archive modification on WhatsApp device
+    try:
+        g_url = get_gateway_url()
+        targets = [g_url]
+        if g_url != "https://zigmaa-whatsapp-bridge.onrender.com":
+            targets.append("https://zigmaa-whatsapp-bridge.onrender.com")
+        for t in targets:
+            async with httpx.AsyncClient(timeout=4.0) as cl:
+                await cl.post(f"{t}/chat-modify", json={
+                    "phone_number": clean,
+                    "archive": is_archived,
+                    "session_id": current_user.id if current_user else "default"
+                })
+    except Exception:
+        pass
+
     return {"status": "success", "is_archived": is_archived}
+
+@router.post("/admin/wipe-whatsapp-database")
+async def wipe_whatsapp_database_live(
+    secret_key: str = Query(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Secure maintenance endpoint to wipe all WhatsApp messages, contacts, and linked devices
+    from the production database.
+    """
+    if secret_key != "zigmaa_super_wipe_whatsapp_2026":
+        raise HTTPException(status_code=403, detail="Unauthorized")
+    
+    fk_tables = ["deals", "activities", "calendar_events", "invoices", "tasks"]
+    for tbl in fk_tables:
+        try:
+            await db.execute(text(f"""
+                UPDATE {tbl} SET contact_id = NULL 
+                WHERE contact_id IN (
+                    SELECT id FROM contacts 
+                    WHERE source = 'WHATSAPP' 
+                       OR (custom_data->>'whatsapp_name') IS NOT NULL
+                       OR (custom_data->>'phonebook_name') IS NOT NULL
+                       OR (custom_data->>'channel') = 'meta_whatsapp_cloud_api'
+                )
+            """))
+        except Exception:
+            pass
+
+    m_res = await db.execute(text("DELETE FROM whatsapp_messages"))
+    c_res = await db.execute(text("""
+        DELETE FROM contacts 
+        WHERE source = 'WHATSAPP' 
+           OR (custom_data->>'whatsapp_name') IS NOT NULL
+           OR (custom_data->>'phonebook_name') IS NOT NULL
+           OR (custom_data->>'channel') = 'meta_whatsapp_cloud_api'
+    """))
+    u_res = await db.execute(text("UPDATE users SET whatsapp_phone_number = NULL, whatsapp_phone_number_id = NULL"))
+    await db.commit()
+
+    # Clear memory cache
+    global _qr_status_cache
+    _qr_status_cache.clear()
+
+    # Request bridge to wipe sessions as well
+    try:
+        g_url = get_gateway_url()
+        targets = [g_url, "https://zigmaa-whatsapp-bridge.onrender.com"]
+        for t in targets:
+            async with httpx.AsyncClient(timeout=5.0) as cl:
+                await cl.post(f"{t}/admin/wipe-sessions?secret_key=zigmaa_super_wipe_whatsapp_2026")
+    except Exception:
+        pass
+
+    return {
+        "status": "success",
+        "deleted_messages": m_res.rowcount,
+        "deleted_contacts": c_res.rowcount,
+        "reset_users": u_res.rowcount
+    }

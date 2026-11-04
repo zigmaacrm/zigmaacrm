@@ -1133,16 +1133,78 @@ function resolveSendingSession(requestedId) {
     const sId = sanitizeSessionId(requestedId);
     const s = getSession(sId, false);
     if (s && s.status === 'CONNECTED' && s.sock) return s;
+    return null; // Never cross-contaminate sessions to other users
   }
-  // Try default
+  // Fallback to default session only if no specific user requested
   const def = sessions.get('default');
   if (def && def.status === 'CONNECTED' && def.sock) return def;
-  // Try any active session
-  for (const s of sessions.values()) {
-    if (s.status === 'CONNECTED' && s.sock) return s;
-  }
   return null;
 }
+
+// Modify chat state (Pin / Unpin / Archive / Unarchive) directly on WhatsApp
+app.post('/chat-modify', async (req, res) => {
+  try {
+    const { phone_number, pin, archive, session_id, assigned_user_id } = req.body;
+    const session = resolveSendingSession(session_id || assigned_user_id);
+    if (!session || !session.sock || session.status !== 'CONNECTED') {
+      return res.status(503).json({ success: false, error: 'Session not connected' });
+    }
+    const cleanPhone = (phone_number || '').replace(/[^0-9]/g, '');
+    if (!cleanPhone) {
+      return res.status(400).json({ success: false, error: 'phone_number is required' });
+    }
+    const jid = cleanPhone + '@s.whatsapp.net';
+    if (typeof pin === 'boolean') {
+      await session.sock.chatModify({ pin }, jid);
+    }
+    if (typeof archive === 'boolean') {
+      await session.sock.chatModify({ archive }, jid);
+    }
+    res.json({ success: true, phone_number: cleanPhone, pin, archive });
+  } catch (err) {
+    console.error('[WhatsApp chatModify Error]:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Admin wipe all sessions and auth directories cleanly
+app.post('/admin/wipe-sessions', async (req, res) => {
+  try {
+    const secretKey = req.query.secret_key || req.body?.secret_key;
+    if (secretKey !== 'zigmaa_super_wipe_whatsapp_2026') {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+    for (const session of sessions.values()) {
+      try {
+        if (session.sock) {
+          session.sock.ev.removeAllListeners();
+          session.sock.ws?.close();
+          session.sock.end?.();
+        }
+      } catch (_) {}
+    }
+    sessions.clear();
+
+    for (const d of [SESSIONS_BASE_DIR, AUTH_DIR, UPLOADS_DIR]) {
+      if (fs.existsSync(d)) {
+        try {
+          const files = fs.readdirSync(d);
+          for (const f of files) {
+            const p = path.join(d, f);
+            if (fs.lstatSync(p).isDirectory()) {
+              fs.rmSync(p, { recursive: true, force: true });
+            } else {
+              fs.unlinkSync(p);
+            }
+          }
+        } catch (_) {}
+      }
+    }
+    res.json({ success: true, message: 'All Baileys sessions wiped cleanly.' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 app.post('/send', async (req, res) => {
   try {

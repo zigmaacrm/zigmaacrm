@@ -1309,12 +1309,13 @@ export default function WhatsAppPage() {
 
   // Active conversation object
   const activeChat = useMemo(() => {
+    if (qrStatus !== "CONNECTED") return null;
+    if (!activePhone) return null;
     return (
       conversations.find((c) => c.phone.replace(/[^0-9]/g, "") === activePhone.replace(/[^0-9]/g, "")) ||
-      conversations[0] ||
       null
     );
-  }, [conversations, activePhone]);
+  }, [conversations, activePhone, qrStatus]);
 
   // Transform backend raw conversation into WhatsAppConversation
   const mapBackendConv = (raw: any, index: number): WhatsAppConversation => {
@@ -1690,6 +1691,7 @@ export default function WhatsAppPage() {
       setConversations([]);
       setMessages([]);
       setActivePhone("");
+      setShowRightDrawer(false);
       toast.success("Logged Out", "WhatsApp session unlinked successfully.");
     } catch (err: any) {
       toast.error("Logout Error", err.message || "Failed to disconnect WhatsApp session.");
@@ -2224,7 +2226,7 @@ export default function WhatsAppPage() {
           {/* COLUMN A: Chat Conversation Thread List (~320px width)    */}
           {/* ========================================================= */}
           <div className={cn(
-            "w-80 sm:w-[340px] xl:w-[360px] shrink-0 flex flex-col transition-colors border-r z-10",
+            "w-80 sm:w-[360px] xl:w-[380px] shrink-0 flex flex-col transition-colors border-r z-10",
             isDark ? "bg-[#090A0F] border-[#1E293B]" : "bg-white border-slate-200"
           )}>
             {/* Top Header */}
@@ -2547,7 +2549,29 @@ export default function WhatsAppPage() {
             "flex-1 flex flex-col relative min-w-0 transition-colors",
             isDark ? "bg-[#0D0B14]" : "bg-[#F0F2F5]"
           )}>
-            {activeChat ? (
+            {qrStatus !== "CONNECTED" ? (
+              <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-4">
+                <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-inner">
+                  <ShieldCheck className="w-8 h-8" />
+                </div>
+                <div className="text-center space-y-1">
+                  <h3 className={cn("font-bold text-lg", isDark ? "text-white" : "text-slate-900")}>
+                    WhatsApp Session Logged Out
+                  </h3>
+                  <p className={cn("text-xs text-center max-w-sm leading-relaxed", isDark ? "text-slate-400" : "text-slate-500")}>
+                    Your WhatsApp device is not connected. All conversations are hidden for security until you scan your personal QR code.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowQRModal(true)}
+                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-md hover:scale-105 active:scale-95 cursor-pointer flex items-center gap-2"
+                >
+                  <QrCode className="w-4 h-4" />
+                  <span>Scan QR Code to Connect</span>
+                </button>
+              </div>
+            ) : activeChat ? (
               <>
                 {/* Chat Header */}
                 <div className={cn(
@@ -2644,9 +2668,11 @@ export default function WhatsAppPage() {
 
                     {/* Dropdown Menu */}
                     {showMoreMenu && (
-                      <div
-                        className={cn(
-                          "absolute right-0 top-11 w-52 rounded-2xl shadow-xl border py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100",
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setShowMoreMenu(false)} />
+                        <div
+                          className={cn(
+                            "absolute right-0 top-11 w-52 rounded-2xl shadow-xl border py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100",
                           isDark ? "bg-[#1E293B] border-white/10 text-slate-200" : "bg-white border-slate-200 text-slate-800"
                         )}
                       >
@@ -2750,6 +2776,7 @@ export default function WhatsAppPage() {
                           <span>Delete contact</span>
                         </button>
                       </div>
+                    </>
                     )}
                   </div>
                 </div>
@@ -3724,28 +3751,6 @@ export default function WhatsAppPage() {
                 </div>
                 )}
               </>
-            ) : qrStatus !== "CONNECTED" ? (
-              <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-4">
-                <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-inner">
-                  <ShieldCheck className="w-8 h-8" />
-                </div>
-                <div className="text-center space-y-1">
-                  <h3 className={cn("font-bold text-lg", isDark ? "text-white" : "text-slate-900")}>
-                    WhatsApp Session Logged Out
-                  </h3>
-                  <p className={cn("text-xs text-center max-w-sm leading-relaxed", isDark ? "text-slate-400" : "text-slate-500")}>
-                    Your WhatsApp device is not connected. All conversations are hidden for security until you scan your personal QR code.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowQRModal(true)}
-                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-md hover:scale-105 active:scale-95 cursor-pointer flex items-center gap-2"
-                >
-                  <QrCode className="w-4 h-4" />
-                  <span>Scan QR Code to Connect</span>
-                </button>
-              </div>
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-3">
                 <MessageSquare className={cn("w-12 h-12 opacity-40", isDark ? "text-slate-600" : "text-slate-400")} />
