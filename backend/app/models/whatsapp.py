@@ -35,6 +35,8 @@ class WhatsAppMessage(TimeStampedBase):
     timestamp = Column(DateTime, default=datetime.utcnow, nullable=True, index=True)
     reaction = Column(String(50), nullable=True)
     is_deleted = Column(Boolean, default=False, nullable=True)
+    session_id = Column(String(100), nullable=True, index=True)
+    quoted_context = Column(Text, nullable=True)
 
     organization = relationship("Organization")
     contact = relationship("Contact")

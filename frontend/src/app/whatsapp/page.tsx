@@ -86,6 +86,7 @@ export interface WhatsAppMessage {
   isDeleted?: boolean;
   isEdited?: boolean;
   metaMessageId?: string | null;
+  quotedContext?: { sender: string; text: string } | null;
   attachment?: {
     type: "pdf" | "image" | "audio" | "document" | "video" | "sticker";
     name: string;
@@ -1380,7 +1381,7 @@ export default function WhatsAppPage() {
     try {
       const activeFilter = repFilter !== undefined ? repFilter : selectedRepFilter;
       const repParam = activeFilter === "ALL" ? undefined : activeFilter;
-      const data = await api.getWhatsAppConversations(40, repParam);
+      const data = await api.getWhatsAppConversations(40, repParam, qrPhone);
       if (data && data.status === "success" && Array.isArray(data.conversations)) {
         if (data.is_connected === false) {
           setConversations([]);
@@ -1470,7 +1471,7 @@ export default function WhatsAppPage() {
 
     try {
       const clean = phone.replace(/[^0-9]/g, "");
-      const data = await api.getWhatsAppMessages({ phone_number: clean });
+      const data = await api.getWhatsAppMessages({ phone_number: clean, active_session_phone: qrPhone });
 
       if (data && data.status === "success" && Array.isArray(data.messages)) {
         const mappedMsgs: WhatsAppMessage[] = data.messages.map((m: any) => {
@@ -1534,6 +1535,7 @@ export default function WhatsAppPage() {
             reaction: m.reaction || null,
             isDeleted: Boolean(m.is_deleted),
             metaMessageId: m.meta_message_id || null,
+            quotedContext: m.quoted_context || null,
             attachment
           };
         });
@@ -2267,7 +2269,7 @@ export default function WhatsAppPage() {
                   <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
                     <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
                     <span className="font-semibold truncate">
-                      Linked: {qrPhone || "+91 96004 71080"}
+                      Linked: {qrPhone ? (qrPhone.startsWith("+") ? qrPhone : `+${qrPhone}`) : "Connected"}
                     </span>
                   </div>
                   <button
@@ -3005,6 +3007,18 @@ export default function WhatsAppPage() {
                                         alt="WhatsApp Sticker"
                                         className="w-36 h-36 max-w-[160px] max-h-[160px] object-contain drop-shadow-sm transition-transform hover:scale-105 block"
                                         onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}
+                                        onError={(e) => {
+                                          const img = e.currentTarget;
+                                          if (!img.dataset.retried && msg.attachment?.url) {
+                                            img.dataset.retried = "true";
+                                            const fn = msg.attachment.url.split("/").pop();
+                                            if (fn) {
+                                              img.src = `https://zigmaa-whatsapp-bridge.onrender.com/media/whatsapp/${fn}`;
+                                              return;
+                                            }
+                                          }
+                                          img.style.display = "none";
+                                        }}
                                       />
                                     </div>
 
@@ -3263,7 +3277,12 @@ export default function WhatsAppPage() {
                           ) : (
                             /* 7. Standard Text / Media with Caption */
                             (() => {
-                              const parsed = parseQuotedReply(cleanText);
+                              const parsed = msg.quotedContext ? {
+                                hasQuote: true,
+                                quotedSender: msg.quotedContext.sender || "Contact",
+                                quotedText: msg.quotedContext.text || "",
+                                body: cleanText
+                              } : parseQuotedReply(cleanText);
                               return (
                                 <div
                                   className={cn(

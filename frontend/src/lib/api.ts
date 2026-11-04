@@ -33,6 +33,14 @@ function resolveApiBase(): string {
 
 const API_BASE = resolveApiBase();
 
+export function getBridgeMediaUrl(mediaPath?: string | null): string {
+  if (!mediaPath) return "";
+  const s = String(mediaPath).trim();
+  if (s.startsWith("http://") || s.startsWith("https://") || s.startsWith("blob:") || s.startsWith("data:")) return s;
+  const cleanPath = s.startsWith("/") ? s : `/${s}`;
+  return `https://zigmaa-whatsapp-bridge.onrender.com${cleanPath}`;
+}
+
 export function getMediaUrl(mediaPath?: string | null): string {
   if (!mediaPath) return "";
   const s = String(mediaPath).trim();
@@ -3173,11 +3181,15 @@ export const zigmaaApi = {
     phone_number?: string;
     contact_id?: string;
     limit?: number;
+    active_session_phone?: string | null;
+    session_id?: string | null;
   }): Promise<any> {
     try {
       const query = new URLSearchParams();
       if (params.phone_number) query.set("phone_number", params.phone_number);
       if (params.contact_id) query.set("contact_id", params.contact_id);
+      if (params.active_session_phone) query.set("active_session_phone", params.active_session_phone.replace(/[^0-9]/g, ''));
+      if (params.session_id) query.set("session_id", params.session_id);
       query.set("limit", String(params.limit || 150));
 
       const res = await fetch(`${API_BASE}/whatsapp/messages?${query.toString()}`, {
@@ -3219,11 +3231,14 @@ export const zigmaaApi = {
     return null;
   },
 
-  async getWhatsAppConversations(limit = 30, assigned_user_id?: string): Promise<any> {
+  async getWhatsAppConversations(limit = 30, assigned_user_id?: string, active_session_phone?: string | null): Promise<any> {
     try {
       let url = `${API_BASE}/whatsapp/conversations?limit=${limit}`;
-      if (assigned_user_id && assigned_user_id !== "all") {
+      if (assigned_user_id && assigned_user_id.toLowerCase() !== "all") {
         url += `&assigned_user_id=${encodeURIComponent(assigned_user_id)}`;
+      }
+      if (active_session_phone) {
+        url += `&active_session_phone=${encodeURIComponent(active_session_phone.replace(/[^0-9]/g, ''))}`;
       }
       const res = await fetch(url, {
         headers: {

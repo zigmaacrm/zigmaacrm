@@ -492,6 +492,7 @@ class WhatsAppStatusUpdateRequest(BaseModel):
     meta_message_id: Optional[str] = None
     status: str
     session_id: Optional[str] = None
+    quoted_context: Optional[Union[Dict[str, Any], str]] = None
     media_base64: Optional[str] = None
     assigned_user_id: Optional[str] = None
     phone: Optional[str] = None
@@ -513,6 +514,7 @@ class InboundQRMessage(BaseModel):
     status: Optional[str] = None
     assigned_user_id: Optional[str] = None
     session_id: Optional[str] = None
+    quoted_context: Optional[Union[Dict[str, Any], str]] = None
 
 @router.post("/whatsapp/inbound-qr")
 @router.post("/inbound-qr")
@@ -645,11 +647,21 @@ async def receive_whatsapp_qr_inbound(
     else:
         msg_dt = dt_utcnow.utcnow()
 
+    quoted_str = None
+    if payload.quoted_context:
+        if isinstance(payload.quoted_context, dict):
+            quoted_str = json.dumps(payload.quoted_context)
+        else:
+            quoted_str = str(payload.quoted_context)
+
+    effective_session = payload.session_id or session_business_phone or None
     wa_msg = WhatsAppMessage(
         organization_id=default_org_id,
         contact_id=contact.id if contact else None,
         assigned_user_id=effective_user_id,
         business_phone_number_id=session_business_phone or payload.session_id or None,
+        session_id=effective_session,
+        quoted_context=quoted_str,
         phone_number=clean_phone,
         direction=msg_direction,
         message_body=payload.message_body or "[Empty Message]",

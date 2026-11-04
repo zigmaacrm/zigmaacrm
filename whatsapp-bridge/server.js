@@ -365,6 +365,38 @@ function unwrapMessage(m) {
   return msg;
 }
 
+function extractQuotedContext(rawMessage) {
+  if (!rawMessage) return null;
+  const unwrapped = unwrapMessage(rawMessage);
+  if (!unwrapped) return null;
+  const contextInfo =
+    unwrapped?.extendedTextMessage?.contextInfo ||
+    unwrapped?.imageMessage?.contextInfo ||
+    unwrapped?.videoMessage?.contextInfo ||
+    unwrapped?.audioMessage?.contextInfo ||
+    unwrapped?.documentMessage?.contextInfo ||
+    unwrapped?.stickerMessage?.contextInfo;
+
+  if (!contextInfo?.quotedMessage) return null;
+  const qMsg = unwrapMessage(contextInfo.quotedMessage);
+  let qText = extractMessageBody(qMsg);
+  if (!qText) {
+    if (qMsg?.imageMessage) qText = '📷 Photo';
+    else if (qMsg?.audioMessage) qText = qMsg.audioMessage.ptt ? '🎤 Voice message' : '🎵 Audio';
+    else if (qMsg?.videoMessage) qText = '🎥 Video';
+    else if (qMsg?.documentMessage) qText = '📄 ' + (qMsg.documentMessage.fileName || 'Document');
+    else if (qMsg?.stickerMessage) qText = 'Sticker';
+    else qText = '[Attachment]';
+  }
+
+  const rawSender = contextInfo.participant || contextInfo.remoteJid || '';
+  const cleanSender = rawSender.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+  return {
+    sender: cleanSender ? '+' + cleanSender : 'Contact',
+    text: qText || ''
+  };
+}
+
 async function decryptAndSaveMedia(msgObj) {
   try {
     const rawM = unwrapMessage(msgObj?.message);
@@ -468,7 +500,7 @@ function scheduleContactSync(session) {
           body: JSON.stringify({
             contacts: batch,
             assigned_user_id: session.id !== 'default' ? session.id : null,
-            session_id: session.id
+            session_id: session.ownerPhone || session.id
           })
         });
       } catch (err) {
@@ -737,7 +769,8 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
             file_name: mediaPayload?.file_name || null,
             caption: mediaPayload?.caption || null,
             is_voice_note: Boolean(mediaPayload?.is_voice_note),
-            media_base64: mediaPayload?.media_base64 || null
+            media_base64: mediaPayload?.media_base64 || null,
+            quoted_context: extractQuotedContext(msg.message)
           });
         }
       }
@@ -783,7 +816,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
               body: JSON.stringify({
                 messages: batch,
                 assigned_user_id: session.id !== 'default' ? session.id : null,
-                session_id: session.id
+                session_id: session.ownerPhone || session.id
               })
             });
           } catch (err) {
@@ -982,6 +1015,8 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
             ? msg.messageTimestamp
             : (msg.messageTimestamp?.low || Math.floor(Date.now() / 1000));
 
+          const quotedCtx = extractQuotedContext(msg.message);
+          const effectiveSession = session.ownerPhone || session.id;
           const payload = {
             phone_number: senderPhone,
             contact_name: contactName,
@@ -995,8 +1030,9 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
             caption: mediaPayload?.caption || null,
             is_voice_note: Boolean(mediaPayload?.is_voice_note),
             media_base64: mediaPayload?.media_base64 || null,
+            quoted_context: quotedCtx,
             assigned_user_id: session.id !== 'default' ? session.id : null,
-            session_id: session.id
+            session_id: effectiveSession
           };
 
           fetch(FASTAPI_WEBHOOK_URL, {
@@ -1182,11 +1218,22 @@ function resolveSendingSession(requestedId) {
     const sId = sanitizeSessionId(requestedId);
     const s = getSession(sId, false);
     if (s && s.status === 'CONNECTED' && s.sock) return s;
-    return null; // Never cross-contaminate sessions to other users
+    const cleanReq = String(requestedId).replace(/[^0-9]/g, '');
+    if (cleanReq) {
+      for (const sess of sessions.values()) {
+        if (sess.status === 'CONNECTED' && sess.sock) {
+          if (sess.ownerPhone === cleanReq || (sess.phone && sess.phone.replace(/[^0-9]/g, '') === cleanReq)) {
+            return sess;
+          }
+        }
+      }
+    }
   }
-  // Fallback to default session only if no specific user requested
   const def = sessions.get('default');
   if (def && def.status === 'CONNECTED' && def.sock) return def;
+  for (const sess of sessions.values()) {
+    if (sess.status === 'CONNECTED' && sess.sock) return sess;
+  }
   return null;
 }
 
