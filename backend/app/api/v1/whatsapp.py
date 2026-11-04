@@ -9,7 +9,7 @@ from pathlib import Path
 from dotenv import dotenv_values
 import httpx
 from typing import Optional, List, Dict, Any, Union
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, or_, update, func, not_, and_, text
@@ -1158,6 +1158,24 @@ class WhatsAppHistorySyncPayload(BaseModel):
     messages: List[WhatsAppHistorySyncItem]
     assigned_user_id: Optional[str] = None
     session_id: Optional[str] = None
+
+class InboundQRMessage(BaseModel):
+    phone_number: str
+    contact_name: Optional[str] = None
+    message_body: Optional[str] = "[Attachment]"
+    meta_message_id: Optional[str] = None
+    timestamp: Optional[Union[int, float]] = None
+    direction: Optional[str] = "INBOUND"
+    message_type: Optional[str] = "text"
+    media_url: Optional[str] = None
+    media_base64: Optional[str] = None
+    file_name: Optional[str] = None
+    caption: Optional[str] = None
+    is_voice_note: Optional[bool] = False
+    status: Optional[str] = None
+    assigned_user_id: Optional[str] = None
+    session_id: Optional[str] = None
+    quoted_context: Optional[Union[Dict[str, Any], str]] = None
 
 @router.post("/webhook/inbound")
 async def relay_inbound_webhook(
