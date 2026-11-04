@@ -88,6 +88,17 @@ async def on_startup():
                 await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS whatsapp_phone_number_id VARCHAR(100);"))
                 await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS assigned_user_id VARCHAR(36);"))
                 await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS business_phone_number_id VARCHAR(100);"))
+                # WhatsApp Media & Reactions & Metadata Support
+                await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS media_url VARCHAR(500);"))
+                await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS file_name VARCHAR(255);"))
+                await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS caption TEXT;"))
+                await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS is_voice_note BOOLEAN DEFAULT FALSE;"))
+                await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS reaction VARCHAR(50);"))
+                await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE;"))
+                await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'SENT';"))
+                await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS timestamp TIMESTAMP WITHOUT TIME ZONE;"))
+                await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS meta_message_id VARCHAR(255);"))
+                await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS message_type VARCHAR(50) DEFAULT 'text';"))
             except Exception as e:
                 print(f"[STARTUP MIGRATION] Schema check note: {e}")
     except Exception as e:
@@ -112,6 +123,51 @@ async def root():
 @app.get(f"{settings.API_V1_STR}/health")
 async def health_check():
     return {"status": "ok", "app": "Zigmaa CRM", "timestamp": "healthy"}
+
+
+@app.get("/api/v1/migrate-db")
+async def migrate_db():
+    from sqlalchemy import text
+    results = []
+    queries = [
+        "ALTER TABLE custom_fields ADD COLUMN IF NOT EXISTS module VARCHAR(50);",
+        "ALTER TABLE custom_fields ADD COLUMN IF NOT EXISTS key VARCHAR(100);",
+        "ALTER TABLE custom_fields ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;",
+        "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS custom_properties JSONB DEFAULT '{}'::jsonb;",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS custom_properties JSONB DEFAULT '{}'::jsonb;",
+        "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS max_users INTEGER DEFAULT 15;",
+        "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS max_whatsapp INTEGER DEFAULT 1500;",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50);",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS google_email VARCHAR(255);",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS google_access_token TEXT;",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS google_refresh_token TEXT;",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS google_token_expiry TIMESTAMP WITHOUT TIME ZONE;",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_google_connected BOOLEAN DEFAULT FALSE;",
+        "ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS google_event_id VARCHAR(255);",
+        "ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS meet_link VARCHAR(500);",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS whatsapp_phone_number VARCHAR(50);",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS whatsapp_phone_number_id VARCHAR(100);",
+        "ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS assigned_user_id VARCHAR(36);",
+        "ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS business_phone_number_id VARCHAR(100);",
+        "ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS media_url VARCHAR(500);",
+        "ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS file_name VARCHAR(255);",
+        "ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS caption TEXT;",
+        "ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS is_voice_note BOOLEAN DEFAULT FALSE;",
+        "ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS reaction VARCHAR(50);",
+        "ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE;",
+        "ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'SENT';",
+        "ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS timestamp TIMESTAMP WITHOUT TIME ZONE;",
+        "ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS meta_message_id VARCHAR(255);",
+        "ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS message_type VARCHAR(50) DEFAULT 'text';"
+    ]
+    async with engine.begin() as conn:
+        for q in queries:
+            try:
+                await conn.execute(text(q))
+                results.append({"query": q, "status": "ok"})
+            except Exception as e:
+                results.append({"query": q, "status": f"error: {e}"})
+    return {"status": "success", "results": results}
 
 @app.get("/api/v1/debug-db")
 async def debug_db():
