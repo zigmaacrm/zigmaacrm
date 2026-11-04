@@ -195,7 +195,15 @@ async def send_whatsapp_message(
     contact_id = payload.contact_id
     if not contact_id:
         search_suffix = clean_phone[-10:] if len(clean_phone) >= 10 else clean_phone
-        c_res = await db.execute(select(Contact).where(Contact.phone.like(f"%{search_suffix}%")).limit(1))
+        c_stmt = select(Contact).where(Contact.phone.like(f"%{search_suffix}%"))
+        if effective_user_id:
+            c_stmt = c_stmt.where(
+                or_(
+                    Contact.assigned_user_id == effective_user_id,
+                    Contact.owner_id == effective_user_id
+                )
+            )
+        c_res = await db.execute(c_stmt.limit(1))
         contact = c_res.scalar_one_or_none()
         if contact:
             contact_id = contact.id
@@ -555,7 +563,15 @@ async def get_whatsapp_conversations(
 
         contacts_list = []
         if contact_conditions:
-            c_res = await db.execute(select(Contact).where(or_(*contact_conditions)).limit(limit * 2))
+            c_query = select(Contact).where(or_(*contact_conditions))
+            if current_user:
+                c_query = c_query.where(
+                    or_(
+                        Contact.assigned_user_id == current_user.id,
+                        Contact.owner_id == current_user.id
+                    )
+                )
+            c_res = await db.execute(c_query.limit(limit * 2))
             contacts_list = c_res.scalars().all()
 
         contacts_by_id = {c.id: c for c in contacts_list}
@@ -653,6 +669,7 @@ async def get_whatsapp_conversations(
                 else:
                     last_msg_snippet = m.message_body or ""
 
+                c_data = dict(contact.custom_data or {}) if contact and isinstance(contact.custom_data, dict) else {}
                 conv_map[m.phone_number] = {
                     "id": f"conv-{m.phone_number}",
                     "phone_number": m.phone_number,
@@ -676,6 +693,9 @@ async def get_whatsapp_conversations(
                     "last_message_type": m.message_type or "text",
                     "media_url": m.media_url,
                     "is_voice_note": bool(m.is_voice_note),
+                    "is_pinned": bool(c_data.get("is_pinned", False)),
+                    "is_archived": bool(c_data.get("is_archived", False)),
+                    "is_blocked": bool(c_data.get("is_blocked", False)),
                     "last_message_time": m.created_at.isoformat() if m.created_at else None,
                     "last_direction": m.direction,
                     "last_status": m.status,
@@ -684,8 +704,9 @@ async def get_whatsapp_conversations(
 
     # Return ONLY real active conversations with actual sent or received messages
     active_conversations = list(conv_map.values())
+    # Sort pinned to the top, then by last message time
     active_conversations.sort(
-        key=lambda c: c.get("last_message_time") or "",
+        key=lambda c: (1 if c.get("is_pinned") else 0, c.get("last_message_time") or ""),
         reverse=True
     )
 
@@ -1051,7 +1072,16 @@ async def sync_whatsapp_chat_history(
             continue
 
         search_suffix = clean_phone[-10:] if len(clean_phone) >= 10 else clean_phone
-        c_res = await db.execute(select(Contact).where(Contact.phone.like(f"%{search_suffix}%")).limit(1))
+        effective_user_id = payload.assigned_user_id or (payload.session_id if payload.session_id != "default" else None)
+        c_stmt = select(Contact).where(Contact.phone.like(f"%{search_suffix}%"))
+        if effective_user_id:
+            c_stmt = c_stmt.where(
+                or_(
+                    Contact.assigned_user_id == effective_user_id,
+                    Contact.owner_id == effective_user_id
+                )
+            )
+        c_res = await db.execute(c_stmt.limit(1))
         contact = c_res.scalar_one_or_none()
 
         display_name = item.contact_name.strip() if item.contact_name and item.contact_name.strip() else format_display_phone(clean_phone)
@@ -1078,6 +1108,7 @@ async def sync_whatsapp_chat_history(
             organization_id=default_org_id,
             contact_id=contact.id if contact else None,
             assigned_user_id=effective_user_id,
+            business_phone_number_id=payload.session_id or None,
             phone_number=clean_phone,
             direction=dir_val,
             message_body=item.message_body or "[Historical Message]",
@@ -1379,3 +1410,113 @@ async def delete_whatsapp_message_endpoint(
             logger.warning(f"Failed to forward delete revoke to gateway: {e}")
 
     return {"status": "success", "is_deleted": True}
+
+
+@router.delete("/conversations/{phone}/clear")
+async def clear_whatsapp_chat(
+    phone: str,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    clean = normalize_phone(phone)
+    if not clean:
+        raise HTTPException(status_code=400, detail="Invalid phone number")
+    search_suffix = clean[-10:] if len(clean) >= 10 else clean
+    stmt = delete(WhatsAppMessage).where(WhatsAppMessage.phone_number.like(f"%{search_suffix}%"))
+    if current_user:
+        stmt = stmt.where(WhatsAppMessage.assigned_user_id == current_user.id)
+    res = await db.execute(stmt)
+    await db.commit()
+    return {"status": "success", "cleared": res.rowcount}
+
+@router.post("/conversations/{phone}/block")
+async def block_whatsapp_contact(
+    phone: str,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    clean = normalize_phone(phone)
+    if not clean:
+        raise HTTPException(status_code=400, detail="Invalid phone number")
+    search_suffix = clean[-10:] if len(clean) >= 10 else clean
+    c_stmt = select(Contact).where(Contact.phone.like(f"%{search_suffix}%"))
+    if current_user:
+        c_stmt = c_stmt.where(or_(Contact.assigned_user_id == current_user.id, Contact.owner_id == current_user.id))
+    c_res = await db.execute(c_stmt.limit(1))
+    contact = c_res.scalar_one_or_none()
+    if contact:
+        c_data = dict(contact.custom_data or {})
+        c_data["is_blocked"] = True
+        contact.custom_data = c_data
+        await db.commit()
+    return {"status": "success", "blocked": True}
+
+@router.post("/conversations/{phone}/unblock")
+async def unblock_whatsapp_contact(
+    phone: str,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    clean = normalize_phone(phone)
+    if not clean:
+        raise HTTPException(status_code=400, detail="Invalid phone number")
+    search_suffix = clean[-10:] if len(clean) >= 10 else clean
+    c_stmt = select(Contact).where(Contact.phone.like(f"%{search_suffix}%"))
+    if current_user:
+        c_stmt = c_stmt.where(or_(Contact.assigned_user_id == current_user.id, Contact.owner_id == current_user.id))
+    c_res = await db.execute(c_stmt.limit(1))
+    contact = c_res.scalar_one_or_none()
+    if contact:
+        c_data = dict(contact.custom_data or {})
+        c_data["is_blocked"] = False
+        contact.custom_data = c_data
+        await db.commit()
+    return {"status": "success", "blocked": False}
+
+@router.post("/conversations/{phone}/pin")
+async def pin_whatsapp_conversation(
+    phone: str,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    clean = normalize_phone(phone)
+    if not clean:
+        raise HTTPException(status_code=400, detail="Invalid phone number")
+    search_suffix = clean[-10:] if len(clean) >= 10 else clean
+    c_stmt = select(Contact).where(Contact.phone.like(f"%{search_suffix}%"))
+    if current_user:
+        c_stmt = c_stmt.where(or_(Contact.assigned_user_id == current_user.id, Contact.owner_id == current_user.id))
+    c_res = await db.execute(c_stmt.limit(1))
+    contact = c_res.scalar_one_or_none()
+    is_pinned = True
+    if contact:
+        c_data = dict(contact.custom_data or {})
+        is_pinned = not c_data.get("is_pinned", False)
+        c_data["is_pinned"] = is_pinned
+        contact.custom_data = c_data
+        await db.commit()
+    return {"status": "success", "is_pinned": is_pinned}
+
+@router.post("/conversations/{phone}/archive")
+async def archive_whatsapp_conversation(
+    phone: str,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    clean = normalize_phone(phone)
+    if not clean:
+        raise HTTPException(status_code=400, detail="Invalid phone number")
+    search_suffix = clean[-10:] if len(clean) >= 10 else clean
+    c_stmt = select(Contact).where(Contact.phone.like(f"%{search_suffix}%"))
+    if current_user:
+        c_stmt = c_stmt.where(or_(Contact.assigned_user_id == current_user.id, Contact.owner_id == current_user.id))
+    c_res = await db.execute(c_stmt.limit(1))
+    contact = c_res.scalar_one_or_none()
+    is_archived = True
+    if contact:
+        c_data = dict(contact.custom_data or {})
+        is_archived = not c_data.get("is_archived", False)
+        c_data["is_archived"] = is_archived
+        contact.custom_data = c_data
+        await db.commit()
+    return {"status": "success", "is_archived": is_archived}

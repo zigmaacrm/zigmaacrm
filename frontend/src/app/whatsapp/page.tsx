@@ -50,7 +50,12 @@ import {
   Trash2,
   ImageIcon,
   Volume2,
-  UserPlus
+  UserPlus,
+  UserX,
+  Pin,
+  Archive,
+  CheckSquare,
+  Square
 } from "lucide-react";
 import Sidebar from "@/components/layout/Sidebar";
 import Header from "@/components/layout/Header";
@@ -494,6 +499,9 @@ export interface WhatsAppConversation {
   }>;
   lastMessage?: string;
   lastMessageTime?: string;
+  is_pinned?: boolean;
+  is_archived?: boolean;
+  is_blocked?: boolean;
 }
 
 const META_TEMPLATES = [
@@ -882,7 +890,12 @@ export default function WhatsAppPage() {
   const [activePhone, setActivePhone] = useState<string>("");
   const [messages, setMessages] = useState<WhatsAppMessage[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
-  const [filterTab, setFilterTab] = useState<"All" | "Unassigned" | "My Chats">("All");
+  const [filterTab, setFilterTab] = useState<"All" | "My Chats" | "Pinned" | "Archived" | "Unassigned">("All");
+  const [isSearchInChatOpen, setIsSearchInChatOpen] = useState(false);
+  const [chatSearchQuery, setChatSearchQuery] = useState("");
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [isSelectMode, setIsSelectMode] = useState(false);
+  const [selectedMsgIds, setSelectedMsgIds] = useState<Set<string>>(new Set());
   const [messageInput, setMessageInput] = useState("");
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
   const [showRightDrawer, setShowRightDrawer] = useState(true);
@@ -1342,6 +1355,9 @@ export default function WhatsAppPage() {
       isAssignedToMe: isMine,
       lastMessage: formatLastMessagePreview(raw.last_message),
       lastMessageTime: raw.last_message_time,
+      is_pinned: Boolean(raw.is_pinned),
+      is_archived: Boolean(raw.is_archived),
+      is_blocked: Boolean(raw.is_blocked),
       notes: (() => {
         if (typeof window !== "undefined") {
           try {
@@ -1643,6 +1659,9 @@ export default function WhatsAppPage() {
   // Filter conversations
   const filteredConversations = useMemo(() => {
     return conversations.filter((c) => {
+      if (filterTab === "Pinned") return Boolean(c.is_pinned);
+      if (filterTab === "Archived") return Boolean(c.is_archived);
+      if (!searchQuery.trim() && c.is_archived) return false;
       if (filterTab === "My Chats" && !c.isAssignedToMe) return false;
       if (filterTab === "Unassigned" && c.assignedRep.name !== "Unassigned") return false;
 
@@ -1658,6 +1677,114 @@ export default function WhatsAppPage() {
       return true;
     });
   }, [conversations, filterTab, searchQuery]);
+
+  // Pin / Archive / Clear / Block / Delete Handlers
+  const handleTogglePin = async (phone: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    try {
+      const res = await api.pinWhatsAppConversation(phone);
+      setConversations((prev) =>
+        prev.map((conv) =>
+          conv.phone.replace(/[^0-9]/g, "") === phone.replace(/[^0-9]/g, "")
+            ? { ...conv, is_pinned: res.is_pinned }
+            : conv
+        )
+      );
+      toast.success(res.is_pinned ? "Conversation Pinned" : "Conversation Unpinned");
+    } catch (err: any) {
+      toast.error("Error", err.message || "Failed to toggle pin");
+    }
+  };
+
+  const handleToggleArchive = async (phone: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    try {
+      const res = await api.archiveWhatsAppConversation(phone);
+      setConversations((prev) =>
+        prev.map((conv) =>
+          conv.phone.replace(/[^0-9]/g, "") === phone.replace(/[^0-9]/g, "")
+            ? { ...conv, is_archived: res.is_archived }
+            : conv
+        )
+      );
+      toast.success(res.is_archived ? "Conversation Archived" : "Conversation Unarchived");
+    } catch (err: any) {
+      toast.error("Error", err.message || "Failed to toggle archive");
+    }
+  };
+
+  const handleClearChat = async () => {
+    setShowMoreMenu(false);
+    if (!activePhone) return;
+    if (!confirm("Are you sure you want to clear all messages in this chat? This cannot be undone.")) return;
+    try {
+      await api.clearWhatsAppChat(activePhone);
+      setMessages([]);
+      toast.success("Chat Cleared", "All messages in this conversation have been deleted.");
+    } catch (err: any) {
+      toast.error("Error", err.message || "Failed to clear chat");
+    }
+  };
+
+  const handleToggleBlockContact = async () => {
+    setShowMoreMenu(false);
+    if (!activePhone || !activeChat) return;
+    const isCurrentlyBlocked = Boolean(activeChat.is_blocked);
+    try {
+      if (isCurrentlyBlocked) {
+        await api.unblockWhatsAppContact(activePhone);
+        toast.success("Contact Unblocked", `${activeChat.contactName} has been unblocked.`);
+      } else {
+        await api.blockWhatsAppContact(activePhone);
+        toast.success("Contact Blocked", `${activeChat.contactName} has been blocked.`);
+      }
+      setConversations((prev) =>
+        prev.map((conv) =>
+          conv.phone.replace(/[^0-9]/g, "") === activePhone.replace(/[^0-9]/g, "")
+            ? { ...conv, is_blocked: !isCurrentlyBlocked }
+            : conv
+        )
+      );
+    } catch (err: any) {
+      toast.error("Error", err.message || "Failed to update block status");
+    }
+  };
+
+  const handleDeleteContact = async () => {
+    setShowMoreMenu(false);
+    if (!activeChat || !activeChat.contact_id) {
+      toast.error("Error", "No linked CRM contact record found to delete.");
+      return;
+    }
+    if (!confirm(`Are you sure you want to delete ${activeChat.contactName} from your CRM contacts?`)) return;
+    try {
+      await api.deleteContact(activeChat.contact_id);
+      toast.success("Contact Deleted", `${activeChat.contactName} removed from CRM.`);
+      setConversations((prev) => prev.filter((conv) => conv.phone.replace(/[^0-9]/g, "") !== activePhone.replace(/[^0-9]/g, "")));
+      setActivePhone("");
+      setMessages([]);
+    } catch (err: any) {
+      toast.error("Error", err.message || "Failed to delete contact");
+    }
+  };
+
+  const handleDeleteSelectedMessages = async () => {
+    if (selectedMsgIds.size === 0) return;
+    if (!confirm(`Delete ${selectedMsgIds.size} selected message(s)?`)) return;
+    for (const msgId of Array.from(selectedMsgIds)) {
+      try {
+        await api.deleteWhatsAppMessage({
+          phoneNumber: activePhone,
+          messageId: msgId,
+          deleteForEveryone: false
+        });
+      } catch (_) {}
+    }
+    setMessages((prev) => prev.filter((m) => !selectedMsgIds.has(m.id)));
+    setSelectedMsgIds(new Set());
+    setIsSelectMode(false);
+    toast.success("Deleted", "Selected messages have been removed.");
+  };
 
   // Select conversation
   const handleSelectChat = async (phone: string) => {
@@ -2184,13 +2311,17 @@ export default function WhatsAppPage() {
                 "flex items-center gap-1 p-1 rounded-xl border transition-colors",
                 isDark ? "bg-[#131B2E]/60 border-[#1E293B]" : "bg-slate-100/90 border-slate-200/80"
               )}>
-                {(["All", "My Chats", "Unassigned"] as const).map((tab) => {
+                {(["All", "My Chats", "Pinned", "Archived", "Unassigned"] as const).map((tab) => {
                   const count =
                     tab === "All"
-                      ? conversations.length
+                      ? conversations.filter(c => !c.is_archived).length
                       : tab === "My Chats"
-                      ? conversations.filter((c) => c.isAssignedToMe).length
-                      : conversations.filter((c) => c.assignedRep.name === "Unassigned").length;
+                      ? conversations.filter(c => c.isAssignedToMe && !c.is_archived).length
+                      : tab === "Pinned"
+                      ? conversations.filter(c => c.is_pinned).length
+                      : tab === "Archived"
+                      ? conversations.filter(c => c.is_archived).length
+                      : conversations.filter(c => c.assignedRep.name === "Unassigned" && !c.is_archived).length;
 
                   return (
                     <button
@@ -2358,11 +2489,34 @@ export default function WhatsAppPage() {
                           </div>
 
                           <div className="flex items-center gap-1 shrink-0">
+                            {conv.is_pinned && (
+                              <span title="Pinned conversation">
+                                <Pin className="w-3 h-3 text-amber-500 fill-amber-500 shrink-0" />
+                              </span>
+                            )}
                             {conv.unreadCount > 0 && !isSelected && (
                               <span className="min-w-4.5 h-4.5 px-1.5 rounded-full bg-emerald-500 text-white text-[10px] font-bold flex items-center justify-center shrink-0 shadow-2xs">
                                 {conv.unreadCount}
                               </span>
                             )}
+                            <div className="hidden group-hover:flex items-center gap-0.5 bg-slate-200/80 dark:bg-slate-800/80 rounded-md p-0.5 ml-1">
+                              <button
+                                type="button"
+                                onClick={(e) => handleTogglePin(conv.phone, e)}
+                                className="p-1 hover:text-amber-500 transition-colors cursor-pointer"
+                                title={conv.is_pinned ? "Unpin chat" : "Pin chat"}
+                              >
+                                <Pin className={cn("w-3 h-3", conv.is_pinned && "fill-amber-500 text-amber-500")} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => handleToggleArchive(conv.phone, e)}
+                                className="p-1 hover:text-indigo-500 transition-colors cursor-pointer"
+                                title={conv.is_archived ? "Unarchive chat" : "Archive chat"}
+                              >
+                                <Archive className="w-3 h-3" />
+                              </button>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -2427,8 +2581,8 @@ export default function WhatsAppPage() {
                     </div>
                   </div>
 
-                  {/* Header Actions - ONLY Send Quote button */}
-                  <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                  {/* Header Actions: Send Quote + Search in Chat + Three Dots Menu */}
+                  <div className="relative flex items-center gap-1.5 sm:gap-2 shrink-0">
                     <button
                       onClick={handleOpenQuotePicker}
                       className="inline-flex items-center justify-center gap-1.5 h-9 px-3.5 sm:px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold whitespace-nowrap shadow-sm shadow-emerald-600/25 transition-all cursor-pointer hover:scale-102 active:scale-98 shrink-0"
@@ -2437,8 +2591,228 @@ export default function WhatsAppPage() {
                       <FileText className="w-4 h-4 shrink-0" />
                       <span>Send Quote</span>
                     </button>
+
+                    {/* Search Icon Button */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsSearchInChatOpen(!isSearchInChatOpen);
+                        if (isSearchInChatOpen) setChatSearchQuery("");
+                      }}
+                      className={cn(
+                        "w-9 h-9 rounded-xl flex items-center justify-center transition-all cursor-pointer",
+                        isSearchInChatOpen
+                          ? "bg-emerald-600 text-white shadow-xs"
+                          : isDark
+                          ? "bg-white/5 hover:bg-white/10 text-slate-300"
+                          : "bg-slate-100 hover:bg-slate-200 text-slate-700"
+                      )}
+                      title="Search messages in this chat"
+                    >
+                      <Search className="w-4 h-4" />
+                    </button>
+
+                    {/* Three-dots Menu Button */}
+                    <button
+                      type="button"
+                      onClick={() => setShowMoreMenu(!showMoreMenu)}
+                      className={cn(
+                        "w-9 h-9 rounded-xl flex items-center justify-center transition-all cursor-pointer",
+                        showMoreMenu
+                          ? "bg-emerald-600 text-white shadow-xs"
+                          : isDark
+                          ? "bg-white/5 hover:bg-white/10 text-slate-300"
+                          : "bg-slate-100 hover:bg-slate-200 text-slate-700"
+                      )}
+                      title="More options"
+                    >
+                      <MoreVertical className="w-4 h-4" />
+                    </button>
+
+                    {/* Dropdown Menu */}
+                    {showMoreMenu && (
+                      <div
+                        className={cn(
+                          "absolute right-0 top-11 w-52 rounded-2xl shadow-xl border py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100",
+                          isDark ? "bg-[#1E293B] border-white/10 text-slate-200" : "bg-white border-slate-200 text-slate-800"
+                        )}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowMoreMenu(false);
+                            setShowRightDrawer(true);
+                          }}
+                          className={cn(
+                            "w-full px-3.5 py-2 text-xs flex items-center gap-2.5 transition-colors cursor-pointer text-left",
+                            isDark ? "hover:bg-white/5" : "hover:bg-slate-50"
+                          )}
+                        >
+                          <Info className="w-4 h-4 text-emerald-500" />
+                          <span>Contact info</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowMoreMenu(false);
+                            setIsSelectMode(!isSelectMode);
+                            setSelectedMsgIds(new Set());
+                          }}
+                          className={cn(
+                            "w-full px-3.5 py-2 text-xs flex items-center gap-2.5 transition-colors cursor-pointer text-left",
+                            isDark ? "hover:bg-white/5" : "hover:bg-slate-50"
+                          )}
+                        >
+                          <CheckSquare className="w-4 h-4 text-blue-500" />
+                          <span>{isSelectMode ? "Exit select mode" : "Select messages"}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowMoreMenu(false);
+                            if (activePhone) handleTogglePin(activePhone);
+                          }}
+                          className={cn(
+                            "w-full px-3.5 py-2 text-xs flex items-center gap-2.5 transition-colors cursor-pointer text-left",
+                            isDark ? "hover:bg-white/5" : "hover:bg-slate-50"
+                          )}
+                        >
+                          <Pin className="w-4 h-4 text-amber-500" />
+                          <span>{activeChat?.is_pinned ? "Unpin chat" : "Pin chat"}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowMoreMenu(false);
+                            if (activePhone) handleToggleArchive(activePhone);
+                          }}
+                          className={cn(
+                            "w-full px-3.5 py-2 text-xs flex items-center gap-2.5 transition-colors cursor-pointer text-left",
+                            isDark ? "hover:bg-white/5" : "hover:bg-slate-50"
+                          )}
+                        >
+                          <Archive className="w-4 h-4 text-indigo-500" />
+                          <span>{activeChat?.is_archived ? "Unarchive chat" : "Archive chat"}</span>
+                        </button>
+
+                        <div className={cn("my-1 border-t", isDark ? "border-white/10" : "border-slate-100")} />
+
+                        <button
+                          type="button"
+                          onClick={handleClearChat}
+                          className={cn(
+                            "w-full px-3.5 py-2 text-xs flex items-center gap-2.5 transition-colors cursor-pointer text-left text-amber-600 dark:text-amber-400",
+                            isDark ? "hover:bg-white/5" : "hover:bg-slate-50"
+                          )}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          <span>Clear chat</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={handleToggleBlockContact}
+                          className={cn(
+                            "w-full px-3.5 py-2 text-xs flex items-center gap-2.5 transition-colors cursor-pointer text-left",
+                            activeChat?.is_blocked ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400",
+                            isDark ? "hover:bg-white/5" : "hover:bg-slate-50"
+                          )}
+                        >
+                          <Ban className="w-4 h-4" />
+                          <span>{activeChat?.is_blocked ? "Unblock contact" : "Block contact"}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={handleDeleteContact}
+                          className={cn(
+                            "w-full px-3.5 py-2 text-xs flex items-center gap-2.5 transition-colors cursor-pointer text-left text-rose-600 dark:text-rose-400 font-semibold",
+                            isDark ? "hover:bg-rose-500/10" : "hover:bg-rose-50"
+                          )}
+                        >
+                          <UserX className="w-4 h-4" />
+                          <span>Delete contact</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
+
+                {/* Search In Chat Bar */}
+                {isSearchInChatOpen && (
+                  <div className={cn(
+                    "px-4 py-2 border-b flex items-center gap-2 transition-all",
+                    isDark ? "bg-[#131B2E]/90 border-white/5" : "bg-slate-50 border-slate-200"
+                  )}>
+                    <Search className="w-4 h-4 text-slate-400 shrink-0" />
+                    <input
+                      type="text"
+                      value={chatSearchQuery}
+                      onChange={(e) => setChatSearchQuery(e.target.value)}
+                      placeholder="Search messages in this conversation..."
+                      className={cn(
+                        "flex-1 bg-transparent text-xs outline-none",
+                        isDark ? "text-white placeholder:text-slate-500" : "text-slate-900 placeholder:text-slate-400"
+                      )}
+                      autoFocus
+                    />
+                    {chatSearchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setChatSearchQuery("")}
+                        className="text-xs text-slate-400 hover:text-slate-600 cursor-pointer"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsSearchInChatOpen(false);
+                        setChatSearchQuery("");
+                      }}
+                      className="px-2 py-1 text-[11px] font-semibold text-slate-500 hover:text-slate-700 cursor-pointer"
+                    >
+                      Done
+                    </button>
+                  </div>
+                )}
+
+                {/* Select Mode Action Bar */}
+                {isSelectMode && (
+                  <div className={cn(
+                    "px-4 py-2 border-b flex items-center justify-between transition-all",
+                    isDark ? "bg-emerald-950/60 border-emerald-800/40 text-white" : "bg-emerald-50 border-emerald-200 text-emerald-900"
+                  )}>
+                    <div className="flex items-center gap-2 text-xs font-semibold">
+                      <span>{selectedMsgIds.size} message(s) selected</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleDeleteSelectedMessages}
+                        disabled={selectedMsgIds.size === 0}
+                        className="px-3 py-1 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete Selected</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsSelectMode(false);
+                          setSelectedMsgIds(new Set());
+                        }}
+                        className="px-2.5 py-1 text-xs text-slate-400 hover:text-slate-200 font-semibold cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Message Stream Area */}
                 <div
@@ -2483,7 +2857,10 @@ export default function WhatsAppPage() {
                       </p>
                     </div>
                   ) : (
-                    messages.map((msg, idx) => {
+                    (chatSearchQuery.trim()
+                      ? messages.filter((m) => (m.text || "").toLowerCase().includes(chatSearchQuery.toLowerCase().trim()))
+                      : messages
+                    ).map((msg, idx) => {
                       const isNearBottom = idx >= Math.max(0, messages.length - 6);
                       const isOutbound = msg.sender === "outbound";
                       const cleanText = cleanDisplayCaption(msg.text, msg.fileName);
@@ -2495,6 +2872,28 @@ export default function WhatsAppPage() {
                       const isContactCard = msg.messageType === "contact" || msg.text === "[Contact Card]" || (typeof msg.text === "string" && (msg.text.startsWith('{"type":"contact"') || msg.text.includes("BEGIN:VCARD")));
 
                       return (
+                        <div key={msg.id} className="flex items-center gap-2">
+                          {isSelectMode && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedMsgIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(msg.id)) next.delete(msg.id);
+                                  else next.add(msg.id);
+                                  return next;
+                                });
+                              }}
+                              className="p-1 shrink-0 text-slate-400 hover:text-emerald-500 cursor-pointer self-center"
+                            >
+                              {selectedMsgIds.has(msg.id) ? (
+                                <CheckSquare className="w-5 h-5 text-emerald-500 fill-emerald-500/20" />
+                              ) : (
+                                <Square className="w-5 h-5" />
+                              )}
+                            </button>
+                          )}
+                          <div className="flex-1 min-w-0">
                         <MessageBubbleContainer
                           key={msg.id}
                           msg={msg}
@@ -2885,6 +3284,8 @@ export default function WhatsAppPage() {
                               })()
                             )}
                         </MessageBubbleContainer>
+                          </div>
+                        </div>
                       );
                     })
                   )}
@@ -3022,7 +3423,25 @@ export default function WhatsAppPage() {
                   </div>
                 )}
 
-                {/* Message Input Dock (Fixed at bottom) */}
+                {/* Message Input Dock or Blocked Banner */}
+                {activeChat?.is_blocked ? (
+                  <div className={cn(
+                    "p-4 border-t text-center flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0",
+                    isDark ? "border-[#1E293B] bg-[#090A0F] text-slate-300" : "border-slate-200 bg-slate-50 text-slate-700"
+                  )}>
+                    <div className="flex items-center gap-2 text-xs font-semibold text-rose-500">
+                      <Ban className="w-4 h-4 shrink-0" />
+                      <span>This contact is blocked. You cannot send or receive messages with this contact.</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleToggleBlockContact}
+                      className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs shrink-0"
+                    >
+                      Unblock Contact
+                    </button>
+                  </div>
+                ) : (
                 <div className={cn(
                   "p-3.5 sm:p-4 border-t backdrop-blur-md shrink-0 transition-colors",
                   isDark ? "border-[#1E293B] bg-[#090A0F]/90" : "border-slate-200 bg-white/95"
@@ -3247,6 +3666,7 @@ export default function WhatsAppPage() {
                     </div>
                   )}
                 </div>
+                )}
               </>
             ) : qrStatus !== "CONNECTED" ? (
               <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-4">

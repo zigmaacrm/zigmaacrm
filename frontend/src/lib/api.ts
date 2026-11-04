@@ -3656,6 +3656,66 @@ export const zigmaaApi = {
     return getMediaUrl(mediaPath);
   },
 
+  async clearWhatsAppChat(phone: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/whatsapp/conversations/${encodeURIComponent(phone)}/clear`, {
+      method: "DELETE",
+      headers: getAuthHeaders()
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to clear chat");
+    }
+    return await res.json();
+  },
+
+  async blockWhatsAppContact(phone: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/whatsapp/conversations/${encodeURIComponent(phone)}/block`, {
+      method: "POST",
+      headers: getAuthHeaders()
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to block contact");
+    }
+    return await res.json();
+  },
+
+  async unblockWhatsAppContact(phone: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/whatsapp/conversations/${encodeURIComponent(phone)}/unblock`, {
+      method: "POST",
+      headers: getAuthHeaders()
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to unblock contact");
+    }
+    return await res.json();
+  },
+
+  async pinWhatsAppConversation(phone: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/whatsapp/conversations/${encodeURIComponent(phone)}/pin`, {
+      method: "POST",
+      headers: getAuthHeaders()
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to toggle pin");
+    }
+    return await res.json();
+  },
+
+  async archiveWhatsAppConversation(phone: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/whatsapp/conversations/${encodeURIComponent(phone)}/archive`, {
+      method: "POST",
+      headers: getAuthHeaders()
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to toggle archive");
+    }
+    return await res.json();
+  },
+
 };
 
 export default zigmaaApi;

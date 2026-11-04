@@ -616,7 +616,30 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
     // History sync
     session.sock.ev.on('messaging-history.set', async ({ contacts, chats, messages }) => {
       console.log(`[WhatsApp Gateway:${session.id}] Messaging history event: ${chats?.length || 0} chats, ${messages?.length || 0} messages.`);
+      
+      // 1. Sync contacts from history
+      if (Array.isArray(contacts)) {
+        for (const c of contacts) {
+          if (!c.id || c.id.endsWith('@g.us') || c.id.includes('@broadcast') || c.id.includes('@newsletter')) continue;
+          const clean = resolvePhoneFromJid(c.id, session);
+          if (clean && clean.length >= 7) {
+            const rawName = c.name || c.notify || c.verifiedName || null;
+            session.pendingContacts.set(clean, {
+              phone: clean,
+              name: rawName,
+              jid: c.id,
+              avatar_url: null
+            });
+          }
+        }
+        if (session.pendingContacts.size > 0) {
+          scheduleContactSync(session);
+        }
+      }
+
+      // 2. Extract messages from history
       const validMessages = [];
+      const coveredPhones = new Set();
       if (Array.isArray(messages)) {
         for (const msg of messages) {
           const remoteJid = msg.key?.remoteJid || '';
@@ -648,6 +671,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
             ? msg.messageTimestamp
             : (msg.messageTimestamp?.low || Math.floor(Date.now() / 1000));
 
+          coveredPhones.add(cleanPhone);
           validMessages.push({
             phone_number: cleanPhone,
             contact_name: pushName,
@@ -660,6 +684,36 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
             file_name: mediaPayload?.file_name || null,
             caption: mediaPayload?.caption || null,
             is_voice_note: Boolean(mediaPayload?.is_voice_note)
+          });
+        }
+      }
+
+      // 3. Extract top 20 recent active direct chats if not already covered
+      if (Array.isArray(chats)) {
+        const directChats = chats
+          .filter(c => c.id && !c.id.endsWith('@g.us') && !c.id.includes('@broadcast') && !c.id.includes('@newsletter'))
+          .sort((a, b) => {
+            const tsA = typeof a.conversationTimestamp === 'number' ? a.conversationTimestamp : (a.conversationTimestamp?.low || 0);
+            const tsB = typeof b.conversationTimestamp === 'number' ? b.conversationTimestamp : (b.conversationTimestamp?.low || 0);
+            return tsB - tsA;
+          });
+
+        for (const chat of directChats.slice(0, 20)) {
+          const cleanPhone = resolvePhoneFromJid(chat.id, session);
+          if (!cleanPhone || cleanPhone.length < 7 || coveredPhones.has(cleanPhone)) continue;
+          coveredPhones.add(cleanPhone);
+
+          const pushName = chat.name || session.pendingContacts.get(cleanPhone)?.name || null;
+          const ts = typeof chat.conversationTimestamp === 'number' ? chat.conversationTimestamp : (chat.conversationTimestamp?.low || Math.floor(Date.now() / 1000));
+          validMessages.push({
+            phone_number: cleanPhone,
+            contact_name: pushName,
+            message_body: `💬 Active chat with ${pushName || cleanPhone}`,
+            meta_message_id: `wamid.init_${cleanPhone}_${session.id}`,
+            timestamp: ts,
+            direction: 'INBOUND',
+            message_type: 'text',
+            is_voice_note: false
           });
         }
       }
@@ -682,6 +736,48 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
             console.error(`[WhatsApp Gateway:${session.id}] Sync history batch failed:`, err.message);
           }
         }
+      }
+    });
+
+    // Chats upsert (Captures 20 active conversations on connection)
+    session.sock.ev.on('chats.upsert', async (newChats) => {
+      if (!Array.isArray(newChats) || newChats.length === 0) return;
+      const directChats = newChats
+        .filter(c => c.id && !c.id.endsWith('@g.us') && !c.id.includes('@broadcast') && !c.id.includes('@newsletter'))
+        .sort((a, b) => {
+          const tsA = typeof a.conversationTimestamp === 'number' ? a.conversationTimestamp : (a.conversationTimestamp?.low || 0);
+          const tsB = typeof b.conversationTimestamp === 'number' ? b.conversationTimestamp : (b.conversationTimestamp?.low || 0);
+          return tsB - tsA;
+        });
+
+      const recentMessages = [];
+      for (const chat of directChats.slice(0, 20)) {
+        const cleanPhone = resolvePhoneFromJid(chat.id, session);
+        if (!cleanPhone || cleanPhone.length < 7) continue;
+        const pushName = chat.name || session.pendingContacts.get(cleanPhone)?.name || null;
+        const ts = typeof chat.conversationTimestamp === 'number' ? chat.conversationTimestamp : (chat.conversationTimestamp?.low || Math.floor(Date.now() / 1000));
+        recentMessages.push({
+          phone_number: cleanPhone,
+          contact_name: pushName,
+          message_body: `💬 Active chat with ${pushName || cleanPhone}`,
+          meta_message_id: `wamid.init_${cleanPhone}_${session.id}`,
+          timestamp: ts,
+          direction: 'INBOUND',
+          message_type: 'text',
+          is_voice_note: false
+        });
+      }
+
+      if (recentMessages.length > 0) {
+        fetch(FASTAPI_SYNC_HISTORY_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messages: recentMessages,
+            assigned_user_id: session.id !== 'default' ? session.id : null,
+            session_id: session.id
+          })
+        }).catch(() => {});
       }
     });
 
