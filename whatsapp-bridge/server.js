@@ -650,7 +650,9 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
 
         const rawId = session.sock?.user?.id || '';
         const phone = rawId.split(':')[0] || rawId.split('@')[0];
+        const cleanOwnerPhone = phone ? phone.replace(/[^0-9]/g, '') : '';
         session.phone = phone ? `+${phone}` : null;
+        session.ownerPhone = cleanOwnerPhone || null;
         session.name = session.sock?.user?.name || 'Zigmaa Linked Account';
 
         try {

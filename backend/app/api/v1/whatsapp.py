@@ -979,6 +979,34 @@ async def bulk_sync_whatsapp_contacts(
             )
             db.add(lead)
 
+        # Create a placeholder WhatsAppMessage so this contact appears in the conversations list.
+        # The conversations endpoint builds its list from WhatsAppMessage records.
+        clean_session = normalize_phone(payload.session_id) if payload.session_id else None
+        if clean_session:
+            existing_msg = await db.execute(
+                select(WhatsAppMessage.id).where(
+                    WhatsAppMessage.phone_number.like(f"%{search_suffix}%"),
+                    or_(
+                        WhatsAppMessage.session_id == clean_session,
+                        WhatsAppMessage.business_phone_number_id == clean_session
+                    )
+                ).limit(1)
+            )
+            if not existing_msg.scalar_one_or_none():
+                placeholder_msg = WhatsAppMessage(
+                    organization_id=default_org_id,
+                    contact_id=contact.id if contact else None,
+                    assigned_user_id=effective_user_id,
+                    business_phone_number_id=clean_session,
+                    session_id=clean_session,
+                    phone_number=formatted_phone,
+                    direction="INBOUND",
+                    message_body="Contact synced from phone",
+                    message_type="text",
+                    status="READ",
+                )
+                db.add(placeholder_msg)
+
     await db.commit()
     logger.info(f"[WHATSAPP BULK-SYNC] Upserted {synced_count} direct contacts into CRM")
     return {"status": "success", "synced": synced_count}
