@@ -421,18 +421,25 @@ function scheduleContactSync() {
   }, 1500);
 }
 
-// Auto-heal stale or corrupted session ratchet files to guarantee zero Bad MAC errors
-function clearCorruptedSessions() {
-  if (!fs.existsSync(AUTH_DIR)) return;
+// Auto-heal only specific corrupted session ratchet files for a specific contact/JID
+function healSessionForJid(jid) {
+  if (!jid || !fs.existsSync(AUTH_DIR)) return;
   try {
-    const files = fs.readdirSync(AUTH_DIR).filter(f => f.startsWith('session-'));
+    const clean = String(jid).split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+    if (!clean) return;
+    const files = fs.readdirSync(AUTH_DIR).filter(f => f.startsWith('session-') && f.includes(clean));
     if (files.length > 0) {
-      console.log(`[WhatsApp Gateway] Purged ${files.length} stale session ratchets to prevent Bad MAC.`);
+      console.log(`[WhatsApp Gateway Auto-Heal] Purged ${files.length} corrupted session ratchets for ${clean}.`);
       for (const f of files) {
         try { fs.unlinkSync(path.join(AUTH_DIR, f)); } catch (_) {}
       }
+      if (sock && typeof sock.uploadPreKeys === 'function') {
+        sock.uploadPreKeys(20).catch(() => {});
+      }
     }
-  } catch (_) {}
+  } catch (err) {
+    console.warn('[WhatsApp Gateway Auto-Heal Error]:', err.message);
+  }
 }
 
 async function initWhatsApp(forceClean = false) {
@@ -461,7 +468,6 @@ async function initWhatsApp(forceClean = false) {
     if (!fs.existsSync(AUTH_DIR)) {
       fs.mkdirSync(AUTH_DIR, { recursive: true });
     }
-    clearCorruptedSessions();
     loadLidMappings();
 
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
@@ -792,6 +798,9 @@ async function initWhatsApp(forceClean = false) {
           if (!body && !mediaInfo) {
             if (msg.messageStubType) {
               console.log(`[WhatsApp Decrypt Waiting] Stub type: ${msg.messageStubType}, Phone: ${phone}, Params:`, msg.messageStubParameters || []);
+              if (msg.messageStubType === 2 || String(msg.messageStubParameters?.[0] || '').includes('No matching sessions')) {
+                healSessionForJid(remoteJid);
+              }
             } else {
               console.log(`[WhatsApp Notice] Empty body for ${phone}, message keys:`, Object.keys(msg.message || {}));
             }
@@ -1263,11 +1272,20 @@ app.post('/api/whatsapp/delete-message', async (req, res) => {
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`========================================================`);
   console.log(`Zigmaa WhatsApp QR Gateway running on http://localhost:${PORT}`);
   console.log(`Webhook destination: ${FASTAPI_WEBHOOK_URL}`);
   console.log(`Bulk sync destination: ${FASTAPI_BULK_SYNC_URL}`);
   console.log(`========================================================`);
   initWhatsApp(false);
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`[WhatsApp Gateway Fatal] Port ${PORT} is already in use by another instance! Exiting to prevent conflict.`);
+    process.exit(1);
+  } else {
+    console.error('[WhatsApp Gateway Server Error]:', err);
+  }
 });

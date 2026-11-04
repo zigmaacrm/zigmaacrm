@@ -559,11 +559,18 @@ async def receive_whatsapp_qr_inbound(
         await db.flush()
 
     msg_id = payload.meta_message_id or f"wamid.qr_{uuid.uuid4().hex[:16]}"
-    # Deduplicate
+    # Deduplicate or update placeholder if retry decrypted it
     existing_chk = await db.execute(
         select(WhatsAppMessage).where(WhatsAppMessage.meta_message_id == msg_id).limit(1)
     )
-    if existing_chk.scalar_one_or_none():
+    existing_record = existing_chk.scalar_one_or_none()
+    if existing_record:
+        if payload.message_body and payload.message_body not in ["[Attachment Received]", "[Empty Message]"]:
+            if existing_record.message_body in ["[Attachment Received]", "[Empty Message]"] or not existing_record.message_body:
+                existing_record.message_body = payload.message_body
+                if payload.media_url:
+                    existing_record.media_url = payload.media_url
+                await db.commit()
         return {"status": "success", "skipped": "duplicate"}
 
     msg_direction = (payload.direction or "INBOUND").upper()

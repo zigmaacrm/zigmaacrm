@@ -195,7 +195,7 @@ async def send_whatsapp_message(
     # 1. Attempt dispatch via Baileys QR Gateway if connected
     gateway_url = get_gateway_url()
     targets = [gateway_url]
-    if gateway_url != "https://zigmaa-whatsapp-bridge.onrender.com" and (os.getenv("RENDER") or os.getenv("ENVIRONMENT") == "production"):
+    if gateway_url != "https://zigmaa-whatsapp-bridge.onrender.com":
         targets.append("https://zigmaa-whatsapp-bridge.onrender.com")
 
     dispatched_via_qr = False
@@ -836,12 +836,12 @@ async def get_whatsapp_qr_status():
 
     gateway_url = get_gateway_url()
     targets = [gateway_url]
-    if gateway_url != "https://zigmaa-whatsapp-bridge.onrender.com" and (os.getenv("RENDER") or os.getenv("ENVIRONMENT") == "production"):
+    if gateway_url != "https://zigmaa-whatsapp-bridge.onrender.com":
         targets.append("https://zigmaa-whatsapp-bridge.onrender.com")
 
     for target in targets:
         try:
-            async with httpx.AsyncClient(timeout=8.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
+            async with httpx.AsyncClient(timeout=15.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
                 resp = await client.get(f"{target}/status")
                 if resp.status_code == 200:
                     data = resp.json()
@@ -852,8 +852,8 @@ async def get_whatsapp_qr_status():
         except Exception as e:
             logger.debug(f"WhatsApp QR Gateway at {target} not reachable: {e}")
 
-    # Fallback to slightly older cache (up to 15s) if bridge is temporarily slow, avoiding false offline states
-    if _qr_status_cache["data"] and (now - _qr_status_cache["ts"] < 15.0):
+    # Fallback to slightly older cache (up to 15s) ONLY if we had a successful online status
+    if _qr_status_cache["data"] and _qr_status_cache["data"].get("gateway_online") and (now - _qr_status_cache["ts"] < 15.0):
         return _qr_status_cache["data"]
 
     return {
@@ -874,13 +874,13 @@ async def refresh_whatsapp_qr():
 
     gateway_url = get_gateway_url()
     targets = [gateway_url]
-    if gateway_url != "https://zigmaa-whatsapp-bridge.onrender.com" and (os.getenv("RENDER") or os.getenv("ENVIRONMENT") == "production"):
+    if gateway_url != "https://zigmaa-whatsapp-bridge.onrender.com":
         targets.append("https://zigmaa-whatsapp-bridge.onrender.com")
 
     last_err = None
     for target in targets:
         try:
-            async with httpx.AsyncClient(timeout=15.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
+            async with httpx.AsyncClient(timeout=20.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
                 resp = await client.post(f"{target}/refresh-qr")
                 return resp.json()
         except Exception as e:
@@ -897,7 +897,7 @@ async def disconnect_whatsapp_qr():
     _qr_status_cache["ts"] = 0  # Invalidate cache immediately
     gateway_url = get_gateway_url()
     targets = [gateway_url]
-    if gateway_url != "https://zigmaa-whatsapp-bridge.onrender.com" and (os.getenv("RENDER") or os.getenv("ENVIRONMENT") == "production"):
+    if gateway_url != "https://zigmaa-whatsapp-bridge.onrender.com":
         targets.append("https://zigmaa-whatsapp-bridge.onrender.com")
 
     last_err = None
