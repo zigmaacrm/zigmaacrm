@@ -514,11 +514,13 @@ async def get_whatsapp_conversations(
     """
     stmt = select(WhatsAppMessage)
 
+    effective_limit = int(limit) if isinstance(limit, (int, str)) and str(limit).isdigit() else 25
+
     # Strict User & Rep Scoping Logic:
     # 1. If an explicit filter is requested by an admin:
-    if assigned_user_id and assigned_user_id.upper() != "ALL":
+    if isinstance(assigned_user_id, str) and assigned_user_id.upper() != "ALL":
         stmt = stmt.where(WhatsAppMessage.assigned_user_id == assigned_user_id)
-    elif assigned_user_id and assigned_user_id.upper() == "ALL":
+    elif isinstance(assigned_user_id, str) and assigned_user_id.upper() == "ALL":
         # Admin explicitly asked to view all chats across the whole organization
         if not (current_user and (current_user.role or "").lower() in ["super_admin", "admin", "owner"]):
             if current_user:
@@ -568,7 +570,7 @@ async def get_whatsapp_conversations(
                 "is_connected": False
             }
 
-    stmt = stmt.order_by(desc(WhatsAppMessage.created_at)).limit(limit * 5)
+    stmt = stmt.order_by(desc(WhatsAppMessage.created_at)).limit(effective_limit * 5)
     res = await db.execute(stmt)
     all_msgs = res.scalars().all()
 
@@ -592,27 +594,48 @@ async def get_whatsapp_conversations(
             if m.contact_id:
                 unique_contact_ids.add(m.contact_id)
 
+        phone_patterns = []
+        for p in unique_phones:
+            clean = normalize_phone(p)
+            if len(clean) >= 10:
+                phone_patterns.append(clean[-10:])
+        phone_patterns = list(set(phone_patterns))
+
         contact_conditions = []
         if unique_contact_ids:
             contact_conditions.append(Contact.id.in_(list(unique_contact_ids)))
         if unique_phones:
             contact_conditions.append(Contact.phone.in_(list(unique_phones)))
+        for pat in phone_patterns:
+            contact_conditions.append(Contact.phone.like(f"%{pat}%"))
 
         contacts_list = []
         if contact_conditions:
             c_query = select(Contact).where(or_(*contact_conditions))
-            if current_user:
-                c_query = c_query.where(
-                    or_(
-                        Contact.assigned_user_id == current_user.id,
-                        Contact.owner_id == current_user.id
-                    )
-                )
-            c_res = await db.execute(c_query.limit(limit * 2))
+            c_res = await db.execute(c_query.limit(effective_limit * 3))
             contacts_list = c_res.scalars().all()
 
-        contacts_by_id = {c.id: c for c in contacts_list}
-        contacts_by_phone = {normalize_phone(c.phone): c for c in contacts_list if c.phone}
+        sorted_contacts = sorted(
+            contacts_list,
+            key=lambda c: (
+                1 if current_user and c.owner_id == current_user.id else
+                (0.5 if current_user and c.organization_id == getattr(current_user, "organization_id", None) else 0)
+            ),
+            reverse=True
+        )
+        contacts_by_id = {}
+        contacts_by_phone = {}
+        for c in sorted_contacts:
+            if c.id not in contacts_by_id:
+                contacts_by_id[c.id] = c
+            clean_cp = normalize_phone(c.phone)
+            if clean_cp:
+                if clean_cp not in contacts_by_phone:
+                    contacts_by_phone[clean_cp] = c
+                if len(clean_cp) >= 10:
+                    suffix_10 = clean_cp[-10:]
+                    if suffix_10 not in contacts_by_phone:
+                        contacts_by_phone[suffix_10] = c
 
         # Fetch users for assigned rep metadata
         rep_ids = {m.assigned_user_id for m in all_msgs if m.assigned_user_id}
@@ -637,18 +660,16 @@ async def get_whatsapp_conversations(
                 continue
             if not is_valid_mobile_phone(m.phone_number):
                 continue
+            if m.message_body and m.message_body.startswith("💬 Active chat with"):
+                continue
 
             if m.phone_number not in conv_map:
                 contact = contacts_by_id.get(m.contact_id)
-                if not contact:
-                    clean_m = normalize_phone(m.phone_number)
+                clean_m = normalize_phone(m.phone_number)
+                if not contact and clean_m:
                     contact = contacts_by_phone.get(clean_m)
-                    if not contact and len(clean_m) >= 10:
-                        suffix = clean_m[-10:]
-                        for cp, c_obj in contacts_by_phone.items():
-                            if cp.endswith(suffix):
-                                contact = c_obj
-                                break
+                if not contact and len(clean_m) >= 10:
+                    contact = contacts_by_phone.get(clean_m[-10:])
 
                 prof_name = None
                 avatar_url = None
@@ -666,8 +687,6 @@ async def get_whatsapp_conversations(
                     contact_name = contact.full_name.strip()
                 elif prof_name and str(prof_name).strip() and not is_generic_or_placeholder_name(str(prof_name), m.phone_number):
                     contact_name = str(prof_name).strip()
-                elif m.contact_name and not is_generic_or_placeholder_name(m.contact_name, m.phone_number):
-                    contact_name = m.contact_name.strip()
                 else:
                     contact_name = format_display_phone(m.phone_number)
 
@@ -746,12 +765,11 @@ async def get_whatsapp_conversations(
         contact_q = contact_q.where(
             or_(
                 Contact.assigned_user_id == current_user.id,
-                Contact.owner_id == current_user.id
+                Contact.owner_id == current_user.id,
+                Contact.organization_id == getattr(current_user, "organization_id", None)
             )
         )
-        if getattr(current_user, "organization_id", None):
-            contact_q = contact_q.where(Contact.organization_id == current_user.organization_id)
-    c_res = await db.execute(contact_q.order_by(desc(Contact.created_at)).limit(limit * 2))
+    c_res = await db.execute(contact_q.order_by(desc(Contact.created_at)).limit(effective_limit * 2))
     synced_contacts = c_res.scalars().all()
 
     for sc in synced_contacts:
@@ -1184,7 +1202,9 @@ async def sync_whatsapp_chat_history(
     synced_count = 0
     for item in payload.messages:
         clean_phone = normalize_phone(item.phone_number)
-        if not clean_phone or len(clean_phone) < 7:
+        if not is_valid_mobile_phone(clean_phone):
+            continue
+        if item.message_body and item.message_body.startswith("💬 Active chat with"):
             continue
 
         msg_id = item.meta_message_id or f"wamid.hist_{uuid.uuid4().hex[:16]}"
