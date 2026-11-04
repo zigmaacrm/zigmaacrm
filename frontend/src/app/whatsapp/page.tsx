@@ -1309,7 +1309,7 @@ export default function WhatsAppPage() {
     const loggedInUser = currentUser || api.getCurrentUser();
     const isMine = raw.assigned_user_id
       ? raw.assigned_user_id === loggedInUser?.id
-      : true;
+      : false;
 
     return {
       id: raw.id || `conv-${raw.phone_number}`,

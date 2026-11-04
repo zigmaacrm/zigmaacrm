@@ -104,6 +104,8 @@ class WhatsAppContactSyncItem(BaseModel):
 
 class WhatsAppBulkSyncRequest(BaseModel):
     contacts: List[WhatsAppContactSyncItem]
+    assigned_user_id: Optional[str] = None
+    session_id: Optional[str] = None
 
 class SendWhatsAppMessageRequest(BaseModel):
     phone_number: str
@@ -117,6 +119,7 @@ class SendWhatsAppMessageRequest(BaseModel):
     quoted_text: Optional[str] = None
     quoted_from_me: Optional[bool] = None
     crm_display_message: Optional[str] = None
+    session_id: Optional[str] = None
 
 class WhatsAppMessageOut(BaseModel):
     id: str
@@ -208,12 +211,14 @@ async def send_whatsapp_message(
         targets.append("https://zigmaa-whatsapp-bridge.onrender.com")
 
     dispatched_via_qr = False
+    effective_session_id = payload.session_id or (current_user.id if current_user else "default")
 
     for target in targets:
         try:
             async with httpx.AsyncClient(timeout=25.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
-                st_res = await client.get(f"{target}/status")
-                if st_res.status_code == 200 and st_res.json().get("status") == "CONNECTED":
+                st_res = await client.get(f"{target}/status?sessionId={effective_session_id}")
+                st_data = st_res.json() if st_res.status_code == 200 else {}
+                if st_data.get("status") == "CONNECTED":
                     send_payload = {
                         "phone_number": clean_phone,
                         "message": payload.message or "",
@@ -222,7 +227,9 @@ async def send_whatsapp_message(
                         "file_type": payload.file_type,
                         "quoted_message_id": payload.quoted_message_id,
                         "quoted_text": payload.quoted_text,
-                        "quoted_from_me": payload.quoted_from_me
+                        "quoted_from_me": payload.quoted_from_me,
+                        "session_id": effective_session_id,
+                        "assigned_user_id": current_user.id if current_user else None
                     }
                     send_res = await client.post(
                         f"{target}/send",
@@ -409,10 +416,12 @@ async def get_whatsapp_messages(
     phone_number: Optional[str] = Query(None),
     contact_id: Optional[str] = Query(None),
     limit: int = Query(150, le=500),
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Retrieve message thread history for a phone number or contact
+    strictly scoped to the active user.
     """
     stmt = select(WhatsAppMessage)
     if contact_id:
@@ -421,6 +430,17 @@ async def get_whatsapp_messages(
         clean = normalize_phone(phone_number)
         search_suffix = clean[-10:] if len(clean) >= 10 else clean
         stmt = stmt.where(WhatsAppMessage.phone_number.like(f"%{search_suffix}%"))
+
+    if current_user and not (current_user.role or "").lower() in ["super_admin", "owner"]:
+        if current_user.whatsapp_phone_number:
+            stmt = stmt.where(
+                or_(
+                    WhatsAppMessage.assigned_user_id == current_user.id,
+                    WhatsAppMessage.business_phone_number_id == current_user.whatsapp_phone_number
+                )
+            )
+        else:
+            stmt = stmt.where(WhatsAppMessage.assigned_user_id == current_user.id)
 
     # Order DESC to get the latest messages first, then reverse for chronological display
     stmt = stmt.order_by(WhatsAppMessage.created_at.desc()).limit(limit)
@@ -468,13 +488,28 @@ async def get_whatsapp_conversations(
     """
     stmt = select(WhatsAppMessage)
 
-    # Scoping logic:
-    # 1. If logged in as SALES_REP: only show chats assigned to them
-    if current_user and (current_user.role or "").lower() == "sales_rep":
-        stmt = stmt.where(WhatsAppMessage.assigned_user_id == current_user.id)
-    # 2. If an explicit filter is requested by Admin:
-    elif assigned_user_id and assigned_user_id.lower() != "all":
+    # Strict User & Rep Scoping Logic:
+    # 1. If an explicit filter is requested by an admin:
+    if assigned_user_id and assigned_user_id.upper() != "ALL":
         stmt = stmt.where(WhatsAppMessage.assigned_user_id == assigned_user_id)
+    elif assigned_user_id and assigned_user_id.upper() == "ALL":
+        # Admin explicitly asked to view all chats across the whole organization
+        if not (current_user and (current_user.role or "").lower() in ["super_admin", "admin", "owner"]):
+            if current_user:
+                stmt = stmt.where(WhatsAppMessage.assigned_user_id == current_user.id)
+    else:
+        # Default Inbox View: ALWAYS show only the logged-in user's assigned chats
+        # so team members never see another member's WhatsApp contacts or messages!
+        if current_user:
+            if current_user.whatsapp_phone_number:
+                stmt = stmt.where(
+                    or_(
+                        WhatsAppMessage.assigned_user_id == current_user.id,
+                        WhatsAppMessage.business_phone_number_id == current_user.whatsapp_phone_number
+                    )
+                )
+            else:
+                stmt = stmt.where(WhatsAppMessage.assigned_user_id == current_user.id)
 
     stmt = stmt.order_by(desc(WhatsAppMessage.created_at)).limit(limit * 5)
     res = await db.execute(stmt)
@@ -725,7 +760,7 @@ async def bulk_sync_whatsapp_contacts(
 ):
     """
     Sync direct WhatsApp address-book contacts into CRM contacts/leads without chat history.
-    Strictly ignores @g.us group chats and does not insert any chat messages.
+    Strictly ignores @g.us group chats and scopes contacts to the session user.
     """
     if not payload.contacts:
         return {"status": "success", "synced": 0}
@@ -733,6 +768,8 @@ async def bulk_sync_whatsapp_contacts(
     res_org = await db.execute(select(Organization).limit(1))
     default_org = res_org.scalars().first()
     default_org_id = default_org.id if default_org else None
+
+    effective_user_id = payload.assigned_user_id or (payload.session_id if payload.session_id != "default" else None)
 
     synced_count = 0
     for item in payload.contacts:
@@ -748,6 +785,9 @@ async def bulk_sync_whatsapp_contacts(
         contact = c_res.scalar_one_or_none()
 
         if contact:
+            if effective_user_id and not contact.assigned_user_id:
+                contact.assigned_user_id = effective_user_id
+                contact.owner_id = effective_user_id
             # Update name/avatar if empty or placeholder
             if (not contact.full_name or is_generic_or_placeholder_name(contact.full_name, clean_phone)) and item.name:
                 contact.full_name = item.name.strip()
@@ -773,6 +813,8 @@ async def bulk_sync_whatsapp_contacts(
                 source="WHATSAPP",
                 lifecycle_stage="LEAD",
                 status="NEW",
+                assigned_user_id=effective_user_id,
+                owner_id=effective_user_id,
                 custom_data=c_data
             )
             db.add(contact)
@@ -835,19 +877,23 @@ async def get_whatsapp_contact_avatar(
 
     return {"phone": clean_phone, "avatar_url": None}
 
-_qr_status_cache: Dict[str, Any] = {"data": None, "ts": 0}
+_qr_status_cache: Dict[str, Dict[str, Any]] = {}
 
 @router.get("/qr/status")
-async def get_whatsapp_qr_status():
+async def get_whatsapp_qr_status(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: AsyncSession = Depends(get_db)
+):
     """
-    Checks connection status, linked phone, and current QR code from Baileys gateway.
-    Supports in-memory high-speed caching and fast cloud failover.
+    Checks connection status, linked phone, and current QR code from Baileys gateway
+    specifically scoped to the current logged-in user.
     """
     global _qr_status_cache
+    session_id = current_user.id if current_user else "default"
     now = time.time()
-    # Return fresh cache (within 2 seconds) instantly to prevent polling storm
-    if _qr_status_cache["data"] and (now - _qr_status_cache["ts"] < 2.0):
-        return _qr_status_cache["data"]
+    user_cache = _qr_status_cache.get(session_id, {"data": None, "ts": 0})
+    if user_cache["data"] and (now - user_cache["ts"] < 2.0):
+        return user_cache["data"]
 
     gateway_url = get_gateway_url()
     targets = [gateway_url]
@@ -857,35 +903,44 @@ async def get_whatsapp_qr_status():
     for target in targets:
         try:
             async with httpx.AsyncClient(timeout=15.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
-                resp = await client.get(f"{target}/status")
+                resp = await client.get(f"{target}/status?sessionId={session_id}")
                 if resp.status_code == 200:
                     data = resp.json()
                     data["gateway_online"] = True
-                    _qr_status_cache["data"] = data
-                    _qr_status_cache["ts"] = time.time()
+                    _qr_status_cache[session_id] = {"data": data, "ts": time.time()}
+
+                    # Update User.whatsapp_phone_number if connected
+                    if data.get("status") == "CONNECTED" and data.get("phone") and current_user:
+                        if current_user.whatsapp_phone_number != data.get("phone"):
+                            current_user.whatsapp_phone_number = data.get("phone")
+                            await db.commit()
+
                     return data
         except Exception as e:
-            logger.debug(f"WhatsApp QR Gateway at {target} not reachable: {e}")
+            logger.debug(f"WhatsApp QR Gateway at {target} not reachable for {session_id}: {e}")
 
-    # Fallback to slightly older cache (up to 15s) ONLY if we had a successful online status
-    if _qr_status_cache["data"] and _qr_status_cache["data"].get("gateway_online") and (now - _qr_status_cache["ts"] < 15.0):
-        return _qr_status_cache["data"]
+    if user_cache["data"] and user_cache["data"].get("gateway_online") and (now - user_cache["ts"] < 15.0):
+        return user_cache["data"]
 
     return {
         "status": "DISCONNECTED",
         "phone": None,
         "name": None,
         "qr": None,
-        "gateway_online": False
+        "gateway_online": False,
+        "session_id": session_id
     }
 
 @router.post("/qr/refresh")
-async def refresh_whatsapp_qr():
+async def refresh_whatsapp_qr(
+    current_user: Optional[User] = Depends(get_optional_current_user)
+):
     """
-    Requests a fresh QR code from the Baileys gateway.
+    Requests a fresh QR code from the Baileys gateway for the current user's session.
     """
     global _qr_status_cache
-    _qr_status_cache["ts"] = 0  # Invalidate cache immediately
+    session_id = current_user.id if current_user else "default"
+    _qr_status_cache[session_id] = {"data": None, "ts": 0}
 
     gateway_url = get_gateway_url()
     targets = [gateway_url]
@@ -896,7 +951,7 @@ async def refresh_whatsapp_qr():
     for target in targets:
         try:
             async with httpx.AsyncClient(timeout=20.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
-                resp = await client.post(f"{target}/refresh-qr")
+                resp = await client.post(f"{target}/refresh-qr?sessionId={session_id}", json={"sessionId": session_id})
                 return resp.json()
         except Exception as e:
             last_err = e
@@ -904,12 +959,21 @@ async def refresh_whatsapp_qr():
     raise HTTPException(status_code=503, detail=f"Failed to connect to WhatsApp Gateway: {last_err}")
 
 @router.post("/qr/disconnect")
-async def disconnect_whatsapp_qr():
+async def disconnect_whatsapp_qr(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: AsyncSession = Depends(get_db)
+):
     """
-    Disconnects and logs out the Baileys QR session.
+    Disconnects and logs out the Baileys QR session for the current user.
     """
     global _qr_status_cache
-    _qr_status_cache["ts"] = 0  # Invalidate cache immediately
+    session_id = current_user.id if current_user else "default"
+    _qr_status_cache[session_id] = {"data": None, "ts": 0}
+
+    if current_user:
+        current_user.whatsapp_phone_number = None
+        await db.commit()
+
     gateway_url = get_gateway_url()
     targets = [gateway_url]
     if gateway_url != "https://zigmaa-whatsapp-bridge.onrender.com":
@@ -919,7 +983,7 @@ async def disconnect_whatsapp_qr():
     for target in targets:
         try:
             async with httpx.AsyncClient(timeout=25.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
-                resp = await client.post(f"{target}/disconnect")
+                resp = await client.post(f"{target}/disconnect?sessionId={session_id}", json={"sessionId": session_id})
                 return resp.json()
         except Exception as e:
             last_err = e
@@ -941,6 +1005,8 @@ class WhatsAppHistorySyncItem(BaseModel):
 
 class WhatsAppHistorySyncPayload(BaseModel):
     messages: List[WhatsAppHistorySyncItem]
+    assigned_user_id: Optional[str] = None
+    session_id: Optional[str] = None
 
 @router.post("/chats/sync-history")
 async def sync_whatsapp_chat_history(
@@ -987,9 +1053,15 @@ async def sync_whatsapp_chat_history(
         dt = datetime.datetime.fromtimestamp(item.timestamp) if item.timestamp else datetime.datetime.utcnow()
         dir_val = (item.direction or "INBOUND").upper()
 
+        effective_user_id = payload.assigned_user_id or (payload.session_id if payload.session_id != "default" else None)
+        if contact and effective_user_id and not contact.assigned_user_id:
+            contact.assigned_user_id = effective_user_id
+            contact.owner_id = effective_user_id
+
         wa_msg = WhatsAppMessage(
             organization_id=default_org_id,
             contact_id=contact.id if contact else None,
+            assigned_user_id=effective_user_id,
             phone_number=clean_phone,
             direction=dir_val,
             message_body=item.message_body or "[Historical Message]",

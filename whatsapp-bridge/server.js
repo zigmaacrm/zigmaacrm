@@ -38,7 +38,14 @@ const FASTAPI_WEBHOOK_URL = process.env.FASTAPI_WEBHOOK_URL || `${BACKEND_BASE}/
 const FASTAPI_BULK_SYNC_URL = process.env.FASTAPI_BULK_SYNC_URL || `${BACKEND_BASE}/api/v1/whatsapp/contacts/bulk-sync`;
 const FASTAPI_SYNC_HISTORY_URL = process.env.FASTAPI_SYNC_HISTORY_URL || `${BACKEND_BASE}/api/v1/whatsapp/chats/sync-history`;
 const FASTAPI_STATUS_UPDATE_URL = process.env.FASTAPI_STATUS_UPDATE_URL || `${BACKEND_BASE}/api/v1/webhooks/whatsapp/status-update`;
+
+// Legacy single-session auth directory
 const AUTH_DIR = path.join(__dirname, 'auth_info_baileys');
+// Multi-user sessions directory
+const SESSIONS_BASE_DIR = path.join(__dirname, 'sessions');
+if (!fs.existsSync(SESSIONS_BASE_DIR)) {
+  fs.mkdirSync(SESSIONS_BASE_DIR, { recursive: true });
+}
 
 // Uploads directory for decrypted WhatsApp media
 const UPLOADS_DIR = path.join(__dirname, '..', 'uploads', 'whatsapp');
@@ -62,14 +69,7 @@ async function convertAudioToWhatsAppPtt(inputBuffer) {
   try {
     fs.writeFileSync(tmpIn, inputBuffer);
 
-    // Official WhatsApp PTT Audio Transcoder:
-    // -vn: strip video/metadata
-    // -c:a libopus: Opus compression
-    // -b:a 48k: optimal VoIP bitrate
-    // -ar 48000: strictly 48kHz (mandatory for WhatsApp)
-    // -ac 1: strictly mono (stereo causes "not available" playback error)
-    // -avoid_negative_ts make_zero: PREVENTS TIMELINE/TIMESTAMP SYNCHRONIZATION BUGS THAT CAUSE PLAYERS TO CRASH OR SHOW "NOT AVAILABLE"
-    // -f ogg: standard Ogg container
+    // Official WhatsApp PTT Audio Transcoder
     const { execFileSync } = require('child_process');
     execFileSync(ffmpegPath, [
       '-y',
@@ -99,24 +99,20 @@ async function convertAudioToWhatsAppPtt(inputBuffer) {
     // Generate WhatsApp 64-point amplitude waveform
     let waveform = null;
     try {
-      const { default: decoder } = await import('audio-decode');
-      const audioBuffer = await decoder(oggBuffer);
-      const rawData = audioBuffer.getChannelData(0);
-      const samples = 64;
-      const blockSize = Math.floor(rawData.length / samples);
-      const filteredData = [];
-      for (let i = 0; i < samples; i++) {
-        const blockStart = blockSize * i;
+      const AudioContext = require('audio-decode');
+      const decoded = await AudioContext(oggBuffer);
+      const channelData = decoded.getChannelData(0);
+      const blockSize = Math.floor(channelData.length / 64);
+      waveform = new Uint8Array(64);
+      for (let i = 0; i < 64; i++) {
         let sum = 0;
         for (let j = 0; j < blockSize; j++) {
-          sum += Math.abs(rawData[blockStart + j] || 0);
+          sum += Math.abs(channelData[i * blockSize + j] || 0);
         }
-        filteredData.push(sum / blockSize);
+        const avg = sum / (blockSize || 1);
+        waveform[i] = Math.min(100, Math.max(5, Math.floor(avg * 150)));
       }
-      const maxVal = Math.max(...filteredData, 0.001);
-      const normalizedData = filteredData.map(n => Math.min(1, n / maxVal));
-      waveform = new Uint8Array(normalizedData.map(n => Math.max(5, Math.floor(100 * n))));
-    } catch (wErr) {
+    } catch (_) {
       waveform = new Uint8Array(64);
       for (let i = 0; i < 64; i++) {
         waveform[i] = Math.floor(20 + Math.sin(i / 3) * 15 + Math.random() * 20);
@@ -146,46 +142,81 @@ async function convertAudioToWhatsAppPtt(inputBuffer) {
   }
 }
 
-// State
-let sock = null;
-let latestQR = null;
-let connectionStatus = 'DISCONNECTED'; // 'DISCONNECTED' | 'SCAN_QR' | 'CONNECTED'
-let connectedPhone = null;
-let connectedName = null;
-let connectedAvatarUrl = null;
-let isStarting = false;
-
-// In-Memory Caches
-const lidToPhoneMap = new Map();
+// Global In-Memory Caches
 const msgStore = new Map();
 const sentFromCrmMsgIds = new Set();
+const logger = pino({ level: 'silent' });
 
-function loadLidMappings() {
-  if (!fs.existsSync(AUTH_DIR)) return;
+// ==========================================
+// Multi-Session Architecture Store
+// Map<sessionId, SessionObject>
+// ==========================================
+const sessions = new Map();
+
+function sanitizeSessionId(raw) {
+  if (!raw || typeof raw !== 'string') return 'default';
+  const clean = raw.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+  return clean || 'default';
+}
+
+function getSessionAuthDir(sId) {
+  if (sId === 'default' && fs.existsSync(AUTH_DIR)) {
+    return AUTH_DIR;
+  }
+  return path.join(SESSIONS_BASE_DIR, `session_${sId}`);
+}
+
+function loadLidMappingsForSession(session) {
+  if (!session || !fs.existsSync(session.authDir)) return;
   try {
-    const files = fs.readdirSync(AUTH_DIR);
+    const files = fs.readdirSync(session.authDir);
     for (const f of files) {
       if (f.startsWith('lid-mapping-') && !f.includes('_reverse') && f.endsWith('.json')) {
         const phone = f.replace('lid-mapping-', '').replace('.json', '');
         try {
-          const lid = JSON.parse(fs.readFileSync(path.join(AUTH_DIR, f), 'utf8'));
-          if (lid) lidToPhoneMap.set(String(lid).trim(), String(phone).trim());
+          const lid = JSON.parse(fs.readFileSync(path.join(session.authDir, f), 'utf8'));
+          if (lid) session.lidToPhoneMap.set(String(lid).trim(), String(phone).trim());
         } catch (_) {}
       }
     }
-    console.log(`[WhatsApp Gateway] Indexed ${lidToPhoneMap.size} LID to Phone mappings in memory.`);
   } catch (err) {
-    console.error('[WhatsApp Gateway] Failed to index LID mappings:', err.message);
+    console.error(`[WhatsApp Gateway] Failed to index LID mappings for ${session.id}:`, err.message);
   }
 }
 
-// Contacts buffer
-let syncTimeout = null;
-const pendingContacts = new Map();
+function getSession(sessionId, createIfMissing = true) {
+  const sId = sanitizeSessionId(sessionId);
+  if (sessions.has(sId)) {
+    return sessions.get(sId);
+  }
+  if (!createIfMissing) {
+    return null;
+  }
+  const authDir = getSessionAuthDir(sId);
+  if (!fs.existsSync(authDir)) {
+    fs.mkdirSync(authDir, { recursive: true });
+  }
+  const session = {
+    id: sId,
+    sock: null,
+    qr: null,
+    status: 'DISCONNECTED', // 'DISCONNECTED' | 'SCAN_QR' | 'CONNECTED'
+    phone: null,
+    name: null,
+    avatarUrl: null,
+    isStarting: false,
+    authDir: authDir,
+    lidToPhoneMap: new Map(),
+    pendingContacts: new Map(),
+    syncTimeout: null,
+    isFetchingAvatar: false
+  };
+  sessions.set(sId, session);
+  loadLidMappingsForSession(session);
+  return session;
+}
 
-const logger = pino({ level: 'silent' });
-
-function resolvePhoneFromJid(jid) {
+function resolvePhoneFromJid(jid, session) {
   if (!jid) return null;
   const str = String(jid).trim();
   if (
@@ -202,21 +233,22 @@ function resolvePhoneFromJid(jid) {
   }
   if (str.endsWith('@lid')) {
     const cleanLid = str.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
-    if (lidToPhoneMap.has(cleanLid)) {
-      return lidToPhoneMap.get(cleanLid);
+    if (session && session.lidToPhoneMap.has(cleanLid)) {
+      return session.lidToPhoneMap.get(cleanLid);
     }
-    const revFile = path.join(AUTH_DIR, `lid-mapping-${cleanLid}_reverse.json`);
-    if (fs.existsSync(revFile)) {
-      try {
-        const pn = JSON.parse(fs.readFileSync(revFile, 'utf8'));
-        if (pn) {
-          const cleanPn = String(pn).replace(/[^0-9]/g, '');
-          lidToPhoneMap.set(cleanLid, cleanPn);
-          return cleanPn;
-        }
-      } catch (_) {}
+    if (session && fs.existsSync(session.authDir)) {
+      const revFile = path.join(session.authDir, `lid-mapping-${cleanLid}_reverse.json`);
+      if (fs.existsSync(revFile)) {
+        try {
+          const pn = JSON.parse(fs.readFileSync(revFile, 'utf8'));
+          if (pn) {
+            const cleanPn = String(pn).replace(/[^0-9]/g, '');
+            if (session) session.lidToPhoneMap.set(cleanLid, cleanPn);
+            return cleanPn;
+          }
+        } catch (_) {}
+      }
     }
-    // Fallback to LID digits so inbound messages are NEVER skipped
     return cleanLid && cleanLid.length >= 7 ? cleanLid : null;
   }
   const clean = str.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
@@ -226,7 +258,6 @@ function resolvePhoneFromJid(jid) {
 function extractMessageBody(m) {
   if (!m) return '';
   let msg = m;
-  // Deep unwrap all Baileys nested message wrappers
   while (
     msg.ephemeralMessage?.message ||
     msg.viewOnceMessage?.message ||
@@ -252,11 +283,9 @@ function extractMessageBody(m) {
     const contextInfo = msg.extendedTextMessage.contextInfo;
     if (contextInfo?.quotedMessage) {
       const q = contextInfo.quotedMessage;
-      let qText = q.conversation ||
-                  q.extendedTextMessage?.text ||
-                  q.imageMessage?.caption ||
-                  q.videoMessage?.caption ||
-                  q.documentMessage?.caption ||
+      let qText = (typeof q.conversation === 'string' ? q.conversation : '') ||
+                  (typeof q.extendedTextMessage?.text === 'string' ? q.extendedTextMessage.text : '') ||
+                  (typeof q.imageMessage?.caption === 'string' ? q.imageMessage.caption : '') ||
                   (q.audioMessage ? 'Voice note' : '') ||
                   (q.imageMessage ? 'Photo' : '') ||
                   (q.stickerMessage ? 'Sticker' : '') ||
@@ -349,17 +378,18 @@ async function decryptAndSaveMedia(msgObj) {
       extension = 'mp4';
       fileName = `vid_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${extension}`;
       caption = rawM.videoMessage.caption || '';
+    } else if (rawM.documentMessage) {
+      mediaType = 'document';
+      mimeType = rawM.documentMessage.mimetype || 'application/pdf';
+      const origName = rawM.documentMessage.fileName || 'file.pdf';
+      const origExt = origName.includes('.') ? origName.split('.').pop() : 'pdf';
+      fileName = `doc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${origExt}`;
+      caption = rawM.documentMessage.caption || origName;
     } else if (rawM.stickerMessage) {
       mediaType = 'sticker';
       mimeType = rawM.stickerMessage.mimetype || 'image/webp';
       extension = 'webp';
-      fileName = `sticker_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${extension}`;
-      caption = '';
-    } else if (rawM.documentMessage) {
-      mediaType = 'document';
-      mimeType = rawM.documentMessage.mimetype || 'application/pdf';
-      fileName = rawM.documentMessage.fileName || `doc_${Date.now()}.pdf`;
-      caption = rawM.documentMessage.caption || '';
+      fileName = `sticker_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.webp`;
     } else {
       return null;
     }
@@ -368,15 +398,10 @@ async function decryptAndSaveMedia(msgObj) {
       msgObj,
       'buffer',
       {},
-      {
-        logger,
-        reuploadRequest: sock?.updateMediaMessage
-      }
+      { logger, reuploadRequest: () => Promise.resolve() }
     );
 
-    if (!buffer || buffer.length === 0) {
-      return null;
-    }
+    if (!buffer || buffer.length === 0) return null;
 
     const filePath = path.join(UPLOADS_DIR, fileName);
     fs.writeFileSync(filePath, buffer);
@@ -396,14 +421,15 @@ async function decryptAndSaveMedia(msgObj) {
   }
 }
 
-function scheduleContactSync() {
-  if (syncTimeout) clearTimeout(syncTimeout);
-  syncTimeout = setTimeout(async () => {
-    if (pendingContacts.size === 0) return;
-    const list = Array.from(pendingContacts.values());
-    pendingContacts.clear();
+function scheduleContactSync(session) {
+  if (!session) return;
+  if (session.syncTimeout) clearTimeout(session.syncTimeout);
+  session.syncTimeout = setTimeout(async () => {
+    if (session.pendingContacts.size === 0) return;
+    const list = Array.from(session.pendingContacts.values());
+    session.pendingContacts.clear();
 
-    console.log(`[WhatsApp Gateway] Dispatching ${list.length} direct contacts to CRM bulk-sync...`);
+    console.log(`[WhatsApp Gateway:${session.id}] Dispatching ${list.length} direct contacts to CRM bulk-sync...`);
 
     // Batch in chunks of 50
     for (let i = 0; i < list.length; i += 50) {
@@ -412,68 +438,52 @@ function scheduleContactSync() {
         await fetch(FASTAPI_BULK_SYNC_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contacts: batch })
+          body: JSON.stringify({
+            contacts: batch,
+            assigned_user_id: session.id !== 'default' ? session.id : null,
+            session_id: session.id
+          })
         });
       } catch (err) {
-        console.error('[WhatsApp Gateway] Bulk-sync dispatch failed:', err.message);
+        console.error(`[WhatsApp Gateway:${session.id}] Bulk-sync dispatch failed:`, err.message);
       }
     }
   }, 1500);
 }
 
-// Auto-heal only specific corrupted session ratchet files for a specific contact/JID
-function healSessionForJid(jid) {
-  if (!jid || !fs.existsSync(AUTH_DIR)) return;
-  try {
-    const clean = String(jid).split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
-    if (!clean) return;
-    const files = fs.readdirSync(AUTH_DIR).filter(f => f.startsWith('session-') && f.includes(clean));
-    if (files.length > 0) {
-      console.log(`[WhatsApp Gateway Auto-Heal] Purged ${files.length} corrupted session ratchets for ${clean}.`);
-      for (const f of files) {
-        try { fs.unlinkSync(path.join(AUTH_DIR, f)); } catch (_) {}
-      }
-      if (sock && typeof sock.uploadPreKeys === 'function') {
-        sock.uploadPreKeys(20).catch(() => {});
-      }
-    }
-  } catch (err) {
-    console.warn('[WhatsApp Gateway Auto-Heal Error]:', err.message);
-  }
-}
+// Session Initializer
+async function initWhatsApp(sessionId = 'default', forceClean = false) {
+  const session = getSession(sessionId, true);
+  if (session.isStarting) return;
+  session.isStarting = true;
 
-async function initWhatsApp(forceClean = false) {
-  if (isStarting) return;
-  isStarting = true;
-
-  // Cleanly close any previous socket instance to avoid Status 440 (connectionReplaced)
-  if (sock) {
+  if (session.sock) {
     try {
-      sock.ev.removeAllListeners();
-      sock.ws?.close();
-      sock.end?.();
+      session.sock.ev.removeAllListeners();
+      session.sock.ws?.close();
+      session.sock.end?.();
     } catch (_) {}
-    sock = null;
+    session.sock = null;
   }
 
   try {
-    if (forceClean && fs.existsSync(AUTH_DIR)) {
+    if (forceClean && fs.existsSync(session.authDir)) {
       try {
-        fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+        fs.rmSync(session.authDir, { recursive: true, force: true });
       } catch (e) {
-        console.error('Error clearing auth directory:', e);
+        console.error(`[WhatsApp Gateway:${session.id}] Error clearing auth directory:`, e);
       }
     }
 
-    if (!fs.existsSync(AUTH_DIR)) {
-      fs.mkdirSync(AUTH_DIR, { recursive: true });
+    if (!fs.existsSync(session.authDir)) {
+      fs.mkdirSync(session.authDir, { recursive: true });
     }
-    loadLidMappings();
+    loadLidMappingsForSession(session);
 
-    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+    const { state, saveCreds } = await useMultiFileAuthState(session.authDir);
     const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307], isLatest: true }));
 
-    sock = makeWASocket({
+    session.sock = makeWASocket({
       version,
       logger,
       printQRInTerminal: false,
@@ -489,19 +499,19 @@ async function initWhatsApp(forceClean = false) {
       }
     });
 
-    sock.ev.on('creds.update', saveCreds);
+    session.sock.ev.on('creds.update', saveCreds);
 
-    sock.ev.on('connection.update', async (update) => {
+    session.sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
-        connectionStatus = 'SCAN_QR';
-        connectedPhone = null;
+        session.status = 'SCAN_QR';
+        session.phone = null;
         try {
-          latestQR = await qrcode.toDataURL(qr, { width: 320, margin: 2 });
-          console.log('[WhatsApp Gateway] New QR code generated.');
+          session.qr = await qrcode.toDataURL(qr, { width: 320, margin: 2 });
+          console.log(`[WhatsApp Gateway:${session.id}] New QR code generated.`);
         } catch (err) {
-          console.error('[WhatsApp Gateway] Error creating QR image:', err);
+          console.error(`[WhatsApp Gateway:${session.id}] Error creating QR image:`, err);
         }
       }
 
@@ -509,500 +519,373 @@ async function initWhatsApp(forceClean = false) {
         const statusCode = lastDisconnect?.error?.output?.statusCode;
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
-        console.log(`[WhatsApp Gateway] Connection closed. Status code: ${statusCode}. Reconnecting: ${shouldReconnect}`);
+        console.log(`[WhatsApp Gateway:${session.id}] Connection closed. Status code: ${statusCode}. Reconnecting: ${shouldReconnect}`);
 
-        if (sock) {
+        if (session.sock) {
           try {
-            sock.ev.removeAllListeners();
-            sock.ws?.close();
-            sock.end?.();
+            session.sock.ev.removeAllListeners();
+            session.sock.ws?.close();
+            session.sock.end?.();
           } catch (_) {}
-          sock = null;
+          session.sock = null;
         }
 
         if (statusCode === DisconnectReason.loggedOut) {
-          connectionStatus = 'DISCONNECTED';
-          latestQR = null;
-          connectedPhone = null;
-          connectedName = null;
-          if (fs.existsSync(AUTH_DIR)) {
+          session.status = 'DISCONNECTED';
+          session.qr = null;
+          session.phone = null;
+          session.name = null;
+          if (fs.existsSync(session.authDir)) {
             try {
-              fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+              fs.rmSync(session.authDir, { recursive: true, force: true });
             } catch (_) {}
           }
-          isStarting = false;
-          setTimeout(() => initWhatsApp(false), 2000);
+          session.isStarting = false;
+          setTimeout(() => initWhatsApp(session.id, false), 2000);
         } else if (statusCode === 440) {
-          console.warn('[WhatsApp Gateway] Status 440 (Conflict). Waiting 5s for clean reconnect...');
-          connectionStatus = 'DISCONNECTED';
-          isStarting = false;
-          setTimeout(() => initWhatsApp(false), 5000);
+          console.warn(`[WhatsApp Gateway:${session.id}] Status 440 (Conflict). Waiting 5s for clean reconnect...`);
+          session.status = 'DISCONNECTED';
+          session.isStarting = false;
+          setTimeout(() => initWhatsApp(session.id, false), 5000);
         } else {
-          connectionStatus = 'DISCONNECTED';
-          isStarting = false;
-          setTimeout(() => initWhatsApp(false), 3000);
+          session.status = 'DISCONNECTED';
+          session.isStarting = false;
+          setTimeout(() => initWhatsApp(session.id, false), 3000);
         }
       } else if (connection === 'open') {
-        connectionStatus = 'CONNECTED';
-        latestQR = null;
+        session.status = 'CONNECTED';
+        session.qr = null;
 
-        const rawId = sock?.user?.id || '';
+        const rawId = session.sock?.user?.id || '';
         const phone = rawId.split(':')[0] || rawId.split('@')[0];
-        connectedPhone = phone ? `+${phone}` : null;
-        connectedName = sock?.user?.name || 'Zigmaa Linked Account';
+        session.phone = phone ? `+${phone}` : null;
+        session.name = session.sock?.user?.name || 'Zigmaa Linked Account';
 
         try {
           const clean = phone ? phone.replace(/[^0-9]/g, '') : '';
           if (clean) {
             const jid = `${clean}@s.whatsapp.net`;
-            sock.profilePictureUrl(jid, 'image')
-              .then(url => { connectedAvatarUrl = url || null; })
-              .catch(() => { connectedAvatarUrl = null; });
+            session.sock.profilePictureUrl(jid, 'image')
+              .then(url => { session.avatarUrl = url || null; })
+              .catch(() => { session.avatarUrl = null; });
           }
         } catch (_) {}
 
-        console.log(`[WhatsApp Gateway] Connected successfully! Phone: ${connectedPhone} (${connectedName})`);
-        isStarting = false;
+        console.log(`[WhatsApp Gateway:${session.id}] Connected successfully! Phone: ${session.phone} (${session.name})`);
+        session.isStarting = false;
 
-        // Proactively upload 50 fresh prekeys to WhatsApp server so inbound decryption never fails
+        // Notify FastAPI about session connection and phone mapping
         try {
-          if (sock.uploadPreKeys) {
-            await sock.uploadPreKeys(50);
-            console.log('[WhatsApp Gateway] Fresh prekeys registered with WhatsApp network.');
+          fetch(FASTAPI_STATUS_UPDATE_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              session_id: session.id,
+              assigned_user_id: session.id !== 'default' ? session.id : null,
+              phone: session.phone,
+              name: session.name,
+              status: 'CONNECTED'
+            })
+          }).catch(() => {});
+        } catch (_) {}
+
+        try {
+          if (session.sock.uploadPreKeys) {
+            await session.sock.uploadPreKeys(50);
           }
-        } catch (pkErr) {
-          console.warn('[WhatsApp Gateway] Prekey upload note:', pkErr.message);
-        }
+        } catch (_) {}
       }
     });
 
-    // 1. Direct Contact & Recent Messages History Sync (Ignore @g.us group chats, only accept direct 1-on-1 chats)
-    sock.ev.on('messaging-history.set', async ({ contacts, chats, messages }) => {
-      if (contacts && Array.isArray(contacts)) {
-        for (const c of contacts) {
-          const jid = c.id || '';
-          if (jid.endsWith('@g.us') || jid === 'status@broadcast') continue;
-          if (!jid.endsWith('@c.us') && !jid.endsWith('@s.whatsapp.net')) continue;
-          const phone = jid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
-          if (!phone || phone.length < 7) continue;
-
-          const name = c.name || c.notify || c.verifiedName || null;
-          pendingContacts.set(phone, {
-            phone,
-            name,
-            jid,
-            avatar_url: null
-          });
-        }
-        scheduleContactSync();
-      }
-
-      if (messages && Array.isArray(messages) && messages.length > 0) {
-        console.log(`[WhatsApp History Sync] Processing ${messages.length} historical messages from WhatsApp...`);
-        let syncedCount = 0;
+    // History sync
+    session.sock.ev.on('messaging-history.set', async ({ contacts, chats, messages }) => {
+      console.log(`[WhatsApp Gateway:${session.id}] Messaging history event: ${chats?.length || 0} chats, ${messages?.length || 0} messages.`);
+      const validMessages = [];
+      if (Array.isArray(messages)) {
         for (const msg of messages) {
           const remoteJid = msg.key?.remoteJid || '';
-          if (
-            !remoteJid ||
-            remoteJid.endsWith('@g.us') ||
-            remoteJid === 'status@broadcast' ||
-            remoteJid.endsWith('@newsletter') ||
-            remoteJid.endsWith('@broadcast')
-          ) {
+          if (remoteJid.endsWith('@g.us') || remoteJid.includes('@broadcast') || remoteJid.includes('@newsletter')) {
             continue;
           }
-          const phone = resolvePhoneFromJid(remoteJid);
-          const body = extractMessageBody(msg.message);
-          if (!phone || (!body && !msg.message?.imageMessage && !msg.message?.documentMessage && !msg.message?.audioMessage)) {
-            continue;
-          }
+          const cleanPhone = resolvePhoneFromJid(remoteJid, session);
+          if (!cleanPhone || cleanPhone.length < 7) continue;
 
+          let mediaPayload = null;
           try {
-            await fetch(FASTAPI_WEBHOOK_URL, {
+            mediaPayload = await decryptAndSaveMedia(msg);
+          } catch (_) {}
+
+          let body = extractMessageBody(msg.message);
+          if (!body && mediaPayload) {
+            body = mediaPayload.caption || `[${(mediaPayload.message_type || 'Attachment').toUpperCase()}]`;
+          }
+          if (!body) continue;
+
+          const fromMe = Boolean(msg.key?.fromMe);
+          const pushName = msg.pushName || null;
+          const ts = typeof msg.messageTimestamp === 'number'
+            ? msg.messageTimestamp
+            : (msg.messageTimestamp?.low || Math.floor(Date.now() / 1000));
+
+          validMessages.push({
+            phone_number: cleanPhone,
+            contact_name: pushName,
+            message_body: body,
+            meta_message_id: msg.key?.id,
+            timestamp: ts,
+            direction: fromMe ? 'OUTBOUND' : 'INBOUND',
+            message_type: mediaPayload?.message_type || 'text',
+            media_url: mediaPayload?.media_url || null,
+            file_name: mediaPayload?.file_name || null,
+            caption: mediaPayload?.caption || null,
+            is_voice_note: Boolean(mediaPayload?.is_voice_note)
+          });
+        }
+      }
+
+      if (validMessages.length > 0) {
+        console.log(`[WhatsApp Gateway:${session.id}] Dispatching ${validMessages.length} direct messages to CRM sync-history...`);
+        for (let i = 0; i < validMessages.length; i += 40) {
+          const batch = validMessages.slice(i, i + 40);
+          try {
+            await fetch(FASTAPI_SYNC_HISTORY_URL, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                phone_number: phone,
-                contact_name: msg.pushName || '',
-                message_body: body || '[Attachment Received]',
-                meta_message_id: msg.key.id || `wamid.hist_${Date.now()}_${Math.random()}`,
-                timestamp: Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000),
-                direction: msg.key.fromMe ? 'OUTBOUND' : 'INBOUND'
+                messages: batch,
+                assigned_user_id: session.id !== 'default' ? session.id : null,
+                session_id: session.id
               })
             });
-            syncedCount++;
-          } catch (_) {}
+          } catch (err) {
+            console.error(`[WhatsApp Gateway:${session.id}] Sync history batch failed:`, err.message);
+          }
         }
-        console.log(`[WhatsApp History Sync] Successfully synced ${syncedCount} 1-on-1 messages to CRM.`);
       }
     });
 
-    sock.ev.on('contacts.upsert', (contacts) => {
-      if (!contacts || !Array.isArray(contacts)) return;
-      for (const c of contacts) {
-        const jid = c.id || '';
-        if (jid.endsWith('@g.us') || jid === 'status@broadcast') continue;
-        if (!jid.endsWith('@c.us') && !jid.endsWith('@s.whatsapp.net')) continue;
-        const phone = jid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
-        if (!phone || phone.length < 7) continue;
-
-        const name = c.name || c.notify || c.verifiedName || null;
-        pendingContacts.set(phone, {
-          phone,
-          name,
-          jid,
-          avatar_url: null
-        });
-      }
-      scheduleContactSync();
-    });
-
-    sock.ev.on('contacts.update', (updates) => {
-      if (!updates || !Array.isArray(updates)) return;
-      for (const c of updates) {
-        const jid = c.id || '';
-        if (jid.endsWith('@g.us') || jid === 'status@broadcast') continue;
-        if (!jid.endsWith('@c.us') && !jid.endsWith('@s.whatsapp.net')) continue;
-        const phone = jid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
-        if (!phone || phone.length < 7) continue;
-
-        const name = c.name || c.notify || c.verifiedName || null;
-        if (name) {
-          pendingContacts.set(phone, {
-            phone,
-            name,
-            jid,
+    // Contacts upsert
+    session.sock.ev.on('contacts.upsert', (newContacts) => {
+      if (!Array.isArray(newContacts)) return;
+      for (const c of newContacts) {
+        if (!c.id || c.id.endsWith('@g.us') || c.id.includes('@broadcast') || c.id.includes('@newsletter')) {
+          continue;
+        }
+        const clean = resolvePhoneFromJid(c.id, session);
+        if (clean && clean.length >= 7) {
+          const rawName = c.name || c.notify || c.verifiedName || null;
+          session.pendingContacts.set(clean, {
+            phone: clean,
+            name: rawName,
+            jid: c.id,
             avatar_url: null
           });
         }
       }
-      scheduleContactSync();
+      if (session.pendingContacts.size > 0) {
+        scheduleContactSync(session);
+      }
     });
 
-    // 2. Live Messages (Both Inbound from customers and Outbound from web/mobile)
-    sock.ev.on('messages.upsert', async (chatUpdate) => {
-      try {
-        const { messages, type } = chatUpdate;
-        if (!messages || !messages.length) return;
+    // Contacts update (Address book name changes on the phone)
+    session.sock.ev.on('contacts.update', (updatedContacts) => {
+      if (!Array.isArray(updatedContacts)) return;
+      for (const c of updatedContacts) {
+        if (!c.id || c.id.endsWith('@g.us') || c.id.includes('@broadcast') || c.id.includes('@newsletter')) {
+          continue;
+        }
+        const clean = resolvePhoneFromJid(c.id, session);
+        if (clean && clean.length >= 7) {
+          const rawName = c.name || c.notify || c.verifiedName || null;
+          if (rawName) {
+            session.pendingContacts.set(clean, {
+              phone: clean,
+              name: rawName,
+              jid: c.id,
+              avatar_url: null
+            });
+          }
+        }
+      }
+      if (session.pendingContacts.size > 0) {
+        scheduleContactSync(session);
+      }
+    });
 
-        for (const msg of messages) {
-          // Cache message in memory for Baileys getMessage / retry decryptor
-          if (msg.key?.id && msg.message) {
-            msgStore.set(msg.key.id, msg.message);
+    // Messages upsert
+    session.sock.ev.on('messages.upsert', async ({ messages, type }) => {
+      if (!Array.isArray(messages)) return;
+
+      for (const msg of messages) {
+        try {
+          const msgId = msg.key?.id;
+          if (msgId) {
+            msgStore.set(msgId, msg.message);
             if (msgStore.size > 2000) {
               const firstKey = msgStore.keys().next().value;
               msgStore.delete(firstKey);
             }
           }
 
-          const isFromMe = Boolean(msg.key?.fromMe);
-
-          // If this message was sent directly by this CRM server's /send endpoint,
-          // it was ALREADY saved into the database by FastAPI during that HTTP request.
-          if (isFromMe && msg.key?.id && sentFromCrmMsgIds.has(msg.key.id)) {
-            continue;
-          }
-
           const remoteJid = msg.key?.remoteJid || '';
           if (
-            !remoteJid ||
             remoteJid === 'status@broadcast' ||
-            remoteJid.endsWith('@g.us') ||
             remoteJid.endsWith('@broadcast') ||
-            remoteJid.endsWith('@newsletter')
+            remoteJid.endsWith('@newsletter') ||
+            remoteJid.endsWith('@g.us')
           ) {
             continue;
           }
 
-          let phone = resolvePhoneFromJid(remoteJid);
-          if (!phone && msg.key?.participant) {
-            phone = resolvePhoneFromJid(msg.key.participant);
-          }
-          if (!phone && msg.key?.remoteJidAlt) {
-            phone = resolvePhoneFromJid(msg.key.remoteJidAlt);
-          }
-          if (!phone && remoteJid.endsWith('@lid')) {
-            const cleanLid = remoteJid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
-            if (cleanLid) phone = cleanLid;
-          }
-
-          if (!phone) {
-            console.log(`[WhatsApp Message Skipped] Cannot resolve phone from JID: ${remoteJid}`);
+          const fromMe = Boolean(msg.key?.fromMe);
+          if (fromMe && msgId && sentFromCrmMsgIds.has(msgId)) {
             continue;
           }
 
-          const rawM = unwrapMessage(msg.message);
-
-          // Handle message reaction (both inbound and from web/phone)
-          if (rawM?.reactionMessage) {
-            const rMsg = rawM.reactionMessage;
-            const targetId = rMsg.key?.id;
-            const emoji = rMsg.text || '';
-            console.log(`[WhatsApp Reaction Received] Target ID: ${targetId}, Emoji: "${emoji}", Phone: ${phone}`);
-            if (targetId) {
-              try {
-                await fetch(`${BACKEND_BASE}/api/v1/webhooks/whatsapp/reaction`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    phone_number: phone,
-                    meta_message_id: targetId,
-                    reaction: emoji
-                  })
-                });
-              } catch (rErr) {
-                console.warn('[WhatsApp Reaction Forward Error]:', rErr.message);
-              }
-            }
+          const senderPhone = resolvePhoneFromJid(remoteJid, session);
+          if (!senderPhone || senderPhone.length < 7) {
             continue;
           }
 
-          // Handle protocol message (Delete for everyone / Message Edit)
-          if (rawM?.protocolMessage) {
-            const pMsg = rawM.protocolMessage;
-            const targetId = pMsg.key?.id;
-            // Type 0 = REVOKE (Delete for everyone)
-            if (pMsg.type === 0 && targetId) {
-              console.log(`[WhatsApp Revoke Received] Target ID: ${targetId}, Phone: ${phone}`);
-              try {
-                await fetch(`${BACKEND_BASE}/api/v1/webhooks/whatsapp/revoke`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    phone_number: phone,
-                    meta_message_id: targetId
-                  })
-                });
-              } catch (vErr) {
-                console.warn('[WhatsApp Revoke Forward Error]:', vErr.message);
-              }
-              continue;
-            }
-            // Type 14 = MESSAGE_EDIT
-            if (pMsg.type === 14 && targetId && pMsg.editedMessage) {
-              const editedText = extractMessageBody(pMsg.editedMessage);
-              console.log(`[WhatsApp Edit Received] Target ID: ${targetId}, New text: "${editedText}", Phone: ${phone}`);
-              if (editedText) {
-                try {
-                  await fetch(`${BACKEND_BASE}/api/v1/webhooks/whatsapp/edit`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      phone_number: phone,
-                      meta_message_id: targetId,
-                      message_body: editedText
-                    })
-                  });
-                } catch (eErr) {
-                  console.warn('[WhatsApp Edit Forward Error]:', eErr.message);
-                }
-              }
-              continue;
-            }
-          }
-
-          const contactName = isFromMe ? null : (msg.pushName || '');
-          let mediaInfo = null;
-          if (rawM?.imageMessage || rawM?.documentMessage || rawM?.audioMessage || rawM?.videoMessage || rawM?.stickerMessage) {
-            mediaInfo = await decryptAndSaveMedia(msg);
-          }
+          let mediaPayload = null;
+          try {
+            mediaPayload = await decryptAndSaveMedia(msg);
+          } catch (_) {}
 
           let body = extractMessageBody(msg.message);
-          if (!body && mediaInfo) {
-            if (mediaInfo.message_type === 'image') body = mediaInfo.caption || '📷 Photo';
-            else if (mediaInfo.is_voice_note || mediaInfo.message_type === 'ptt') body = '🎤 Voice message';
-            else if (mediaInfo.message_type === 'audio') body = '🎵 Audio';
-            else if (mediaInfo.message_type === 'document') body = `📄 ${mediaInfo.file_name || 'Document'}`;
-            else if (mediaInfo.message_type === 'video') body = mediaInfo.caption || '🎥 Video';
-            else if (mediaInfo.message_type === 'sticker') body = 'Sticker';
+          if (!body && mediaPayload) {
+            body = mediaPayload.caption || `[${(mediaPayload.message_type || 'Attachment').toUpperCase()}]`;
           }
+          if (!body) continue;
 
-          if (!body && !mediaInfo) {
-            if (msg.messageStubType) {
-              console.log(`[WhatsApp Decrypt Waiting] Stub type: ${msg.messageStubType}, Phone: ${phone}, Params:`, msg.messageStubParameters || []);
-              if (msg.messageStubType === 2 || String(msg.messageStubParameters?.[0] || '').includes('No matching sessions')) {
-                healSessionForJid(remoteJid);
-              }
-            } else {
-              console.log(`[WhatsApp Notice] Empty body for ${phone}, message keys:`, Object.keys(msg.message || {}));
-            }
-            continue;
-          }
+          const pushName = msg.pushName || null;
+          const ts = typeof msg.messageTimestamp === 'number'
+            ? msg.messageTimestamp
+            : (msg.messageTimestamp?.low || Math.floor(Date.now() / 1000));
 
-          let deliveryStatus = 'SENT';
-          if (msg.status === 4) deliveryStatus = 'DELIVERED';
-          if (msg.status === 5) deliveryStatus = 'READ';
+          const payload = {
+            phone_number: senderPhone,
+            contact_name: pushName,
+            message_body: body,
+            meta_message_id: msgId,
+            timestamp: ts,
+            direction: fromMe ? 'OUTBOUND' : 'INBOUND',
+            message_type: mediaPayload?.message_type || 'text',
+            media_url: mediaPayload?.media_url || null,
+            file_name: mediaPayload?.file_name || null,
+            caption: mediaPayload?.caption || null,
+            is_voice_note: Boolean(mediaPayload?.is_voice_note),
+            assigned_user_id: session.id !== 'default' ? session.id : null,
+            session_id: session.id
+          };
 
-          console.log(`[WhatsApp ${isFromMe ? 'OUTBOUND (Web/Linked)' : 'INBOUND'}] Phone: ${phone}${contactName ? ` (${contactName})` : ''} - "${(body || '').slice(0, 50)}" [Type: ${mediaInfo?.message_type || 'text'}]`);
-
-          try {
-            const res = await fetch(FASTAPI_WEBHOOK_URL, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                phone_number: phone,
-                contact_name: contactName,
-                message_body: body || '[Attachment Received]',
-                meta_message_id: msg.key.id || `wamid.qr_${Date.now()}`,
-                timestamp: Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000),
-                direction: isFromMe ? 'OUTBOUND' : 'INBOUND',
-                status: isFromMe ? deliveryStatus : 'DELIVERED',
-                message_type: mediaInfo?.message_type || 'text',
-                media_url: mediaInfo?.media_url || null,
-                file_name: mediaInfo?.file_name || null,
-                caption: mediaInfo?.caption || null,
-                is_voice_note: !!mediaInfo?.is_voice_note
-              })
-            });
-            if (!res.ok) {
-              console.error(`[WhatsApp Gateway] Webhook returned status ${res.status}: ${await res.text()}`);
-            } else {
-              console.log(`[WhatsApp ${isFromMe ? 'Outbound' : 'Inbound'} Forwarded] Successfully delivered to CRM for ${phone}`);
-            }
-          } catch (webhookErr) {
-            console.error(`[WhatsApp Gateway] Failed to forward message to FastAPI (${FASTAPI_WEBHOOK_URL}):`, webhookErr.message);
-          }
+          fetch(FASTAPI_WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          }).catch((err) => {
+            console.error(`[WhatsApp Gateway:${session.id}] Webhook dispatch error:`, err.message);
+          });
+        } catch (msgErr) {
+          console.error(`[WhatsApp Gateway:${session.id}] Message processing error:`, msgErr.message);
         }
-      } catch (err) {
-        console.error('[WhatsApp Gateway] Error handling messages.upsert:', err);
       }
     });
 
-    // 3. Message Status & Read Receipts (Blue Ticks) + Decrypted Retries
-    sock.ev.on('messages.update', async (updates) => {
-      try {
-        if (!updates || !Array.isArray(updates)) return;
-        for (const u of updates) {
-          const id = u.key?.id;
-          if (!id) continue;
-
-          // Asynchronously decrypted message (e.g. from retry receipt or placeholder resend)
-          if (u.update?.message) {
-            const isFromMe = Boolean(u.key?.fromMe);
-            if (!(isFromMe && sentFromCrmMsgIds.has(id))) {
-              const remoteJid = u.key?.remoteJid || '';
-              const phone = resolvePhoneFromJid(remoteJid);
-              const body = extractMessageBody(u.update.message);
-              if (phone && (body || u.update.message?.imageMessage || u.update.message?.documentMessage)) {
-                console.log(`[WhatsApp Decrypted ${isFromMe ? 'Outbound' : 'Inbound'}] Phone: ${phone} - "${(body || '').slice(0, 50)}"`);
-                try {
-                  await fetch(FASTAPI_WEBHOOK_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      phone_number: phone,
-                      contact_name: isFromMe ? null : '',
-                      message_body: body || '[Attachment Received]',
-                      meta_message_id: id,
-                      timestamp: Math.floor(Date.now() / 1000),
-                      direction: isFromMe ? 'OUTBOUND' : 'INBOUND',
-                      status: isFromMe ? 'SENT' : 'DELIVERED'
-                    })
-                  });
-                  console.log(`[WhatsApp Decrypted Forwarded] Successfully delivered to CRM for ${phone}`);
-                } catch (decErr) {
-                  console.error('[WhatsApp Gateway] Failed to forward decrypted message to FastAPI:', decErr.message);
-                }
-              }
-            }
-          }
-
-          const statusNum = u.update?.status;
-          if (typeof statusNum !== 'undefined') {
-            let statusStr = null;
-            // WAMessageStatus: 2: SERVER_ACK (SENT), 3: DELIVERY_ACK (DELIVERED), 4: READ (READ), 5: PLAYED (READ)
-            if (statusNum === 4 || statusNum === 5) {
-              statusStr = 'READ';
-            } else if (statusNum === 3) {
-              statusStr = 'DELIVERED';
-            } else if (statusNum === 2) {
-              statusStr = 'SENT';
-            }
-
-            if (statusStr) {
-              console.log(`[WhatsApp Receipt] ID: ${id} -> ${statusStr}`);
-              try {
-                await fetch(FASTAPI_STATUS_UPDATE_URL, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ meta_message_id: id, status: statusStr })
-                });
-              } catch (_) {}
-            }
-          }
-        }
-      } catch (err) {
-        console.error('[WhatsApp Gateway] Error handling messages.update:', err);
-      }
-    });
-
-    sock.ev.on('message-receipt.update', async (receipts) => {
-      try {
-        if (!receipts || !Array.isArray(receipts)) return;
-        for (const r of receipts) {
-          const id = r.key?.id;
-          if (!id) continue;
-          const isRead = Boolean(r.receipt?.readTimestamp);
-          const isDelivered = Boolean(r.receipt?.receiptTimestamp);
-          const statusStr = isRead ? 'READ' : (isDelivered ? 'DELIVERED' : null);
-          if (statusStr) {
-            console.log(`[WhatsApp Read Receipt] ID: ${id} -> ${statusStr}`);
-            try {
-              await fetch(FASTAPI_STATUS_UPDATE_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ meta_message_id: id, status: statusStr })
-              });
-            } catch (_) {}
-          }
-        }
-      } catch (err) {
-        console.error('[WhatsApp Gateway] Error handling message-receipt.update:', err);
-      }
-    });
   } catch (err) {
-    console.error('[WhatsApp Gateway] Initialization error:', err);
-    isStarting = false;
+    console.error(`[WhatsApp Gateway:${session.id}] Init error:`, err);
+    session.isStarting = false;
+    session.status = 'DISCONNECTED';
   }
 }
 
-// REST Endpoints
-let isFetchingConnectedAvatar = false;
-app.get('/status', (req, res) => {
-  if (connectionStatus === 'CONNECTED' && connectedPhone && !connectedAvatarUrl && sock && !isFetchingConnectedAvatar) {
-    isFetchingConnectedAvatar = true;
+// Disconnect helper
+async function disconnectSession(sessionId) {
+  const session = getSession(sessionId, false);
+  if (!session) return;
+  if (session.sock) {
+    try { await session.sock.logout(); } catch (_) {}
+    try { session.sock.end(undefined); } catch (_) {}
+  }
+  session.status = 'DISCONNECTED';
+  session.qr = null;
+  session.phone = null;
+  session.name = null;
+  session.avatarUrl = null;
+  session.isStarting = false;
+  if (fs.existsSync(session.authDir)) {
     try {
-      const clean = connectedPhone.replace(/[^0-9]/g, '');
+      fs.rmSync(session.authDir, { recursive: true, force: true });
+    } catch (_) {}
+  }
+  sessions.delete(session.id);
+}
+
+// ==========================================
+// Express Routes
+// ==========================================
+
+app.get('/status', (req, res) => {
+  const sId = sanitizeSessionId(req.query.sessionId || req.query.session_id || req.query.userId || req.query.user_id);
+  const session = getSession(sId, false);
+  if (!session) {
+    return res.json({
+      status: 'DISCONNECTED',
+      phone: null,
+      name: null,
+      avatar_url: null,
+      qr: null,
+      session_id: sId
+    });
+  }
+
+  if (session.status === 'CONNECTED' && session.phone && !session.avatarUrl && session.sock && !session.isFetchingAvatar) {
+    session.isFetchingAvatar = true;
+    try {
+      const clean = session.phone.replace(/[^0-9]/g, '');
       if (clean) {
         const jid = `${clean}@s.whatsapp.net`;
-        sock.profilePictureUrl(jid, 'image')
-          .then(url => { connectedAvatarUrl = url || null; })
-          .catch(() => { connectedAvatarUrl = null; })
-          .finally(() => { isFetchingConnectedAvatar = false; });
+        session.sock.profilePictureUrl(jid, 'image')
+          .then(url => { session.avatarUrl = url || null; })
+          .catch(() => { session.avatarUrl = null; })
+          .finally(() => { session.isFetchingAvatar = false; });
       } else {
-        isFetchingConnectedAvatar = false;
+        session.isFetchingAvatar = false;
       }
     } catch (_) {
-      isFetchingConnectedAvatar = false;
+      session.isFetchingAvatar = false;
     }
   }
+
   res.json({
-    status: connectionStatus,
-    phone: connectedPhone,
-    name: connectedName,
-    avatar_url: connectedAvatarUrl,
-    qr: latestQR
+    status: session.status,
+    phone: session.phone,
+    name: session.name,
+    avatar_url: session.avatarUrl,
+    qr: session.qr,
+    session_id: sId
   });
 });
 
 app.get('/avatar/:phone', async (req, res) => {
   try {
+    const sId = sanitizeSessionId(req.query.sessionId || req.query.session_id);
+    let session = getSession(sId, false);
+    if (!session || session.status !== 'CONNECTED' || !session.sock) {
+      // Fallback to any connected session
+      for (const s of sessions.values()) {
+        if (s.status === 'CONNECTED' && s.sock) {
+          session = s;
+          break;
+        }
+      }
+    }
     const clean = req.params.phone.replace(/[^0-9]/g, '');
-    if (!clean || !sock || connectionStatus !== 'CONNECTED') {
+    if (!clean || !session?.sock || session.status !== 'CONNECTED') {
       return res.json({ phone: clean, avatar_url: null });
     }
     const jid = `${clean}@s.whatsapp.net`;
-    const url = await sock.profilePictureUrl(jid, 'image').catch(() => null);
+    const url = await session.sock.profilePictureUrl(jid, 'image').catch(() => null);
     res.json({ phone: clean, avatar_url: url || null });
   } catch (_) {
     res.json({ phone: req.params.phone, avatar_url: null });
@@ -1011,14 +894,14 @@ app.get('/avatar/:phone', async (req, res) => {
 
 app.post('/refresh-qr', async (req, res) => {
   try {
-    if (sock && connectionStatus !== 'CONNECTED') {
-      try {
-        sock.end(undefined);
-      } catch (_) {}
+    const sId = sanitizeSessionId(req.query.sessionId || req.query.session_id || req.body?.sessionId || req.body?.session_id);
+    const session = getSession(sId, true);
+    if (session.sock && session.status !== 'CONNECTED') {
+      try { session.sock.end(undefined); } catch (_) {}
     }
-    isStarting = false;
-    await initWhatsApp(true);
-    res.json({ success: true, message: 'Re-initializing WhatsApp QR code session...' });
+    session.isStarting = false;
+    await initWhatsApp(sId, true);
+    res.json({ success: true, session_id: sId, message: `Re-initializing WhatsApp QR code session for ${sId}...` });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -1026,31 +909,30 @@ app.post('/refresh-qr', async (req, res) => {
 
 app.post('/disconnect', async (req, res) => {
   try {
-    if (sock) {
-      try {
-        await sock.logout();
-      } catch (_) {}
-      try {
-        sock.end(undefined);
-      } catch (_) {}
-    }
-    connectionStatus = 'DISCONNECTED';
-    latestQR = null;
-    connectedPhone = null;
-    connectedName = null;
-    connectedAvatarUrl = null;
-    if (fs.existsSync(AUTH_DIR)) {
-      try {
-        fs.rmSync(AUTH_DIR, { recursive: true, force: true });
-      } catch (_) {}
-    }
-    isStarting = false;
-    setTimeout(() => initWhatsApp(false), 1500);
-    res.json({ success: true, message: 'WhatsApp session disconnected and logged out successfully.' });
+    const sId = sanitizeSessionId(req.query.sessionId || req.query.session_id || req.body?.sessionId || req.body?.session_id);
+    await disconnectSession(sId);
+    res.json({ success: true, session_id: sId, message: `WhatsApp session ${sId} disconnected and logged out successfully.` });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// Helper to resolve the best active socket for outbound sending
+function resolveSendingSession(requestedId) {
+  if (requestedId) {
+    const sId = sanitizeSessionId(requestedId);
+    const s = getSession(sId, false);
+    if (s && s.status === 'CONNECTED' && s.sock) return s;
+  }
+  // Try default
+  const def = sessions.get('default');
+  if (def && def.status === 'CONNECTED' && def.sock) return def;
+  // Try any active session
+  for (const s of sessions.values()) {
+    if (s.status === 'CONNECTED' && s.sock) return s;
+  }
+  return null;
+}
 
 app.post('/send', async (req, res) => {
   try {
@@ -1062,24 +944,26 @@ app.post('/send', async (req, res) => {
       file_type,
       quoted_message_id,
       quoted_text,
-      quoted_from_me
+      quoted_from_me,
+      session_id,
+      assigned_user_id
     } = req.body;
 
     if (!phone_number || (!message && !file_base64)) {
       return res.status(400).json({ success: false, error: 'phone_number and message or file are required.' });
     }
 
-    if (connectionStatus !== 'CONNECTED' || !sock) {
+    const session = resolveSendingSession(session_id || assigned_user_id);
+    if (!session || !session.sock || session.status !== 'CONNECTED') {
       return res.status(503).json({
         success: false,
-        error: 'WhatsApp is not connected via QR. Please scan the QR code first.'
+        error: 'WhatsApp is not connected for this user account. Please scan the QR code first.'
       });
     }
 
     const cleanPhone = phone_number.replace(/[^0-9]/g, '');
     const jid = `${cleanPhone}@s.whatsapp.net`;
 
-    // Construct native Baileys quoted reply context if replying to a message
     let sendOptions = {};
     if (quoted_message_id) {
       sendOptions.quoted = {
@@ -1101,20 +985,20 @@ app.post('/send', async (req, res) => {
       const mime = file_type || 'application/octet-stream';
 
       if (mime.startsWith('image/')) {
-        result = await sock.sendMessage(jid, {
+        result = await session.sock.sendMessage(jid, {
           image: fileBuffer,
           caption: (message || '').trim(),
           mimetype: mime
         }, sendOptions);
       } else if (mime.startsWith('video/')) {
-        result = await sock.sendMessage(jid, {
+        result = await session.sock.sendMessage(jid, {
           video: fileBuffer,
           caption: (message || '').trim(),
           mimetype: mime
         }, sendOptions);
       } else if (mime.startsWith('audio/')) {
         const pttData = await convertAudioToWhatsAppPtt(fileBuffer);
-        result = await sock.sendMessage(jid, {
+        result = await session.sock.sendMessage(jid, {
           audio: pttData.buffer,
           mimetype: 'audio/ogg; codecs=opus',
           ptt: true,
@@ -1125,7 +1009,7 @@ app.post('/send', async (req, res) => {
           setTimeout(() => { try { fs.unlinkSync(pttData.filePath); } catch (_) {} }, 30000);
         }
       } else {
-        result = await sock.sendMessage(jid, {
+        result = await session.sock.sendMessage(jid, {
           document: fileBuffer,
           mimetype: mime,
           fileName: file_name || 'document.pdf',
@@ -1133,7 +1017,7 @@ app.post('/send', async (req, res) => {
         }, sendOptions);
       }
     } else {
-      result = await sock.sendMessage(jid, { text: (message || '').trim() }, sendOptions);
+      result = await session.sock.sendMessage(jid, { text: (message || '').trim() }, sendOptions);
     }
 
     const messageId = result?.key?.id || `wamid.qr_out_${Date.now()}`;
@@ -1145,11 +1029,12 @@ app.post('/send', async (req, res) => {
       }
     }
 
-    console.log(`[WhatsApp Outbound Success] To: ${cleanPhone}, ID: ${messageId}${file_base64 ? ` (File: ${file_name || 'attachment'})` : ''}`);
+    console.log(`[WhatsApp Outbound Success:${session.id}] To: ${cleanPhone}, ID: ${messageId}`);
     res.json({
       success: true,
       message_id: messageId,
-      status: 'SENT'
+      status: 'SENT',
+      session_id: session.id
     });
   } catch (err) {
     console.error('[WhatsApp Outbound Error]:', err);
@@ -1159,22 +1044,22 @@ app.post('/send', async (req, res) => {
 
 app.post('/api/whatsapp/send-voice', async (req, res) => {
   try {
-    const { phone_number, audio_base64, mimetype } = req.body;
+    const { phone_number, audio_base64, session_id, assigned_user_id } = req.body;
     if (!phone_number || !audio_base64) {
       return res.status(400).json({ success: false, error: 'phone_number and audio_base64 are required.' });
     }
-    if (connectionStatus !== 'CONNECTED' || !sock) {
-      return res.status(503).json({ success: false, error: 'WhatsApp is not connected via QR. Please scan the QR code first.' });
+    const session = resolveSendingSession(session_id || assigned_user_id);
+    if (!session || !session.sock || session.status !== 'CONNECTED') {
+      return res.status(503).json({ success: false, error: 'WhatsApp is not connected for this user account.' });
     }
     const cleanPhone = phone_number.replace(/[^0-9]/g, '');
     const jid = `${cleanPhone}@s.whatsapp.net`;
     const pureBase64 = audio_base64.includes(',') ? audio_base64.split(',')[1] : audio_base64;
     const fileBuffer = Buffer.from(pureBase64, 'base64');
 
-    // Transcode to clean WhatsApp PTT OGG Opus (RFC 7845)
     const pttData = await convertAudioToWhatsAppPtt(fileBuffer);
 
-    const result = await sock.sendMessage(jid, {
+    const result = await session.sock.sendMessage(jid, {
       audio: pttData.buffer,
       mimetype: 'audio/ogg; codecs=opus',
       ptt: true,
@@ -1189,7 +1074,7 @@ app.post('/api/whatsapp/send-voice', async (req, res) => {
         sentFromCrmMsgIds.delete(first);
       }
     }
-    console.log(`[WhatsApp Voice Note Sent] To: ${cleanPhone}, ID: ${messageId}, Duration: ${pttData.seconds}s, Size: ${pttData.buffer.length} bytes`);
+    console.log(`[WhatsApp Voice Note Sent:${session.id}] To: ${cleanPhone}, ID: ${messageId}, Duration: ${pttData.seconds}s`);
     if (pttData.filePath) {
       setTimeout(() => { try { fs.unlinkSync(pttData.filePath); } catch (_) {} }, 30000);
     }
@@ -1198,7 +1083,8 @@ app.post('/api/whatsapp/send-voice', async (req, res) => {
       message_id: messageId,
       status: 'SENT',
       converted_ogg_base64: pttData.buffer.toString('base64'),
-      duration_seconds: pttData.seconds
+      duration_seconds: pttData.seconds,
+      session_id: session.id
     });
   } catch (err) {
     console.error('[WhatsApp Voice Send Error]:', err);
@@ -1206,15 +1092,16 @@ app.post('/api/whatsapp/send-voice', async (req, res) => {
   }
 });
 
-// React to a message (or remove reaction with empty emoji)
+// React to a message
 app.post('/api/whatsapp/react', async (req, res) => {
   try {
-    const { phone_number, message_id, emoji, from_me } = req.body;
+    const { phone_number, message_id, emoji, from_me, session_id, assigned_user_id } = req.body;
     if (!phone_number || !message_id) {
       return res.status(400).json({ success: false, error: 'phone_number and message_id are required' });
     }
-    if (connectionStatus !== 'CONNECTED' || !sock) {
-      return res.status(503).json({ success: false, error: 'WhatsApp is not connected via QR.' });
+    const session = resolveSendingSession(session_id || assigned_user_id);
+    if (!session || !session.sock || session.status !== 'CONNECTED') {
+      return res.status(503).json({ success: false, error: 'WhatsApp is not connected.' });
     }
     const cleanPhone = phone_number.replace(/[^0-9]/g, '');
     const jid = `${cleanPhone}@s.whatsapp.net`;
@@ -1223,29 +1110,29 @@ app.post('/api/whatsapp/react', async (req, res) => {
       fromMe: Boolean(from_me),
       id: message_id
     };
-    await sock.sendMessage(jid, {
+    await session.sock.sendMessage(jid, {
       react: {
         text: emoji || '',
         key: messageKey
       }
     });
-    console.log(`[WhatsApp Reaction Sent] ID: ${message_id}, Emoji: "${emoji || ''}", To: ${cleanPhone}`);
-    res.json({ success: true, emoji: emoji || null });
+    res.json({ success: true, emoji: emoji || null, session_id: session.id });
   } catch (err) {
     console.error('[WhatsApp React Error]:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Edit an outbound message
+// Edit message
 app.post('/api/whatsapp/edit-message', async (req, res) => {
   try {
-    const { phone_number, message_id, text } = req.body;
+    const { phone_number, message_id, text, session_id, assigned_user_id } = req.body;
     if (!phone_number || !message_id || !text) {
       return res.status(400).json({ success: false, error: 'phone_number, message_id and text are required' });
     }
-    if (connectionStatus !== 'CONNECTED' || !sock) {
-      return res.status(503).json({ success: false, error: 'WhatsApp is not connected via QR.' });
+    const session = resolveSendingSession(session_id || assigned_user_id);
+    if (!session || !session.sock || session.status !== 'CONNECTED') {
+      return res.status(503).json({ success: false, error: 'WhatsApp is not connected.' });
     }
     const cleanPhone = phone_number.replace(/[^0-9]/g, '');
     const jid = `${cleanPhone}@s.whatsapp.net`;
@@ -1254,28 +1141,28 @@ app.post('/api/whatsapp/edit-message', async (req, res) => {
       fromMe: true,
       id: message_id
     };
-    await sock.sendMessage(jid, {
+    await session.sock.sendMessage(jid, {
       text: text.trim(),
       edit: messageKey
     });
-    console.log(`[WhatsApp Edit Sent] ID: ${message_id}, New Text: "${text.trim()}", To: ${cleanPhone}`);
-    res.json({ success: true, text: text.trim() });
+    res.json({ success: true, text: text.trim(), session_id: session.id });
   } catch (err) {
     console.error('[WhatsApp Edit Error]:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Delete message (Delete for everyone using Baileys revoke)
+// Delete message
 app.post('/api/whatsapp/delete-message', async (req, res) => {
   try {
-    const { phone_number, message_id, delete_for_everyone, from_me } = req.body;
+    const { phone_number, message_id, delete_for_everyone, from_me, session_id, assigned_user_id } = req.body;
     if (!phone_number || !message_id) {
       return res.status(400).json({ success: false, error: 'phone_number and message_id are required' });
     }
     if (delete_for_everyone) {
-      if (connectionStatus !== 'CONNECTED' || !sock) {
-        return res.status(503).json({ success: false, error: 'WhatsApp is not connected via QR.' });
+      const session = resolveSendingSession(session_id || assigned_user_id);
+      if (!session || !session.sock || session.status !== 'CONNECTED') {
+        return res.status(503).json({ success: false, error: 'WhatsApp is not connected.' });
       }
       const cleanPhone = phone_number.replace(/[^0-9]/g, '');
       const jid = `${cleanPhone}@s.whatsapp.net`;
@@ -1284,8 +1171,7 @@ app.post('/api/whatsapp/delete-message', async (req, res) => {
         fromMe: from_me !== undefined ? Boolean(from_me) : true,
         id: message_id
       };
-      await sock.sendMessage(jid, { delete: messageKey });
-      console.log(`[WhatsApp Delete Revoke Sent] ID: ${message_id}, To: ${cleanPhone}`);
+      await session.sock.sendMessage(jid, { delete: messageKey });
     }
     res.json({ success: true, deleted: true });
   } catch (err) {
@@ -1296,11 +1182,31 @@ app.post('/api/whatsapp/delete-message', async (req, res) => {
 
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`========================================================`);
-  console.log(`Zigmaa WhatsApp QR Gateway running on http://localhost:${PORT}`);
+  console.log(`Zigmaa Multi-Session WhatsApp Gateway running on http://localhost:${PORT}`);
   console.log(`Webhook destination: ${FASTAPI_WEBHOOK_URL}`);
   console.log(`Bulk sync destination: ${FASTAPI_BULK_SYNC_URL}`);
   console.log(`========================================================`);
-  initWhatsApp(false);
+
+  // 1. Initialize default session
+  initWhatsApp('default', false);
+
+  // 2. Automatically restore all saved user sessions
+  try {
+    if (fs.existsSync(SESSIONS_BASE_DIR)) {
+      const entries = fs.readdirSync(SESSIONS_BASE_DIR);
+      for (const entry of entries) {
+        if (entry.startsWith('session_')) {
+          const sId = entry.replace('session_', '');
+          if (sId && sId !== 'default') {
+            console.log(`[WhatsApp Gateway] Restoring saved session: ${sId}`);
+            initWhatsApp(sId, false);
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[WhatsApp Gateway] Error restoring sessions:', e.message);
+  }
 });
 
 server.on('error', (err) => {

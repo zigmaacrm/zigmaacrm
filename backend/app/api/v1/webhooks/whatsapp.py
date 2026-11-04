@@ -489,8 +489,12 @@ async def receive_whatsapp_webhook(
     return {"status": "success", "processed": True}
 
 class WhatsAppStatusUpdateRequest(BaseModel):
-    meta_message_id: str
+    meta_message_id: Optional[str] = None
     status: str
+    session_id: Optional[str] = None
+    assigned_user_id: Optional[str] = None
+    phone: Optional[str] = None
+    name: Optional[str] = None
 
 class InboundQRMessage(BaseModel):
     phone_number: str
@@ -505,6 +509,8 @@ class InboundQRMessage(BaseModel):
     caption: Optional[str] = None
     is_voice_note: Optional[bool] = False
     status: Optional[str] = None
+    assigned_user_id: Optional[str] = None
+    session_id: Optional[str] = None
 
 @router.post("/whatsapp/inbound-qr")
 @router.post("/inbound-qr")
@@ -534,6 +540,15 @@ async def receive_whatsapp_qr_inbound(
 
     display_name = payload.contact_name.strip() if payload.contact_name and payload.contact_name.strip() else format_display_phone(clean_phone)
 
+    effective_user_id = payload.assigned_user_id
+    if not effective_user_id and payload.session_id and payload.session_id != "default":
+        effective_user_id = payload.session_id
+    if not effective_user_id:
+        u_res = await db.execute(select(User).where(User.whatsapp_phone_number.like(f"%{search_suffix}%")).limit(1))
+        u = u_res.scalar_one_or_none()
+        if u:
+            effective_user_id = u.id
+
     is_new_lead = False
     if not contact:
         contact = Contact(
@@ -541,11 +556,16 @@ async def receive_whatsapp_qr_inbound(
             full_name=display_name,
             phone=f"+{clean_phone}" if not clean_phone.startswith("+") else clean_phone,
             source="WHATSAPP",
-            lifecycle_stage="LEAD"
+            lifecycle_stage="LEAD",
+            assigned_user_id=effective_user_id,
+            owner_id=effective_user_id
         )
         db.add(contact)
         await db.flush()
         is_new_lead = True
+    elif effective_user_id and not contact.assigned_user_id:
+        contact.assigned_user_id = effective_user_id
+        contact.owner_id = effective_user_id
 
     if not lead:
         lead = Lead(
@@ -553,10 +573,13 @@ async def receive_whatsapp_qr_inbound(
             full_name=display_name,
             phone=f"+{clean_phone}" if not clean_phone.startswith("+") else clean_phone,
             source="WHATSAPP",
-            status="NEW"
+            status="NEW",
+            assigned_user_id=effective_user_id
         )
         db.add(lead)
         await db.flush()
+    elif effective_user_id and not lead.assigned_user_id:
+        lead.assigned_user_id = effective_user_id
 
     msg_id = payload.meta_message_id or f"wamid.qr_{uuid.uuid4().hex[:16]}"
     # Deduplicate or update placeholder if retry decrypted it
@@ -588,6 +611,8 @@ async def receive_whatsapp_qr_inbound(
     wa_msg = WhatsAppMessage(
         organization_id=default_org_id,
         contact_id=contact.id if contact else None,
+        assigned_user_id=effective_user_id,
+        business_phone_number_id=payload.session_id or None,
         phone_number=clean_phone,
         direction=msg_direction,
         message_body=payload.message_body or "[Empty Message]",
@@ -642,8 +667,25 @@ async def update_whatsapp_message_status(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Updates delivery/read status of an outbound WhatsApp message (blue tick).
+    Updates delivery/read status of an outbound WhatsApp message (blue tick)
+    or handles session phone mapping updates from the bridge.
     """
+    user_id = payload.assigned_user_id or payload.session_id
+    if user_id and user_id != "default" and payload.phone:
+        clean_phone = normalize_phone(payload.phone)
+        if clean_phone:
+            formatted = f"+{clean_phone}" if not clean_phone.startswith("+") else clean_phone
+            await db.execute(
+                update(User)
+                .where(User.id == user_id)
+                .values(whatsapp_phone_number=formatted)
+            )
+            await db.commit()
+            logger.info(f"[WHATSAPP STATUS UPDATE] Linked user {user_id} to phone {formatted}")
+
+    if not payload.meta_message_id:
+        return {"status": "success", "session_updated": bool(user_id)}
+
     new_status = payload.status.upper()
     clean_id = payload.meta_message_id.strip()
     stmt = (
