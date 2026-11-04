@@ -1084,7 +1084,7 @@ export default function WhatsAppPage() {
         if (data.phone) {
           setQrPhone(data.phone);
         }
-        if (data.status === "DISCONNECTED" && !data.phone) {
+        if (data.status === "DISCONNECTED" && !data.phone && (data as any).logged_out) {
           setQrPhone(null);
           setConversations([]);
           setActivePhone("");

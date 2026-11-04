@@ -1102,13 +1102,19 @@ async def get_whatsapp_qr_status(
     if user_cache["data"] and user_cache["data"].get("gateway_online") and (now - user_cache["ts"] < 15.0):
         return user_cache["data"]
 
+    cached_phone = user_cache.get("data", {}).get("phone") if user_cache.get("data") else None
+    if not cached_phone and current_user and current_user.whatsapp_phone_number:
+        cached_phone = current_user.whatsapp_phone_number
+
     return {
-        "status": "DISCONNECTED",
-        "phone": None,
-        "name": None,
+        "status": "CONNECTING" if cached_phone else "DISCONNECTED",
+        "phone": cached_phone,
+        "name": user_cache.get("data", {}).get("name") if user_cache.get("data") else None,
+        "avatar_url": user_cache.get("data", {}).get("avatar_url") if user_cache.get("data") else None,
         "qr": None,
         "gateway_online": False,
-        "session_id": session_id
+        "session_id": session_id,
+        "logged_out": False
     }
 
 @router.post("/qr/refresh")
