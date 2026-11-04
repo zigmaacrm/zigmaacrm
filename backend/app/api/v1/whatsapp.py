@@ -945,11 +945,13 @@ async def bulk_sync_whatsapp_contacts(
                 curr_data["jid"] = item.jid
             contact.custom_data = curr_data
         else:
+            clean_sess_item = normalize_phone(payload.session_id) if payload.session_id else None
             c_data = {
                 "whatsapp_name": item.name.strip() if item.name and not is_generic_or_placeholder_name(item.name, clean_phone) else None,
                 "phonebook_name": item.name.strip() if item.name and not is_generic_or_placeholder_name(item.name, clean_phone) else None,
                 "jid": item.jid,
-                "avatar_url": item.avatar_url
+                "avatar_url": item.avatar_url,
+                "session_id": clean_sess_item
             }
 
             contact = Contact(
@@ -1289,11 +1291,13 @@ async def sync_whatsapp_chat_history(
             contact.assigned_user_id = effective_user_id
             contact.owner_id = effective_user_id
 
+        clean_sess = normalize_phone(payload.session_id) if payload.session_id else None
         wa_msg = WhatsAppMessage(
             organization_id=default_org_id,
             contact_id=contact.id if contact else None,
             assigned_user_id=effective_user_id,
-            business_phone_number_id=payload.session_id or None,
+            business_phone_number_id=clean_sess or payload.session_id or None,
+            session_id=clean_sess or payload.session_id or None,
             phone_number=clean_phone,
             direction=dir_val,
             message_body=item.message_body or "[Historical Message]",
