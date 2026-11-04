@@ -12,7 +12,7 @@ from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, or_, update, func, not_, and_
+from sqlalchemy import select, desc, or_, update, func, not_, and_, text
 
 from app.core.config import settings
 from app.core.database import get_db
