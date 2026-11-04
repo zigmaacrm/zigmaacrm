@@ -1384,7 +1384,8 @@ export default function WhatsAppPage() {
     try {
       const activeFilter = repFilter !== undefined ? repFilter : selectedRepFilter;
       const repParam = activeFilter === "ALL" ? undefined : activeFilter;
-      const data = await api.getWhatsAppConversations(40, repParam, qrPhone);
+      const cleanSession = qrPhone ? qrPhone.replace(/[^0-9]/g, "") : undefined;
+      const data = await api.getWhatsAppConversations(100, repParam, cleanSession);
       if (data && data.status === "success" && Array.isArray(data.conversations)) {
         if (data.is_connected === false) {
           setConversations([]);
@@ -1871,6 +1872,7 @@ export default function WhatsAppPage() {
     setIsSending(true);
 
     try {
+      const cleanSession = qrPhone ? qrPhone.replace(/[^0-9]/g, "") : undefined;
       const res = await api.sendWhatsAppMessage({
         phone_number: cleanPhone,
         message: text,
@@ -1878,7 +1880,8 @@ export default function WhatsAppPage() {
         quoted_message_id: quotedMessageId,
         quoted_text: quotedText,
         quoted_from_me: quotedFromMe,
-        crm_display_message: textPayload
+        crm_display_message: textPayload,
+        session_id: cleanSession
       });
 
       if (res && res.status === "success") {

@@ -518,6 +518,8 @@ class InboundQRMessage(BaseModel):
 
 @router.post("/whatsapp/inbound-qr")
 @router.post("/inbound-qr")
+@router.post("/whatsapp/webhook/inbound")
+@router.post("/webhook/inbound")
 async def receive_whatsapp_qr_inbound(
     payload: InboundQRMessage,
     background_tasks: BackgroundTasks,

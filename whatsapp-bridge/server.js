@@ -1333,6 +1333,62 @@ app.post('/admin/wipe-sessions', async (req, res) => {
   }
 });
 
+app.post('/send-message', async (req, res) => {
+  try {
+    const { 
+      session_id, 
+      recipient_phone, 
+      phone_number, 
+      text, 
+      message, 
+      file_base64, 
+      file_name, 
+      file_type, 
+      assigned_user_id 
+    } = req.body;
+    const destPhone = recipient_phone || phone_number;
+    const bodyText = (text !== undefined ? text : message) || '';
+
+    if (!destPhone || (!bodyText && !file_base64)) {
+      return res.status(400).json({ success: false, error: 'recipient_phone and text or file are required.' });
+    }
+
+    const cleanPhone = String(destPhone).replace(/[^0-9]/g, '');
+    const cleanRecipient = `${cleanPhone}@s.whatsapp.net`;
+
+    const targetSession = resolveSendingSession(session_id || assigned_user_id);
+    const targetSock = targetSession?.sock;
+
+    if (!targetSock || targetSession?.status !== 'CONNECTED') {
+      return res.status(404).json({ success: false, error: 'Session not active' });
+    }
+
+    let result;
+    if (file_base64) {
+      const pureBase64 = file_base64.includes(',') ? file_base64.split(',')[1] : file_base64;
+      const fileBuffer = Buffer.from(pureBase64, 'base64');
+      const mime = file_type || 'application/octet-stream';
+      if (mime.startsWith('image/')) {
+        result = await targetSock.sendMessage(cleanRecipient, { image: fileBuffer, caption: bodyText.trim() });
+      } else if (mime.startsWith('audio/')) {
+        result = await targetSock.sendMessage(cleanRecipient, { audio: fileBuffer, mimetype: 'audio/mp4', ptt: true });
+      } else {
+        result = await targetSock.sendMessage(cleanRecipient, { document: fileBuffer, mimetype: mime, fileName: file_name || 'file.pdf', caption: bodyText.trim() });
+      }
+    } else {
+      result = await targetSock.sendMessage(cleanRecipient, { text: bodyText.trim() });
+    }
+
+    const messageId = result?.key?.id || `wamid.qr_out_${Date.now()}`;
+    if (messageId) sentFromCrmMsgIds.add(messageId);
+
+    return res.json({ success: true, message_id: messageId, result });
+  } catch (err) {
+    console.error('[WhatsApp /send-message Error]:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.post('/send', async (req, res) => {
   try {
     const { 

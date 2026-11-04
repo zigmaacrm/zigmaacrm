@@ -3135,6 +3135,7 @@ export const zigmaaApi = {
     quoted_text?: string;
     quoted_from_me?: boolean;
     crm_display_message?: string;
+    session_id?: string;
   }): Promise<any> {
     try {
       const cleanPhone = payload.phone_number.replace(/[^0-9]/g, "");
