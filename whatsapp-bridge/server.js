@@ -208,12 +208,19 @@ function getSession(sessionId, createIfMissing = true) {
     authDir: authDir,
     lidToPhoneMap: new Map(),
     pendingContacts: new Map(),
+    contactsStore: new Map(),
     syncTimeout: null,
     isFetchingAvatar: false
   };
   sessions.set(sId, session);
   loadLidMappingsForSession(session);
   return session;
+}
+
+function isValidMobileNumber(phone) {
+  if (!phone) return false;
+  const clean = String(phone).replace(/[^0-9]/g, '');
+  return clean.length >= 8 && clean.length <= 13;
 }
 
 function resolvePhoneFromJid(jid, session) {
@@ -229,12 +236,13 @@ function resolvePhoneFromJid(jid, session) {
   }
   if (str.endsWith('@s.whatsapp.net') || str.endsWith('@c.us')) {
     const raw = str.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
-    return raw && raw.length >= 7 ? raw : null;
+    return isValidMobileNumber(raw) ? raw : null;
   }
   if (str.endsWith('@lid')) {
     const cleanLid = str.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
     if (session && session.lidToPhoneMap.has(cleanLid)) {
-      return session.lidToPhoneMap.get(cleanLid);
+      const mapped = session.lidToPhoneMap.get(cleanLid);
+      return isValidMobileNumber(mapped) ? mapped : null;
     }
     if (session && fs.existsSync(session.authDir)) {
       const revFile = path.join(session.authDir, `lid-mapping-${cleanLid}_reverse.json`);
@@ -243,16 +251,17 @@ function resolvePhoneFromJid(jid, session) {
           const pn = JSON.parse(fs.readFileSync(revFile, 'utf8'));
           if (pn) {
             const cleanPn = String(pn).replace(/[^0-9]/g, '');
-            if (session) session.lidToPhoneMap.set(cleanLid, cleanPn);
-            return cleanPn;
+            if (isValidMobileNumber(cleanPn)) {
+              if (session) session.lidToPhoneMap.set(cleanLid, cleanPn);
+              return cleanPn;
+            }
           }
         } catch (_) {}
       }
     }
-    return cleanLid && cleanLid.length >= 7 ? cleanLid : null;
+    return null;
   }
-  const clean = str.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
-  return clean && clean.length >= 7 ? clean : null;
+  return null;
 }
 
 function extractMessageBody(m) {
@@ -416,7 +425,8 @@ async function decryptAndSaveMedia(msgObj) {
       caption: caption || '',
       is_voice_note: isVoiceNote,
       duration: durationSecs,
-      file_size: buffer.length
+      file_size: buffer.length,
+      media_base64: buffer.toString('base64')
     };
   } catch (err) {
     console.error('[WhatsApp Media Decrypt Error]:', err.message);
@@ -620,16 +630,22 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
       // 1. Sync contacts from history
       if (Array.isArray(contacts)) {
         for (const c of contacts) {
-          if (!c.id || c.id.endsWith('@g.us') || c.id.includes('@broadcast') || c.id.includes('@newsletter')) continue;
+          if (!c.id || (!c.id.endsWith('@s.whatsapp.net') && !c.id.endsWith('@c.us'))) continue;
           const clean = resolvePhoneFromJid(c.id, session);
-          if (clean && clean.length >= 7) {
-            const rawName = c.name || c.notify || c.verifiedName || null;
-            session.pendingContacts.set(clean, {
+          if (clean && clean.length >= 8 && clean.length <= 13) {
+            const phonebookName = c.name || null;
+            const pushName = c.notify || c.verifiedName || null;
+            const bestName = phonebookName || pushName || null;
+            const item = {
               phone: clean,
-              name: rawName,
+              name: bestName,
+              phonebook_name: phonebookName,
+              push_name: pushName,
               jid: c.id,
               avatar_url: null
-            });
+            };
+            if (session.contactsStore) session.contactsStore.set(clean, item);
+            session.pendingContacts.set(clean, item);
           }
         }
         if (session.pendingContacts.size > 0) {
@@ -643,11 +659,11 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
       if (Array.isArray(messages)) {
         for (const msg of messages) {
           const remoteJid = msg.key?.remoteJid || '';
-          if (remoteJid.endsWith('@g.us') || remoteJid.includes('@broadcast') || remoteJid.includes('@newsletter')) {
+          if (!remoteJid || (!remoteJid.endsWith('@s.whatsapp.net') && !remoteJid.endsWith('@c.us'))) {
             continue;
           }
           const cleanPhone = resolvePhoneFromJid(remoteJid, session);
-          if (!cleanPhone || cleanPhone.length < 7) continue;
+          if (!cleanPhone || cleanPhone.length < 8 || cleanPhone.length > 13) continue;
 
           let mediaPayload = null;
           try {
@@ -666,7 +682,8 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
           if (!body) continue;
 
           const fromMe = Boolean(msg.key?.fromMe);
-          const pushName = msg.pushName || null;
+          const savedContact = session.contactsStore ? session.contactsStore.get(cleanPhone) : null;
+          const contactName = savedContact?.phonebook_name || savedContact?.name || msg.pushName || null;
           const ts = typeof msg.messageTimestamp === 'number'
             ? msg.messageTimestamp
             : (msg.messageTimestamp?.low || Math.floor(Date.now() / 1000));
@@ -674,7 +691,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
           coveredPhones.add(cleanPhone);
           validMessages.push({
             phone_number: cleanPhone,
-            contact_name: pushName,
+            contact_name: contactName,
             message_body: body,
             meta_message_id: msg.key?.id,
             timestamp: ts,
@@ -683,15 +700,16 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
             media_url: mediaPayload?.media_url || null,
             file_name: mediaPayload?.file_name || null,
             caption: mediaPayload?.caption || null,
-            is_voice_note: Boolean(mediaPayload?.is_voice_note)
+            is_voice_note: Boolean(mediaPayload?.is_voice_note),
+            media_base64: mediaPayload?.media_base64 || null
           });
         }
       }
 
-      // 3. Extract top 20 recent active direct chats if not already covered
+      // 3. Register top 20 recent direct chats as contacts
       if (Array.isArray(chats)) {
         const directChats = chats
-          .filter(c => c.id && !c.id.endsWith('@g.us') && !c.id.includes('@broadcast') && !c.id.includes('@newsletter'))
+          .filter(c => c.id && (c.id.endsWith('@s.whatsapp.net') || c.id.endsWith('@c.us')))
           .sort((a, b) => {
             const tsA = typeof a.conversationTimestamp === 'number' ? a.conversationTimestamp : (a.conversationTimestamp?.low || 0);
             const tsB = typeof b.conversationTimestamp === 'number' ? b.conversationTimestamp : (b.conversationTimestamp?.low || 0);
@@ -700,21 +718,21 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
 
         for (const chat of directChats.slice(0, 20)) {
           const cleanPhone = resolvePhoneFromJid(chat.id, session);
-          if (!cleanPhone || cleanPhone.length < 7 || coveredPhones.has(cleanPhone)) continue;
-          coveredPhones.add(cleanPhone);
+          if (!cleanPhone || cleanPhone.length < 8 || cleanPhone.length > 13) continue;
 
-          const pushName = chat.name || session.pendingContacts.get(cleanPhone)?.name || null;
-          const ts = typeof chat.conversationTimestamp === 'number' ? chat.conversationTimestamp : (chat.conversationTimestamp?.low || Math.floor(Date.now() / 1000));
-          validMessages.push({
-            phone_number: cleanPhone,
-            contact_name: pushName,
-            message_body: `💬 Active chat with ${pushName || cleanPhone}`,
-            meta_message_id: `wamid.init_${cleanPhone}_${session.id}`,
-            timestamp: ts,
-            direction: 'INBOUND',
-            message_type: 'text',
-            is_voice_note: false
+          const savedContact = session.contactsStore ? session.contactsStore.get(cleanPhone) : null;
+          const bestName = savedContact?.phonebook_name || chat.name || savedContact?.name || null;
+          session.pendingContacts.set(cleanPhone, {
+            phone: cleanPhone,
+            name: bestName,
+            phonebook_name: savedContact?.phonebook_name || null,
+            push_name: savedContact?.push_name || null,
+            jid: chat.id,
+            avatar_url: null
           });
+        }
+        if (session.pendingContacts.size > 0) {
+          scheduleContactSync(session);
         }
       }
 
@@ -743,41 +761,30 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
     session.sock.ev.on('chats.upsert', async (newChats) => {
       if (!Array.isArray(newChats) || newChats.length === 0) return;
       const directChats = newChats
-        .filter(c => c.id && !c.id.endsWith('@g.us') && !c.id.includes('@broadcast') && !c.id.includes('@newsletter'))
+        .filter(c => c.id && (c.id.endsWith('@s.whatsapp.net') || c.id.endsWith('@c.us')))
         .sort((a, b) => {
           const tsA = typeof a.conversationTimestamp === 'number' ? a.conversationTimestamp : (a.conversationTimestamp?.low || 0);
           const tsB = typeof b.conversationTimestamp === 'number' ? b.conversationTimestamp : (b.conversationTimestamp?.low || 0);
           return tsB - tsA;
         });
 
-      const recentMessages = [];
       for (const chat of directChats.slice(0, 20)) {
         const cleanPhone = resolvePhoneFromJid(chat.id, session);
-        if (!cleanPhone || cleanPhone.length < 7) continue;
-        const pushName = chat.name || session.pendingContacts.get(cleanPhone)?.name || null;
-        const ts = typeof chat.conversationTimestamp === 'number' ? chat.conversationTimestamp : (chat.conversationTimestamp?.low || Math.floor(Date.now() / 1000));
-        recentMessages.push({
-          phone_number: cleanPhone,
-          contact_name: pushName,
-          message_body: `💬 Active chat with ${pushName || cleanPhone}`,
-          meta_message_id: `wamid.init_${cleanPhone}_${session.id}`,
-          timestamp: ts,
-          direction: 'INBOUND',
-          message_type: 'text',
-          is_voice_note: false
+        if (!cleanPhone || cleanPhone.length < 8 || cleanPhone.length > 13) continue;
+        const savedContact = session.contactsStore ? session.contactsStore.get(cleanPhone) : null;
+        const bestName = savedContact?.phonebook_name || chat.name || savedContact?.name || null;
+        session.pendingContacts.set(cleanPhone, {
+          phone: cleanPhone,
+          name: bestName,
+          phonebook_name: savedContact?.phonebook_name || null,
+          push_name: savedContact?.push_name || null,
+          jid: chat.id,
+          avatar_url: null
         });
       }
 
-      if (recentMessages.length > 0) {
-        fetch(FASTAPI_SYNC_HISTORY_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            messages: recentMessages,
-            assigned_user_id: session.id !== 'default' ? session.id : null,
-            session_id: session.id
-          })
-        }).catch(() => {});
+      if (session.pendingContacts.size > 0) {
+        scheduleContactSync(session);
       }
     });
 
@@ -785,18 +792,25 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
     session.sock.ev.on('contacts.upsert', (newContacts) => {
       if (!Array.isArray(newContacts)) return;
       for (const c of newContacts) {
-        if (!c.id || c.id.endsWith('@g.us') || c.id.includes('@broadcast') || c.id.includes('@newsletter')) {
+        if (!c.id || (!c.id.endsWith('@s.whatsapp.net') && !c.id.endsWith('@c.us'))) {
           continue;
         }
         const clean = resolvePhoneFromJid(c.id, session);
-        if (clean && clean.length >= 7) {
-          const rawName = c.name || c.notify || c.verifiedName || null;
-          session.pendingContacts.set(clean, {
+        if (clean && clean.length >= 8 && clean.length <= 13) {
+          const existing = session.contactsStore ? session.contactsStore.get(clean) : null;
+          const phonebookName = c.name || existing?.phonebook_name || null;
+          const pushName = c.notify || c.verifiedName || existing?.push_name || null;
+          const bestName = phonebookName || pushName || existing?.name || null;
+          const item = {
             phone: clean,
-            name: rawName,
+            name: bestName,
+            phonebook_name: phonebookName,
+            push_name: pushName,
             jid: c.id,
             avatar_url: null
-          });
+          };
+          if (session.contactsStore) session.contactsStore.set(clean, item);
+          session.pendingContacts.set(clean, item);
         }
       }
       if (session.pendingContacts.size > 0) {
@@ -808,20 +822,25 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
     session.sock.ev.on('contacts.update', (updatedContacts) => {
       if (!Array.isArray(updatedContacts)) return;
       for (const c of updatedContacts) {
-        if (!c.id || c.id.endsWith('@g.us') || c.id.includes('@broadcast') || c.id.includes('@newsletter')) {
+        if (!c.id || (!c.id.endsWith('@s.whatsapp.net') && !c.id.endsWith('@c.us'))) {
           continue;
         }
         const clean = resolvePhoneFromJid(c.id, session);
-        if (clean && clean.length >= 7) {
-          const rawName = c.name || c.notify || c.verifiedName || null;
-          if (rawName) {
-            session.pendingContacts.set(clean, {
-              phone: clean,
-              name: rawName,
-              jid: c.id,
-              avatar_url: null
-            });
-          }
+        if (clean && clean.length >= 8 && clean.length <= 13) {
+          const existing = session.contactsStore ? session.contactsStore.get(clean) : null;
+          const phonebookName = c.name || existing?.phonebook_name || null;
+          const pushName = c.notify || c.verifiedName || existing?.push_name || null;
+          const bestName = phonebookName || pushName || existing?.name || null;
+          const item = {
+            phone: clean,
+            name: bestName,
+            phonebook_name: phonebookName,
+            push_name: pushName,
+            jid: c.id,
+            avatar_url: null
+          };
+          if (session.contactsStore) session.contactsStore.set(clean, item);
+          session.pendingContacts.set(clean, item);
         }
       }
       if (session.pendingContacts.size > 0) {
@@ -880,14 +899,15 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
           }
           if (!body) continue;
 
-          const pushName = msg.pushName || null;
+          const savedContact = session.contactsStore ? session.contactsStore.get(senderPhone) : null;
+          const contactName = savedContact?.phonebook_name || savedContact?.name || msg.pushName || null;
           const ts = typeof msg.messageTimestamp === 'number'
             ? msg.messageTimestamp
             : (msg.messageTimestamp?.low || Math.floor(Date.now() / 1000));
 
           const payload = {
             phone_number: senderPhone,
-            contact_name: pushName,
+            contact_name: contactName,
             message_body: body,
             meta_message_id: msgId,
             timestamp: ts,
@@ -897,6 +917,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
             file_name: mediaPayload?.file_name || null,
             caption: mediaPayload?.caption || null,
             is_voice_note: Boolean(mediaPayload?.is_voice_note),
+            media_base64: mediaPayload?.media_base64 || null,
             assigned_user_id: session.id !== 'default' ? session.id : null,
             session_id: session.id
           };

@@ -146,6 +146,24 @@ class WhatsAppMessageOut(BaseModel):
 class ReassignConversationRequest(BaseModel):
     assigned_user_id: str
 
+DUMMY_TEST_PHONES = {
+    '16315551181', '919655512345', '9197187', '9197229303', '9197633560',
+    '919940211876', '919840122345', '919444099881', '919811234567', '919789055432'
+}
+
+def is_valid_mobile_phone(phone: Optional[str]) -> bool:
+    if not phone:
+        return False
+    clean = normalize_phone(phone)
+    if not clean:
+        return False
+    # Valid mobile numbers are 8 to 13 digits. Strictly excludes internal WhatsApp LIDs (14-16 digits)
+    if len(clean) < 8 or len(clean) > 13:
+        return False
+    if clean in DUMMY_TEST_PHONES:
+        return False
+    return True
+
 def get_gateway_url() -> str:
     url = (os.getenv("WHATSAPP_GATEWAY_URL") or getattr(settings, "WHATSAPP_GATEWAY_URL", "")).strip().rstrip("/")
     if os.getenv("RENDER") or os.getenv("ENVIRONMENT") == "production":
@@ -567,7 +585,7 @@ async def get_whatsapp_conversations(
         for m in all_msgs:
             if m.phone_number:
                 clean = normalize_phone(m.phone_number)
-                if clean and clean not in DUMMY_TEST_PHONES and len(clean) >= 7:
+                if clean and is_valid_mobile_phone(clean):
                     unique_phones.add(clean)
                     unique_phones.add(f"+{clean}")
                     unique_phones.add(m.phone_number)
@@ -617,8 +635,7 @@ async def get_whatsapp_conversations(
         for m in all_msgs:
             if not m.phone_number:
                 continue
-            clean_check = normalize_phone(m.phone_number)
-            if not clean_check or clean_check in DUMMY_TEST_PHONES or len(clean_check) < 7:
+            if not is_valid_mobile_phone(m.phone_number):
                 continue
 
             if m.phone_number not in conv_map:
@@ -649,6 +666,8 @@ async def get_whatsapp_conversations(
                     contact_name = contact.full_name.strip()
                 elif prof_name and str(prof_name).strip() and not is_generic_or_placeholder_name(str(prof_name), m.phone_number):
                     contact_name = str(prof_name).strip()
+                elif m.contact_name and not is_generic_or_placeholder_name(m.contact_name, m.phone_number):
+                    contact_name = m.contact_name.strip()
                 else:
                     contact_name = format_display_phone(m.phone_number)
 
@@ -721,12 +740,11 @@ async def get_whatsapp_conversations(
                     "unread_count": unread_cnt
                 }
 
-    # Also fetch Contacts (synced from WhatsApp or assigned to current user) so address-book contacts appear in inbox!
+    # Also fetch Contacts assigned to current user so address-book contacts appear in inbox!
     contact_q = select(Contact)
     if current_user:
         contact_q = contact_q.where(
             or_(
-                Contact.source == "WHATSAPP",
                 Contact.assigned_user_id == current_user.id,
                 Contact.owner_id == current_user.id
             )
@@ -740,7 +758,7 @@ async def get_whatsapp_conversations(
         if not sc.phone:
             continue
         clean_p = normalize_phone(sc.phone)
-        if not clean_p or clean_p in DUMMY_TEST_PHONES or len(clean_p) < 7:
+        if not is_valid_mobile_phone(clean_p):
             continue
 
         # Check if already present in conv_map
@@ -808,7 +826,7 @@ async def get_whatsapp_conversations(
 
     return {
         "status": "success",
-        "conversations": active_conversations[:limit]
+        "conversations": active_conversations[:20]
     }
 
 @router.patch("/conversations/{phone_number}/assign")
@@ -903,37 +921,46 @@ async def bulk_sync_whatsapp_contacts(
     synced_count = 0
     for item in payload.contacts:
         clean_phone = normalize_phone(item.phone)
-        if not clean_phone or len(clean_phone) < 7:
+        if not is_valid_mobile_phone(clean_phone):
             continue
 
         search_suffix = clean_phone[-10:] if len(clean_phone) >= 10 else clean_phone
         formatted_phone = f"+{clean_phone}" if not clean_phone.startswith("+") else clean_phone
         display_name = item.name.strip() if item.name and not is_generic_or_placeholder_name(item.name, clean_phone) else format_display_phone(clean_phone)
 
-        c_res = await db.execute(select(Contact).where(Contact.phone.like(f"%{search_suffix}%")).limit(1))
+        c_stmt = select(Contact).where(Contact.phone.like(f"%{search_suffix}%"))
+        if effective_user_id:
+            c_stmt = c_stmt.where(
+                or_(
+                    Contact.assigned_user_id == effective_user_id,
+                    Contact.owner_id == effective_user_id
+                )
+            )
+        c_res = await db.execute(c_stmt.limit(1))
         contact = c_res.scalar_one_or_none()
 
         if contact:
-            if effective_user_id and not contact.assigned_user_id:
+            if effective_user_id:
                 contact.assigned_user_id = effective_user_id
                 contact.owner_id = effective_user_id
             # Update name/avatar if empty or placeholder
-            if (not contact.full_name or is_generic_or_placeholder_name(contact.full_name, clean_phone)) and item.name:
+            if item.name and not is_generic_or_placeholder_name(item.name, clean_phone):
                 contact.full_name = item.name.strip()
 
             curr_data = dict(contact.custom_data or {})
+            if item.name and not is_generic_or_placeholder_name(item.name, clean_phone):
+                curr_data["whatsapp_name"] = item.name.strip()
             if item.avatar_url and curr_data.get("avatar_url") != item.avatar_url:
                 curr_data["avatar_url"] = item.avatar_url
-                contact.custom_data = curr_data
             if item.jid and not curr_data.get("jid"):
                 curr_data["jid"] = item.jid
-                contact.custom_data = curr_data
+            contact.custom_data = curr_data
         else:
-            c_data = {}
-            if item.jid:
-                c_data["jid"] = item.jid
-            if item.avatar_url:
-                c_data["avatar_url"] = item.avatar_url
+            c_data = {
+                "whatsapp_name": item.name.strip() if item.name and not is_generic_or_placeholder_name(item.name, clean_phone) else None,
+                "jid": item.jid,
+                "avatar_url": item.avatar_url
+            }
 
             contact = Contact(
                 organization_id=default_org_id,
@@ -1591,6 +1618,20 @@ async def pin_whatsapp_conversation(
         c_data["is_pinned"] = is_pinned
         contact.custom_data = c_data
         await db.commit()
+    else:
+        is_pinned = True
+        contact = Contact(
+            organization_id=current_user.organization_id if current_user else None,
+            full_name=format_display_phone(clean),
+            phone=f"+{clean}" if not clean.startswith("+") else clean,
+            source="WHATSAPP",
+            lifecycle_stage="LEAD",
+            assigned_user_id=current_user.id if current_user else None,
+            owner_id=current_user.id if current_user else None,
+            custom_data={"is_pinned": True}
+        )
+        db.add(contact)
+        await db.commit()
     return {"status": "success", "is_pinned": is_pinned}
 
 @router.post("/conversations/{phone}/archive")
@@ -1614,5 +1655,19 @@ async def archive_whatsapp_conversation(
         is_archived = not c_data.get("is_archived", False)
         c_data["is_archived"] = is_archived
         contact.custom_data = c_data
+        await db.commit()
+    else:
+        is_archived = True
+        contact = Contact(
+            organization_id=current_user.organization_id if current_user else None,
+            full_name=format_display_phone(clean),
+            phone=f"+{clean}" if not clean.startswith("+") else clean,
+            source="WHATSAPP",
+            lifecycle_stage="LEAD",
+            assigned_user_id=current_user.id if current_user else None,
+            owner_id=current_user.id if current_user else None,
+            custom_data={"is_archived": True}
+        )
+        db.add(contact)
         await db.commit()
     return {"status": "success", "is_archived": is_archived}

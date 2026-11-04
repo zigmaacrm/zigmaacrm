@@ -325,7 +325,6 @@ function VoiceNotePlayer({
       <audio
         ref={audioRef}
         src={audioUrl}
-        crossOrigin="anonymous"
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
         onTimeUpdate={handleTimeUpdate}
@@ -675,7 +674,7 @@ function MessageBubbleContainer({
 
   if (msg.isDeleted) {
     return (
-      <div className={cn("flex w-full my-1 sm:my-1.5", isOutbound ? "justify-end" : "justify-start")}>
+      <div className={cn("flex w-full my-0.5 sm:my-1", isOutbound ? "justify-end" : "justify-start")}>
         <div
           className={cn(
             "rounded-2xl px-3.5 py-2 text-xs transition-all shadow-2xs border flex items-center gap-2 italic select-none",
@@ -693,7 +692,7 @@ function MessageBubbleContainer({
   }
 
   return (
-    <div className={cn("flex w-full my-1 sm:my-1.5", isOutbound ? "justify-end" : "justify-start")}>
+    <div className={cn("flex w-full my-0.5 sm:my-1", isOutbound ? "justify-end" : "justify-start")}>
       <div className="relative group max-w-[85%] sm:max-w-[70%] w-fit">
         {/* Floating Quick Reaction Bar (WhatsApp style: appears above or below bubble on trigger) */}
         {showReaction && (
@@ -2552,7 +2551,7 @@ export default function WhatsAppPage() {
               <>
                 {/* Chat Header */}
                 <div className={cn(
-                  "h-16 px-4 sm:px-5 border-b backdrop-blur-md flex items-center justify-between shrink-0 z-10 transition-colors gap-3 overflow-hidden",
+                  "h-16 px-4 sm:px-5 border-b backdrop-blur-md flex items-center justify-between shrink-0 z-20 transition-colors gap-3 overflow-visible",
                   isDark ? "border-[#1E293B] bg-[#090A0F]/90 text-white" : "border-slate-200 bg-white/95 text-slate-900 shadow-2xs"
                 )}>
                   {/* Contact Identity - Clicking profile or name opens CRM Lead Context Drawer */}
@@ -2865,14 +2864,25 @@ export default function WhatsAppPage() {
                       "text-center py-12 space-y-2",
                       isDark ? "text-slate-400" : "text-slate-500"
                     )}>
-                      <p className="text-xs">No previous message history with this contact.</p>
-                      <p className="text-[11px] opacity-75">
-                        Type below or select a template to start conversation via Meta Cloud API.
+                      <p className="text-xs">
+                        {chatSearchQuery.trim() ? `No messages match "${chatSearchQuery}"` : "No previous message history with this contact."}
                       </p>
+                      {!chatSearchQuery.trim() && (
+                        <p className="text-[11px] opacity-75">
+                          Type below or select a template to start conversation via Meta Cloud API.
+                        </p>
+                      )}
                     </div>
                   ) : (
                     (chatSearchQuery.trim()
-                      ? messages.filter((m) => (m.text || "").toLowerCase().includes(chatSearchQuery.toLowerCase().trim()))
+                      ? messages.filter((m) => {
+                          const q = chatSearchQuery.toLowerCase().trim();
+                          return (
+                            (m.text || "").toLowerCase().includes(q) ||
+                            (m.caption || "").toLowerCase().includes(q) ||
+                            (m.fileName || "").toLowerCase().includes(q)
+                          );
+                        })
                       : messages
                     ).map((msg, idx) => {
                       const isNearBottom = idx >= Math.max(0, messages.length - 6);
@@ -2985,36 +2995,65 @@ export default function WhatsAppPage() {
                                 );
                               })()}
                             </div>
-                          ) : isPureImage && msg.attachment?.url ? (
-                            /* 2. Pure Image */
-                            <div
-                              className={cn(
-                                "rounded-xl p-[3px] shadow-xs select-none transition-all relative overflow-hidden",
-                                isOutbound
-                                  ? (isDark ? "bg-[#005c4b] rounded-tr-xs ml-auto" : "bg-[#D9FDD3] rounded-tr-xs ml-auto shadow-2xs border border-[#C2EBC0]")
-                                  : (isDark ? "bg-[#202c33] rounded-tl-xs" : "bg-white rounded-tl-xs shadow-2xs border border-slate-200/90")
-                              )}
-                            >
-                              <div className="relative rounded-lg overflow-hidden max-w-[280px] sm:max-w-[340px]">
-                                <img
-                                  src={msg.attachment.url}
-                                  alt="WhatsApp Image"
-                                  className="w-full max-h-[380px] object-cover rounded-lg block cursor-pointer transition-transform hover:scale-[1.01]"
-                                  onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}
-                                />
-                                <div className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded-md bg-black/60 backdrop-blur-xs text-white text-[10px] font-medium flex items-center gap-1 shadow-sm pointer-events-none">
-                                  <span>{msg.timeLabel}</span>
-                                  {isOutbound && (
-                                    <CheckCheck
-                                      className={cn(
-                                        "w-3.5 h-3.5",
-                                        msg.status === "READ" ? "text-[#53bdeb]" : "text-white/80"
-                                      )}
-                                    />
-                                  )}
+                          ) : isPureImage ? (
+                            /* 2. Pure Image (Preview if URL available, compact fallback card if missing) */
+                            msg.attachment?.url ? (
+                              <div
+                                className={cn(
+                                  "rounded-xl p-[3px] shadow-xs select-none transition-all relative overflow-hidden",
+                                  isOutbound
+                                    ? (isDark ? "bg-[#005c4b] rounded-tr-xs ml-auto" : "bg-[#D9FDD3] rounded-tr-xs ml-auto shadow-2xs border border-[#C2EBC0]")
+                                    : (isDark ? "bg-[#202c33] rounded-tl-xs" : "bg-white rounded-tl-xs shadow-2xs border border-slate-200/90")
+                                )}
+                              >
+                                <div className="relative rounded-lg overflow-hidden max-w-[280px] sm:max-w-[340px]">
+                                  <img
+                                    src={msg.attachment.url}
+                                    alt="Photo"
+                                    className="w-full max-h-[380px] object-cover rounded-lg block cursor-pointer transition-transform hover:scale-[1.01]"
+                                    onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}
+                                    onError={(e) => {
+                                      (e.target as HTMLElement).style.display = "none";
+                                      const fallback = (e.target as HTMLElement).nextElementSibling;
+                                      if (fallback) fallback.classList.remove("hidden");
+                                    }}
+                                  />
+                                  <div className="hidden p-3 flex items-center gap-2 text-xs">
+                                    <span className="text-base">📷</span>
+                                    <span className="font-medium truncate">{msg.attachment?.name || msg.fileName || "Photo"}</span>
+                                  </div>
+                                  <div className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded-md bg-black/60 backdrop-blur-xs text-white text-[10px] font-medium flex items-center gap-1 shadow-sm pointer-events-none">
+                                    <span>{msg.timeLabel}</span>
+                                    {isOutbound && (
+                                      <CheckCheck
+                                        className={cn(
+                                          "w-3.5 h-3.5",
+                                          msg.status === "READ" ? "text-[#53bdeb]" : "text-white/80"
+                                        )}
+                                      />
+                                    )}
+                                  </div>
                                 </div>
                               </div>
-                            </div>
+                            ) : (
+                              <div
+                                className={cn(
+                                  "rounded-xl px-3 py-2 text-xs flex items-center gap-2 select-none shadow-xs w-fit",
+                                  isOutbound
+                                    ? (isDark ? "bg-[#005c4b] text-white rounded-tr-xs ml-auto" : "bg-[#D9FDD3] text-slate-800 rounded-tr-xs shadow-2xs border border-[#C2EBC0]")
+                                    : (isDark ? "bg-[#202c33] text-white rounded-tl-xs" : "bg-white text-slate-800 rounded-tl-xs shadow-2xs border border-slate-200/90")
+                                )}
+                              >
+                                <span className="text-base shrink-0">📷</span>
+                                <span className="font-medium truncate max-w-[170px] sm:max-w-[220px]">
+                                  {msg.attachment?.name || msg.fileName || "Photo"}
+                                </span>
+                                <span className="text-[10px] opacity-75 ml-2 whitespace-nowrap">{msg.timeLabel}</span>
+                                {isOutbound && (
+                                  <CheckCheck className={cn("w-3.5 h-3.5 shrink-0", msg.status === "READ" ? "text-[#53bdeb]" : "text-slate-400")} />
+                                )}
+                              </div>
+                            )
                           ) : isPureVideo && msg.attachment?.url ? (
                             /* 3. Pure Video */
                             <div
@@ -3216,9 +3255,12 @@ export default function WhatsAppPage() {
                                     <div className="mb-2 rounded-xl overflow-hidden cursor-pointer group shadow-sm">
                                       <img
                                         src={msg.attachment.url}
-                                        alt="WhatsApp Image"
+                                        alt="Photo"
                                         className="w-full max-h-64 object-cover rounded-xl transition-transform hover:scale-101"
                                         onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}
+                                        onError={(e) => {
+                                          (e.target as HTMLElement).style.display = "none";
+                                        }}
                                       />
                                     </div>
                                   )}

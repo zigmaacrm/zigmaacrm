@@ -197,10 +197,9 @@ async def on_startup():
                 await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS timestamp TIMESTAMP WITHOUT TIME ZONE;"))
                 await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS meta_message_id VARCHAR(255);"))
                 await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS message_type VARCHAR(50) DEFAULT 'text';"))
-                await conn.execute(text("UPDATE contacts SET full_name = 'Muni Pei👻' WHERE phone LIKE '%7339320719%';"))
-                await conn.execute(text("UPDATE leads SET full_name = 'Muni Pei👻' WHERE phone LIKE '%7339320719%';"))
-                await conn.execute(text("UPDATE contacts SET full_name = 'Thoufiq bro ZT' WHERE phone LIKE '%9600471080%';"))
-                await conn.execute(text("UPDATE leads SET full_name = 'Thoufiq bro ZT' WHERE phone LIKE '%9600471080%';"))
+                # Clean up corrupt WhatsApp Linked Device IDs (@lid) and invalid length numbers
+                await conn.execute(text("DELETE FROM whatsapp_messages WHERE LENGTH(REGEXP_REPLACE(phone_number, '[^0-9]', '', 'g')) > 13 OR LENGTH(REGEXP_REPLACE(phone_number, '[^0-9]', '', 'g')) < 8;"))
+                await conn.execute(text("DELETE FROM contacts WHERE source = 'WHATSAPP' AND (LENGTH(REGEXP_REPLACE(phone, '[^0-9]', '', 'g')) > 13 OR LENGTH(REGEXP_REPLACE(phone, '[^0-9]', '', 'g')) < 8);"))
             except Exception as e:
                 print(f"[STARTUP MIGRATION] Schema check note: {e}")
     except Exception as e:

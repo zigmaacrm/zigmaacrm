@@ -492,6 +492,7 @@ class WhatsAppStatusUpdateRequest(BaseModel):
     meta_message_id: Optional[str] = None
     status: str
     session_id: Optional[str] = None
+    media_base64: Optional[str] = None
     assigned_user_id: Optional[str] = None
     phone: Optional[str] = None
     name: Optional[str] = None
@@ -524,25 +525,48 @@ async def receive_whatsapp_qr_inbound(
     Automatically captures lead/contact, links conversation, and triggers notifications.
     """
     clean_phone = normalize_phone(payload.phone_number)
-    if not clean_phone:
-        return {"status": "ignored", "reason": "empty_phone"}
+    if not clean_phone or len(clean_phone) < 8 or len(clean_phone) > 13:
+        return {"status": "ignored", "reason": "invalid_phone"}
+
+    # Save decrypted media locally if sent via base64
+    if payload.media_base64 and payload.file_name:
+        try:
+            uploads_dir = os.path.join(os.getcwd(), "uploads", "whatsapp")
+            os.makedirs(uploads_dir, exist_ok=True)
+            raw_b64 = payload.media_base64.split(",")[1] if "," in payload.media_base64 else payload.media_base64
+            file_bytes = base64.b64decode(raw_b64)
+            file_dest = os.path.join(uploads_dir, payload.file_name)
+            with open(file_dest, "wb") as f_out:
+                f_out.write(file_bytes)
+            if not payload.media_url:
+                payload.media_url = f"/media/whatsapp/{payload.file_name}"
+        except Exception as e:
+            logger.warning(f"Failed to write incoming media base64: {e}")
 
     res_org = await db.execute(select(Organization).limit(1))
     default_org = res_org.scalars().first()
     default_org_id = default_org.id if default_org else None
 
     search_suffix = clean_phone[-10:] if len(clean_phone) >= 10 else clean_phone
-    c_res = await db.execute(select(Contact).where(Contact.phone.like(f"%{search_suffix}%")).limit(1))
+    effective_user_id = payload.assigned_user_id
+    if not effective_user_id and payload.session_id and payload.session_id != "default":
+        effective_user_id = payload.session_id
+
+    c_stmt = select(Contact).where(Contact.phone.like(f"%{search_suffix}%"))
+    if effective_user_id:
+        c_stmt = c_stmt.where(
+            or_(
+                Contact.assigned_user_id == effective_user_id,
+                Contact.owner_id == effective_user_id
+            )
+        )
+    c_res = await db.execute(c_stmt.limit(1))
     contact = c_res.scalar_one_or_none()
 
     lead_res = await db.execute(select(Lead).where(Lead.phone.like(f"%{search_suffix}%")).limit(1))
     lead = lead_res.scalar_one_or_none()
 
     display_name = payload.contact_name.strip() if payload.contact_name and payload.contact_name.strip() else format_display_phone(clean_phone)
-
-    effective_user_id = payload.assigned_user_id
-    if not effective_user_id and payload.session_id and payload.session_id != "default":
-        effective_user_id = payload.session_id
 
     # Resolve the linked WhatsApp phone number of the session owner
     session_business_phone = None
@@ -561,14 +585,21 @@ async def receive_whatsapp_qr_inbound(
             source="WHATSAPP",
             lifecycle_stage="LEAD",
             assigned_user_id=effective_user_id,
-            owner_id=effective_user_id
+            owner_id=effective_user_id,
+            custom_data={"whatsapp_name": payload.contact_name.strip()} if payload.contact_name else {}
         )
         db.add(contact)
         await db.flush()
         is_new_lead = True
-    elif effective_user_id and not contact.assigned_user_id:
-        contact.assigned_user_id = effective_user_id
-        contact.owner_id = effective_user_id
+    else:
+        if effective_user_id:
+            contact.assigned_user_id = effective_user_id
+            contact.owner_id = effective_user_id
+        if payload.contact_name and not is_generic_or_placeholder_name(payload.contact_name, clean_phone):
+            contact.full_name = payload.contact_name.strip()
+            curr_data = dict(contact.custom_data or {})
+            curr_data["whatsapp_name"] = payload.contact_name.strip()
+            contact.custom_data = curr_data
 
     if not lead:
         lead = Lead(
