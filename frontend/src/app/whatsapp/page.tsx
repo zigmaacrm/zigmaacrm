@@ -1081,8 +1081,11 @@ export default function WhatsAppPage() {
     const fetchStatus = () => {
       api.getWhatsAppQRStatus().then((data) => {
         setQrStatus(data.status);
-        setQrPhone(data.phone);
-        if (data.status !== "CONNECTED") {
+        if (data.phone) {
+          setQrPhone(data.phone);
+        }
+        if (data.status === "DISCONNECTED" && !data.phone) {
+          setQrPhone(null);
           setConversations([]);
           setActivePhone("");
           setMessages([]);
@@ -2259,7 +2262,7 @@ export default function WhatsAppPage() {
               </div>
 
               {/* Linked Device Status & Logout */}
-              {qrStatus === "CONNECTED" && (
+              {(qrStatus === "CONNECTED" || Boolean(qrPhone)) && (
                 <div className={cn(
                   "w-full flex items-center justify-between px-3 py-2 rounded-xl border text-xs font-semibold transition-all shadow-2xs",
                   isDark
@@ -2391,7 +2394,7 @@ export default function WhatsAppPage() {
                     </div>
                   ))}
                 </div>
-              ) : qrStatus !== "CONNECTED" ? (
+              ) : (!qrPhone && qrStatus !== "CONNECTED") ? (
                 <div className="p-8 text-center flex flex-col items-center justify-center my-auto space-y-3">
                   <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-inner">
                     <QrCode className="w-7 h-7" />

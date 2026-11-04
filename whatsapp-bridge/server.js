@@ -603,6 +603,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
           session.status = 'DISCONNECTED';
           session.qr = null;
           session.phone = null;
+          session.ownerPhone = null;
           session.name = null;
           session.avatarUrl = null;
           if (fs.existsSync(session.authDir)) {
@@ -619,28 +620,29 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
                 session_id: session.id,
                 assigned_user_id: session.id !== 'default' ? session.id : null,
                 phone: null,
-                status: 'DISCONNECTED'
+                status: 'DISCONNECTED',
+                logged_out: true
               })
             }).catch(() => {});
           } catch (_) {}
           // Do NOT auto-reconnect on explicit logout - wait for user to click Scan QR
         } else if (statusCode === 440) {
-          console.warn(`[WhatsApp Gateway:${session.id}] Status 440 (Conflict). Waiting 8s for clean reconnect...`);
-          session.status = 'DISCONNECTED';
+          console.warn(`[WhatsApp Gateway:${session.id}] Status 440 (Conflict). Waiting 5s for clean reconnect...`);
+          session.status = session.phone ? 'CONNECTING' : 'DISCONNECTED';
           session.isStarting = false;
           if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
           session.reconnectTimer = setTimeout(() => {
             session.reconnectTimer = null;
             initWhatsApp(session.id, false);
-          }, 8000);
+          }, 5000);
         } else {
-          session.status = 'DISCONNECTED';
+          session.status = session.phone ? 'CONNECTING' : 'DISCONNECTED';
           session.isStarting = false;
           if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
           session.reconnectTimer = setTimeout(() => {
             session.reconnectTimer = null;
             initWhatsApp(session.id, false);
-          }, 4000);
+          }, 2500);
         }
       } else if (connection === 'open') {
         session.status = 'CONNECTED';
@@ -785,7 +787,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
             return tsB - tsA;
           });
 
-        for (const chat of directChats.slice(0, 20)) {
+        for (const chat of directChats.slice(0, 150)) {
           const cleanPhone = resolvePhoneFromJid(chat.id, session);
           if (!cleanPhone || cleanPhone.length < 8 || cleanPhone.length > 13) continue;
 
@@ -837,7 +839,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
           return tsB - tsA;
         });
 
-      for (const chat of directChats.slice(0, 20)) {
+      for (const chat of directChats.slice(0, 150)) {
         const cleanPhone = resolvePhoneFromJid(chat.id, session);
         if (!cleanPhone || cleanPhone.length < 8 || cleanPhone.length > 13) continue;
         const savedContact = session.contactsStore ? session.contactsStore.get(cleanPhone) : null;
@@ -1082,10 +1084,39 @@ async function disconnectSession(sessionId) {
 // ==========================================
 
 app.get('/status', (req, res) => {
-  const sId = sanitizeSessionId(req.query.sessionId || req.query.session_id || req.query.userId || req.query.user_id);
+  const rawId = req.query.sessionId || req.query.session_id || req.query.userId || req.query.user_id;
+  if (!rawId || rawId === 'keepalive' || req.query.ping) {
+    let anyConnected = false;
+    let anyPhone = null;
+    for (const s of sessions.values()) {
+      if (s.status === 'CONNECTED' && s.phone) {
+        anyConnected = true;
+        anyPhone = s.phone;
+        break;
+      }
+    }
+    return res.json({
+      status: anyConnected ? 'CONNECTED' : 'ONLINE',
+      phone: anyPhone,
+      gateway_online: true,
+      uptime: process.uptime()
+    });
+  }
+
+  const sId = sanitizeSessionId(rawId);
   let session = getSession(sId, false);
   if (!session) {
-    if (sId && sId !== 'default') {
+    for (const s of sessions.values()) {
+      if (s.ownerPhone === sId || (s.status === 'CONNECTED' && s.phone)) {
+        session = s;
+        break;
+      }
+    }
+  }
+
+  if (!session) {
+    const authDir = getSessionAuthDir(sId);
+    if (fs.existsSync(path.join(authDir, 'creds.json'))) {
       session = getSession(sId, true);
       initWhatsApp(sId, false);
     } else {

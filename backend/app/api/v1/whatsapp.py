@@ -577,7 +577,7 @@ async def get_whatsapp_conversations(
     if isinstance(assigned_user_id, str) and assigned_user_id.upper() != "ALL":
         stmt = stmt.where(WhatsAppMessage.assigned_user_id == assigned_user_id)
 
-    stmt = stmt.order_by(desc(WhatsAppMessage.created_at)).limit(effective_limit * 5)
+    stmt = stmt.order_by(desc(WhatsAppMessage.created_at)).limit(2000)
     res = await db.execute(stmt)
     all_msgs = res.scalars().all()
 
@@ -779,8 +779,77 @@ async def get_whatsapp_conversations(
                     "unread_count": unread_cnt
                 }
 
-    # WhatsApp Inbox ONLY displays active conversations with real message threads.
-    # Standalone contacts without WhatsApp chat history belong in the Contacts section.
+    # Also include direct WhatsApp contacts synced from phonebook
+    try:
+        c_stmt = select(Contact).where(
+            or_(
+                Contact.source == "WHATSAPP",
+                Contact.custom_data.op("->>")("whatsapp_name").isnot(None),
+                Contact.custom_data.op("->>")("phonebook_name").isnot(None)
+            )
+        )
+        if current_user:
+            c_stmt = c_stmt.where(
+                or_(
+                    Contact.assigned_user_id == current_user.id,
+                    Contact.owner_id == current_user.id,
+                    Contact.assigned_user_id.is_(None)
+                )
+            )
+        c_stmt = c_stmt.order_by(desc(Contact.created_at)).limit(200)
+        c_res = await db.execute(c_stmt)
+        phonebook_contacts = c_res.scalars().all()
+
+        for pc in phonebook_contacts:
+            pc_phone = normalize_phone(pc.phone)
+            if not pc_phone or not is_valid_mobile_phone(pc_phone):
+                continue
+            if session_suffix and (pc_phone == session_suffix or pc_phone.endswith(session_suffix)):
+                continue
+            clean_match = pc_phone[-10:] if len(pc_phone) >= 10 else pc_phone
+            already_in = False
+            for k in conv_map:
+                if clean_match in k:
+                    already_in = True
+                    break
+            if not already_in:
+                pc_data = dict(pc.custom_data or {}) if isinstance(pc.custom_data, dict) else {}
+                disp_name = pc_data.get("phonebook_name") or pc.full_name or pc_data.get("whatsapp_name") or format_display_phone(pc_phone)
+                parts = disp_name.strip().split()
+                initials = (parts[0][0] + (parts[1][0] if len(parts) > 1 else ""))[:2].upper() if parts else "WA"
+                conv_map[f"+{pc_phone}"] = {
+                    "id": f"conv-{pc_phone}",
+                    "phone_number": f"+{pc_phone}",
+                    "contact_id": pc.id,
+                    "assigned_user_id": pc.assigned_user_id or (current_user.id if current_user else None),
+                    "business_phone_number_id": target_session,
+                    "contact_name": disp_name,
+                    "company_name": pc.company_name or "Direct Contact",
+                    "email": pc.email or "",
+                    "avatar_url": pc_data.get("avatar_url"),
+                    "avatar_initials": initials,
+                    "deal_stage": pc.lifecycle_stage or "Lead",
+                    "deal_value": 0,
+                    "assigned_rep": {
+                        "id": current_user.id if current_user else None,
+                        "name": current_user.full_name if current_user else "Sales Representative",
+                        "avatar": (current_user.full_name[:2] if current_user and current_user.full_name else "SR").upper(),
+                        "role": "Sales Representative"
+                    },
+                    "last_message": "💬 Direct Contact",
+                    "last_message_type": "text",
+                    "media_url": None,
+                    "is_voice_note": False,
+                    "is_pinned": bool(pc_data.get("is_pinned", False)),
+                    "is_archived": bool(pc_data.get("is_archived", False)),
+                    "is_blocked": bool(pc_data.get("is_blocked", False)),
+                    "last_message_time": pc.updated_at.isoformat() if pc.updated_at else (pc.created_at.isoformat() if pc.created_at else dt_utcnow.utcnow().isoformat()),
+                    "last_direction": "INBOUND",
+                    "last_status": "DELIVERED",
+                    "unread_count": 0
+                }
+    except Exception as e:
+        logger.debug(f"Error enriching phonebook contacts in inbox: {e}")
 
     # Sort pinned to the top, then by last message time
     active_conversations = list(conv_map.values())
@@ -791,7 +860,7 @@ async def get_whatsapp_conversations(
 
     return {
         "status": "success",
-        "conversations": active_conversations[:20]
+        "conversations": active_conversations[:max(effective_limit, 100)]
     }
 
 @router.patch("/conversations/{phone_number}/assign")
@@ -1037,7 +1106,7 @@ async def get_whatsapp_qr_status(
                         if current_user.whatsapp_phone_number != data.get("phone"):
                             current_user.whatsapp_phone_number = data.get("phone")
                             await db.commit()
-                    elif data.get("status") == "DISCONNECTED" and current_user:
+                    elif data.get("status") == "DISCONNECTED" and data.get("logged_out") and current_user:
                         if current_user.whatsapp_phone_number is not None:
                             current_user.whatsapp_phone_number = None
                             await db.commit()
