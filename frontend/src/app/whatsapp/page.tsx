@@ -2225,7 +2225,7 @@ export default function WhatsAppPage() {
           {/* COLUMN A: Chat Conversation Thread List (~320px width)    */}
           {/* ========================================================= */}
           <div className={cn(
-            "w-72 xl:w-80 shrink-0 flex flex-col transition-colors border-r z-10",
+            "w-80 sm:w-[340px] xl:w-[360px] shrink-0 flex flex-col transition-colors border-r z-10",
             isDark ? "bg-[#090A0F] border-[#1E293B]" : "bg-white border-slate-200"
           )}>
             {/* Top Header */}
@@ -2342,7 +2342,7 @@ export default function WhatsAppPage() {
                       key={tab}
                       onClick={() => setFilterTab(tab)}
                       className={cn(
-                        "w-full py-1.5 px-1 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1 cursor-pointer whitespace-nowrap min-w-0",
+                        "w-full py-1.5 px-0.5 sm:px-1 rounded-lg text-[11px] sm:text-xs font-semibold transition-all flex items-center justify-center gap-1 cursor-pointer whitespace-nowrap",
                         filterTab === tab
                           ? (isDark
                               ? "bg-emerald-600 text-white shadow-xs"
@@ -2352,10 +2352,10 @@ export default function WhatsAppPage() {
                               : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60")
                       )}
                     >
-                      <span className="truncate">{tab}</span>
+                      <span className="whitespace-nowrap">{tab}</span>
                       <span
                         className={cn(
-                          "text-[10px] px-1.5 py-0.2 rounded-full font-bold shrink-0",
+                          "text-[10px] min-w-4 h-4 px-1 rounded-full font-bold shrink-0 flex items-center justify-center leading-none",
                           filterTab === tab
                             ? (isDark ? "bg-emerald-700 text-white" : "bg-slate-100 text-slate-800")
                             : (isDark ? "bg-white/10 text-slate-400" : "bg-slate-200 text-slate-600")
