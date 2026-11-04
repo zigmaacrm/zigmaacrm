@@ -787,7 +787,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
             return tsB - tsA;
           });
 
-        for (const chat of directChats.slice(0, 150)) {
+        for (const chat of directChats.slice(0, 20)) {
           const cleanPhone = resolvePhoneFromJid(chat.id, session);
           if (!cleanPhone || cleanPhone.length < 8 || cleanPhone.length > 13) continue;
 
@@ -839,7 +839,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
           return tsB - tsA;
         });
 
-      for (const chat of directChats.slice(0, 150)) {
+      for (const chat of directChats.slice(0, 20)) {
         const cleanPhone = resolvePhoneFromJid(chat.id, session);
         if (!cleanPhone || cleanPhone.length < 8 || cleanPhone.length > 13) continue;
         const savedContact = session.contactsStore ? session.contactsStore.get(cleanPhone) : null;

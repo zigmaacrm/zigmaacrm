@@ -516,6 +516,27 @@ class InboundQRMessage(BaseModel):
     session_id: Optional[str] = None
     quoted_context: Optional[Union[Dict[str, Any], str]] = None
 
+async def resolve_valid_user_id(db: AsyncSession, assigned_user_id: Optional[str], session_id: Optional[str]) -> Optional[str]:
+    if assigned_user_id:
+        chk = await db.execute(select(User.id).where(User.id == assigned_user_id).limit(1))
+        row = chk.scalar_one_or_none()
+        if row:
+            return row
+    if session_id:
+        chk = await db.execute(select(User.id).where(User.id == session_id).limit(1))
+        row = chk.scalar_one_or_none()
+        if row:
+            return row
+        clean_num = normalize_phone(session_id)
+        if clean_num:
+            suffix = clean_num[-10:] if len(clean_num) >= 10 else clean_num
+            chk = await db.execute(select(User.id).where(User.whatsapp_phone_number.like(f"%{suffix}%")).limit(1))
+            row = chk.scalar_one_or_none()
+            if row:
+                return row
+    first_u = await db.execute(select(User.id).limit(1))
+    return first_u.scalar_one_or_none()
+
 @router.post("/whatsapp/inbound-qr")
 @router.post("/inbound-qr")
 @router.post("/whatsapp/webhook/inbound")
@@ -553,9 +574,7 @@ async def receive_whatsapp_qr_inbound(
     default_org_id = default_org.id if default_org else None
 
     search_suffix = clean_phone[-10:] if len(clean_phone) >= 10 else clean_phone
-    effective_user_id = payload.assigned_user_id
-    if not effective_user_id and payload.session_id and payload.session_id != "default":
-        effective_user_id = payload.session_id
+    effective_user_id = await resolve_valid_user_id(db, payload.assigned_user_id, payload.session_id)
 
     c_stmt = select(Contact).where(Contact.phone.like(f"%{search_suffix}%"))
     if effective_user_id:
@@ -656,13 +675,13 @@ async def receive_whatsapp_qr_inbound(
         else:
             quoted_str = str(payload.quoted_context)
 
-    effective_session = payload.session_id or session_business_phone or None
+    clean_session_val = normalize_phone(payload.session_id) if payload.session_id else None
     wa_msg = WhatsAppMessage(
         organization_id=default_org_id,
         contact_id=contact.id if contact else None,
         assigned_user_id=effective_user_id,
-        business_phone_number_id=session_business_phone or payload.session_id or None,
-        session_id=effective_session,
+        business_phone_number_id=clean_session_val or payload.session_id or None,
+        session_id=clean_session_val or payload.session_id or None,
         quoted_context=quoted_str,
         phone_number=clean_phone,
         direction=msg_direction,

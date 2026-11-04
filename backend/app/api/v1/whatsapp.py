@@ -177,6 +177,27 @@ def get_gateway_url() -> str:
         return "http://localhost:5001"
     return url
 
+async def resolve_valid_user_id(db: AsyncSession, assigned_user_id: Optional[str], session_id: Optional[str]) -> Optional[str]:
+    if assigned_user_id:
+        chk = await db.execute(select(User.id).where(User.id == assigned_user_id).limit(1))
+        row = chk.scalar_one_or_none()
+        if row:
+            return row
+    if session_id:
+        chk = await db.execute(select(User.id).where(User.id == session_id).limit(1))
+        row = chk.scalar_one_or_none()
+        if row:
+            return row
+        clean_num = normalize_phone(session_id)
+        if clean_num:
+            suffix = clean_num[-10:] if len(clean_num) >= 10 else clean_num
+            chk = await db.execute(select(User.id).where(User.whatsapp_phone_number.like(f"%{suffix}%")).limit(1))
+            row = chk.scalar_one_or_none()
+            if row:
+                return row
+    first_u = await db.execute(select(User.id).limit(1))
+    return first_u.scalar_one_or_none()
+
 @router.post("/send", status_code=status.HTTP_201_CREATED)
 @router.post("/messages", status_code=status.HTTP_201_CREATED)
 @router.post("/send-message", status_code=status.HTTP_201_CREATED)
@@ -793,7 +814,7 @@ async def get_whatsapp_conversations(
 
     return {
         "status": "success",
-        "conversations": active_conversations[:max(effective_limit, 100)]
+        "conversations": active_conversations[:20]
     }
 
 @router.patch("/conversations/{phone_number}/assign")
@@ -883,7 +904,7 @@ async def bulk_sync_whatsapp_contacts(
     default_org = res_org.scalars().first()
     default_org_id = default_org.id if default_org else None
 
-    effective_user_id = payload.assigned_user_id or (payload.session_id if payload.session_id != "default" else None)
+    effective_user_id = await resolve_valid_user_id(db, payload.assigned_user_id, payload.session_id)
 
     synced_count = 0
     for item in payload.contacts:
@@ -1138,15 +1159,6 @@ class WhatsAppHistorySyncPayload(BaseModel):
     assigned_user_id: Optional[str] = None
     session_id: Optional[str] = None
 
-@router.post("/webhook/inbound")
-async def relay_inbound_webhook(
-    payload: InboundQRMessage,
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db)
-):
-    from app.api.v1.webhooks.whatsapp import receive_whatsapp_qr_inbound
-    return await receive_whatsapp_qr_inbound(payload, background_tasks, db)
-
 @router.post("/webhook/inbound")
 async def relay_inbound_webhook(
     payload: InboundQRMessage,
@@ -1185,7 +1197,7 @@ async def sync_whatsapp_chat_history(
             continue
 
         search_suffix = clean_phone[-10:] if len(clean_phone) >= 10 else clean_phone
-        effective_user_id = payload.assigned_user_id or (payload.session_id if payload.session_id != "default" else None)
+        effective_user_id = await resolve_valid_user_id(db, payload.assigned_user_id, payload.session_id)
         c_stmt = select(Contact).where(Contact.phone.like(f"%{search_suffix}%"))
         if effective_user_id:
             c_stmt = c_stmt.where(
@@ -1226,7 +1238,7 @@ async def sync_whatsapp_chat_history(
         dt = datetime.datetime.fromtimestamp(item.timestamp) if item.timestamp else datetime.datetime.utcnow()
         dir_val = (item.direction or "INBOUND").upper()
 
-        effective_user_id = payload.assigned_user_id or (payload.session_id if payload.session_id != "default" else None)
+        effective_user_id = await resolve_valid_user_id(db, payload.assigned_user_id, payload.session_id)
         if contact and effective_user_id and not contact.assigned_user_id:
             contact.assigned_user_id = effective_user_id
             contact.owner_id = effective_user_id
