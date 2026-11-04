@@ -212,6 +212,20 @@ async def on_startup():
     except Exception as e:
         print(f"[STARTUP BACKFILL] WhatsApp backfill skipped or deferred: {e}")
 
+    # Background keep-alive task to keep WhatsApp Bridge gateway on Render permanently awake 24/7
+    async def keep_bridge_awake():
+        import asyncio
+        while True:
+            await asyncio.sleep(240)
+            try:
+                g_url = (os.getenv("WHATSAPP_GATEWAY_URL") or "https://zigmaa-whatsapp-bridge.onrender.com").rstrip("/")
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    await client.get(f"{g_url}/status?sessionId=keepalive")
+            except Exception:
+                pass
+    import asyncio
+    asyncio.create_task(keep_bridge_awake())
+
 @app.get("/")
 async def root():
     return {

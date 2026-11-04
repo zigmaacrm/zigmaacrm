@@ -4,7 +4,7 @@ import logging
 import httpx
 import datetime
 from datetime import datetime as dt_utcnow
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, BackgroundTasks, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -500,12 +500,13 @@ class WhatsAppStatusUpdateRequest(BaseModel):
 class InboundQRMessage(BaseModel):
     phone_number: str
     contact_name: Optional[str] = None
-    message_body: str
+    message_body: Optional[str] = "[Attachment]"
     meta_message_id: Optional[str] = None
-    timestamp: Optional[int] = None
+    timestamp: Optional[Union[int, float]] = None
     direction: Optional[str] = "INBOUND"
     message_type: Optional[str] = "text"
     media_url: Optional[str] = None
+    media_base64: Optional[str] = None
     file_name: Optional[str] = None
     caption: Optional[str] = None
     is_voice_note: Optional[bool] = False

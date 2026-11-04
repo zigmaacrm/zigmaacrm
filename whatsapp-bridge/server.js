@@ -33,7 +33,7 @@ app.use(cors());
 app.use(express.json({ limit: '25mb' }));
 
 const PORT = process.env.PORT || 5001;
-const BACKEND_BASE = process.env.FASTAPI_BASE_URL || (process.env.RENDER ? 'https://zigmaacrm-backend.onrender.com' : 'http://127.0.0.1:8000');
+const BACKEND_BASE = (process.env.FASTAPI_BASE_URL || 'https://zigmaacrm-backend.onrender.com').trim().replace(/\/+$/, '');
 const FASTAPI_WEBHOOK_URL = process.env.FASTAPI_WEBHOOK_URL || `${BACKEND_BASE}/api/v1/webhooks/whatsapp/inbound-qr`;
 const FASTAPI_BULK_SYNC_URL = process.env.FASTAPI_BULK_SYNC_URL || `${BACKEND_BASE}/api/v1/whatsapp/contacts/bulk-sync`;
 const FASTAPI_SYNC_HISTORY_URL = process.env.FASTAPI_SYNC_HISTORY_URL || `${BACKEND_BASE}/api/v1/whatsapp/chats/sync-history`;
@@ -48,12 +48,15 @@ if (!fs.existsSync(SESSIONS_BASE_DIR)) {
 }
 
 // Uploads directory for decrypted WhatsApp media
-const UPLOADS_DIR = path.join(__dirname, '..', 'uploads', 'whatsapp');
-if (!fs.existsSync(UPLOADS_DIR)) {
-  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-}
+const UPLOADS_DIR = path.join(__dirname, 'uploads');
+const MONO_UPLOADS_DIR = path.join(__dirname, '..', 'uploads', 'whatsapp');
+if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+try { if (!fs.existsSync(MONO_UPLOADS_DIR)) fs.mkdirSync(MONO_UPLOADS_DIR, { recursive: true }); } catch (_) {}
+
 app.use('/media/whatsapp', express.static(UPLOADS_DIR));
+app.use('/media/whatsapp', express.static(MONO_UPLOADS_DIR));
 app.use('/uploads/whatsapp', express.static(UPLOADS_DIR));
+app.use('/uploads/whatsapp', express.static(MONO_UPLOADS_DIR));
 
 async function convertAudioToWhatsAppPtt(inputBuffer) {
   if (!ffmpegPath || !inputBuffer || inputBuffer.length === 0) {
@@ -210,6 +213,7 @@ function getSession(sessionId, createIfMissing = true) {
     pendingContacts: new Map(),
     contactsStore: new Map(),
     syncTimeout: null,
+    reconnectTimer: null,
     isFetchingAvatar: false
   };
   sessions.set(sId, session);
@@ -421,6 +425,11 @@ async function decryptAndSaveMedia(msgObj) {
 
     const filePath = path.join(UPLOADS_DIR, fileName);
     fs.writeFileSync(filePath, buffer);
+    try {
+      if (fs.existsSync(MONO_UPLOADS_DIR)) {
+        fs.writeFileSync(path.join(MONO_UPLOADS_DIR, fileName), buffer);
+      }
+    } catch (_) {}
     const mediaUrl = `/media/whatsapp/${fileName}`;
 
     return {
@@ -475,13 +484,19 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
   if (session.isStarting) return;
   session.isStarting = true;
 
+  if (session.reconnectTimer) {
+    clearTimeout(session.reconnectTimer);
+    session.reconnectTimer = null;
+  }
+
   if (session.sock) {
     try {
-      session.sock.ev.removeAllListeners();
-      session.sock.ws?.close();
-      session.sock.end?.();
+      const oldSock = session.sock;
+      session.sock = null;
+      oldSock.ev.removeAllListeners();
+      oldSock.ws?.close();
+      oldSock.end?.();
     } catch (_) {}
-    session.sock = null;
   }
 
   try {
@@ -501,12 +516,12 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
     const { state, saveCreds } = await useMultiFileAuthState(session.authDir);
     const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307], isLatest: true }));
 
-    session.sock = makeWASocket({
+    const thisSock = makeWASocket({
       version,
       logger,
       printQRInTerminal: false,
       auth: state,
-      browser: ['Zigmaa CRM', 'Chrome', '1.0.0'],
+      browser: ['Zigmaa CRM Business', 'Chrome', '124.0.0.0'],
       syncFullHistory: false,
       markOnlineOnConnect: true,
       connectTimeoutMs: 60000,
@@ -517,9 +532,13 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
       }
     });
 
+    session.sock = thisSock;
     session.sock.ev.on('creds.update', saveCreds);
 
     session.sock.ev.on('connection.update', async (update) => {
+      // Guard: Ignore events from old/replaced sockets
+      if (session.sock !== thisSock) return;
+
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
@@ -539,11 +558,11 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
 
         console.log(`[WhatsApp Gateway:${session.id}] Connection closed. Status code: ${statusCode}. Reconnecting: ${shouldReconnect}`);
 
-        if (session.sock) {
+        if (session.sock === thisSock) {
           try {
-            session.sock.ev.removeAllListeners();
-            session.sock.ws?.close();
-            session.sock.end?.();
+            thisSock.ev.removeAllListeners();
+            thisSock.ws?.close();
+            thisSock.end?.();
           } catch (_) {}
           session.sock = null;
         }
@@ -572,16 +591,24 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
               })
             }).catch(() => {});
           } catch (_) {}
-          setTimeout(() => initWhatsApp(session.id, false), 2000);
+          // Do NOT auto-reconnect on explicit logout - wait for user to click Scan QR
         } else if (statusCode === 440) {
-          console.warn(`[WhatsApp Gateway:${session.id}] Status 440 (Conflict). Waiting 5s for clean reconnect...`);
+          console.warn(`[WhatsApp Gateway:${session.id}] Status 440 (Conflict). Waiting 8s for clean reconnect...`);
           session.status = 'DISCONNECTED';
           session.isStarting = false;
-          setTimeout(() => initWhatsApp(session.id, false), 5000);
+          if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
+          session.reconnectTimer = setTimeout(() => {
+            session.reconnectTimer = null;
+            initWhatsApp(session.id, false);
+          }, 8000);
         } else {
           session.status = 'DISCONNECTED';
           session.isStarting = false;
-          setTimeout(() => initWhatsApp(session.id, false), 3000);
+          if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
+          session.reconnectTimer = setTimeout(() => {
+            session.reconnectTimer = null;
+            initWhatsApp(session.id, false);
+          }, 4000);
         }
       } else if (connection === 'open') {
         session.status = 'CONNECTED';
@@ -1094,12 +1121,34 @@ app.post('/refresh-qr', async (req, res) => {
   try {
     const sId = sanitizeSessionId(req.query.sessionId || req.query.session_id || req.body?.sessionId || req.body?.session_id);
     const session = getSession(sId, true);
-    if (session.sock && session.status !== 'CONNECTED') {
-      try { session.sock.end(undefined); } catch (_) {}
+    
+    // If QR code is already ready and active, return immediately!
+    if (session.status === 'SCAN_QR' && session.qr) {
+      return res.json({ success: true, qr: session.qr, status: 'SCAN_QR', session_id: sId });
     }
-    session.isStarting = false;
-    await initWhatsApp(sId, true);
-    res.json({ success: true, session_id: sId, message: `Re-initializing WhatsApp QR code session for ${sId}...` });
+
+    if (session.status === 'CONNECTED' && session.phone) {
+      return res.json({ success: true, status: 'CONNECTED', phone: session.phone, session_id: sId });
+    }
+
+    if (!session.isStarting) {
+      initWhatsApp(sId, true);
+    }
+
+    // Wait up to 5s for QR code to be generated so the frontend modal gets it instantly
+    let waited = 0;
+    while (!session.qr && session.status !== 'CONNECTED' && waited < 5000) {
+      await new Promise(r => setTimeout(r, 250));
+      waited += 250;
+    }
+
+    res.json({
+      success: true,
+      qr: session.qr || null,
+      status: session.status || 'SCAN_QR',
+      session_id: sId,
+      message: session.qr ? 'QR ready' : 'Generating QR code...'
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

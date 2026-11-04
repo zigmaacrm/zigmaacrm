@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from dotenv import dotenv_values
 import httpx
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -99,6 +99,8 @@ def is_generic_or_placeholder_name(name: Optional[str], phone: str) -> bool:
 class WhatsAppContactSyncItem(BaseModel):
     phone: str
     name: Optional[str] = None
+    phonebook_name: Optional[str] = None
+    push_name: Optional[str] = None
     jid: Optional[str] = None
     avatar_url: Optional[str] = None
 
@@ -242,35 +244,32 @@ async def send_whatsapp_message(
     for target in targets:
         try:
             async with httpx.AsyncClient(timeout=25.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
-                st_res = await client.get(f"{target}/status?sessionId={effective_session_id}")
-                st_data = st_res.json() if st_res.status_code == 200 else {}
-                if st_data.get("status") == "CONNECTED":
-                    send_payload = {
-                        "phone_number": clean_phone,
-                        "message": payload.message or "",
-                        "file_base64": payload.file_base64,
-                        "file_name": payload.file_name,
-                        "file_type": payload.file_type,
-                        "quoted_message_id": payload.quoted_message_id,
-                        "quoted_text": payload.quoted_text,
-                        "quoted_from_me": payload.quoted_from_me,
-                        "session_id": effective_session_id,
-                        "assigned_user_id": current_user.id if current_user else None
-                    }
-                    send_res = await client.post(
-                        f"{target}/send",
-                        json=send_payload
-                    )
-                    if send_res.status_code == 200 and send_res.json().get("success"):
-                        meta_message_id = send_res.json().get("message_id") or f"wamid.qr_out_{uuid.uuid4().hex[:16]}"
-                        delivery_status = "SENT"
-                        dispatched_via_qr = True
-                        logger.info(f"[OUTBOUND QR DISPATCH SUCCESS] Message {meta_message_id} sent to {clean_phone}")
-                        break
-                    else:
-                        logger.warning(f"[OUTBOUND QR DISPATCH FAILED] {send_res.text}")
+                send_payload = {
+                    "phone_number": clean_phone,
+                    "message": payload.message or "",
+                    "file_base64": payload.file_base64,
+                    "file_name": payload.file_name,
+                    "file_type": payload.file_type,
+                    "quoted_message_id": payload.quoted_message_id,
+                    "quoted_text": payload.quoted_text,
+                    "quoted_from_me": payload.quoted_from_me,
+                    "session_id": effective_session_id,
+                    "assigned_user_id": current_user.id if current_user else None
+                }
+                send_res = await client.post(
+                    f"{target}/send",
+                    json=send_payload
+                )
+                if send_res.status_code == 200 and send_res.json().get("success"):
+                    meta_message_id = send_res.json().get("message_id") or f"wamid.qr_out_{uuid.uuid4().hex[:16]}"
+                    delivery_status = "SENT"
+                    dispatched_via_qr = True
+                    logger.info(f"[OUTBOUND QR DISPATCH SUCCESS] Message {meta_message_id} sent to {clean_phone}")
+                    break
+                else:
+                    logger.warning(f"[OUTBOUND QR DISPATCH FAILED] {send_res.text}")
         except Exception as e:
-            logger.debug(f"QR Gateway check at {target} skipped or failed: {e}")
+            logger.debug(f"QR Gateway send at {target} skipped or failed: {e}")
 
     # 2. Fallback to Meta Cloud API if QR Gateway is not connected
     api_token, default_phone_number_id = get_whatsapp_credentials()
@@ -1144,12 +1143,13 @@ async def disconnect_whatsapp_qr(
 class WhatsAppHistorySyncItem(BaseModel):
     phone_number: str
     contact_name: Optional[str] = None
-    message_body: str
+    message_body: Optional[str] = "[Attachment]"
     meta_message_id: Optional[str] = None
-    timestamp: Optional[int] = None
+    timestamp: Optional[Union[int, float]] = None
     direction: Optional[str] = "INBOUND"
     message_type: Optional[str] = "text"
     media_url: Optional[str] = None
+    media_base64: Optional[str] = None
     file_name: Optional[str] = None
     caption: Optional[str] = None
     is_voice_note: Optional[bool] = False
@@ -1211,6 +1211,20 @@ async def sync_whatsapp_chat_history(
             )
             db.add(contact)
             await db.flush()
+
+        if item.media_base64 and item.file_name:
+            try:
+                uploads_dir = os.path.join(os.getcwd(), "uploads", "whatsapp")
+                os.makedirs(uploads_dir, exist_ok=True)
+                raw_b64 = item.media_base64.split(",")[1] if "," in item.media_base64 else item.media_base64
+                file_bytes = base64.b64decode(raw_b64)
+                file_dest = os.path.join(uploads_dir, item.file_name)
+                with open(file_dest, "wb") as f_out:
+                    f_out.write(file_bytes)
+                if not item.media_url:
+                    item.media_url = f"/media/whatsapp/{item.file_name}"
+            except Exception as e:
+                logger.warning(f"Failed to save history sync media: {e}")
 
         dt = datetime.datetime.fromtimestamp(item.timestamp) if item.timestamp else datetime.datetime.utcnow()
         dir_val = (item.direction or "INBOUND").upper()
