@@ -80,22 +80,38 @@ export default function WhatsAppQRModal({
     }
 
     const autoConnect = async () => {
-      await checkStatus();
-      if (!initialQR) {
+      checkStatus();
+      try {
+        const res = await api.refreshWhatsAppQR();
+        if (res?.qr) {
+          setQrCode(res.qr);
+          setGatewayOnline(true);
+          setStatus(res.status || "SCAN_QR");
+        }
+      } catch (err) {
+        console.warn("Auto-connect refresh error", err);
+      }
+      checkStatus();
+    };
+    autoConnect();
+    pollIntervalRef.current = setInterval(checkStatus, 2000);
+
+    // Auto-retry once after 5s if QR code is still missing
+    const retryTimer = setTimeout(async () => {
+      if (!qrCode && status !== "CONNECTED") {
         try {
-          const res = await api.refreshWhatsAppQR();
-          if (res?.qr) {
-            setQrCode(res.qr);
+          const retryRes = await api.refreshWhatsAppQR();
+          if (retryRes?.qr) {
+            setQrCode(retryRes.qr);
             setGatewayOnline(true);
-            setStatus(res.status || "SCAN_QR");
+            setStatus(retryRes.status || "SCAN_QR");
           }
         } catch (_) {}
       }
-    };
-    autoConnect();
-    pollIntervalRef.current = setInterval(checkStatus, 2500);
+    }, 5000);
 
     return () => {
+      clearTimeout(retryTimer);
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
@@ -282,9 +298,25 @@ export default function WhatsAppQRModal({
                     />
                   </div>
                 ) : (
-                  <div className="w-56 h-56 flex flex-col items-center justify-center text-slate-400 gap-2">
+                  <div className="w-56 h-56 flex flex-col items-center justify-center text-slate-400 gap-2.5 p-3 text-center">
                     <Loader2 className="w-8 h-8 animate-spin text-emerald-500" />
-                    <span className="text-xs font-semibold">Generating QR Code...</span>
+                    <div>
+                      <span className="text-xs font-semibold block text-slate-700 dark:text-slate-300">
+                        Generating QR Code...
+                      </span>
+                      <span className="text-[11px] text-slate-400 mt-1 block">
+                        Connecting to WhatsApp cloud gateway.
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleRefresh}
+                      disabled={isRefreshing}
+                      className="mt-1 text-xs text-emerald-600 dark:text-emerald-400 font-semibold hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                    >
+                      <RefreshCw className={cn("w-3 h-3", isRefreshing && "animate-spin")} />
+                      <span>{isRefreshing ? "Requesting QR..." : "Tap to Retry"}</span>
+                    </button>
                   </div>
                 )}
               </div>

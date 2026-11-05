@@ -168,7 +168,15 @@ def is_valid_mobile_phone(phone: Optional[str]) -> bool:
 
 def get_gateway_url() -> str:
     url = (os.getenv("WHATSAPP_GATEWAY_URL") or getattr(settings, "WHATSAPP_GATEWAY_URL", "")).strip().rstrip("/")
-    if os.getenv("RENDER") or os.getenv("ENVIRONMENT") == "production":
+    is_cloud = bool(
+        os.getenv("RENDER") or
+        os.getenv("RENDER_SERVICE_ID") or
+        os.getenv("RENDER_EXTERNAL_URL") or
+        os.getenv("VERCEL") or
+        os.getenv("ENVIRONMENT") == "production" or
+        (os.getenv("PORT") and str(os.getenv("PORT")) != "8000")
+    )
+    if is_cloud:
         # Always use the live deployed Render bridge in production / Render cloud
         if not url or any(x in url.lower() for x in ["localhost", "127.0.0.1", "5001", "loca.lt", "ngrok"]):
             return "https://zigmaa-whatsapp-bridge.onrender.com"
@@ -1055,17 +1063,19 @@ _qr_status_cache: Dict[str, Dict[str, Any]] = {}
 
 @router.get("/qr/status")
 async def get_whatsapp_qr_status(
+    sessionId: Optional[str] = Query(None),
+    session_id: Optional[str] = Query(None),
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Checks connection status, linked phone, and current QR code from Baileys gateway
-    specifically scoped to the current logged-in user.
+    specifically scoped to the current user or active session.
     """
     global _qr_status_cache
-    session_id = current_user.id if current_user else "default"
+    effective_session = sessionId or session_id or (current_user.id if current_user else "default")
     now = time.time()
-    user_cache = _qr_status_cache.get(session_id, {"data": None, "ts": 0})
+    user_cache = _qr_status_cache.get(effective_session, {"data": None, "ts": 0})
     if user_cache["data"] and (now - user_cache["ts"] < 2.0):
         return user_cache["data"]
 
@@ -1076,12 +1086,14 @@ async def get_whatsapp_qr_status(
 
     for target in targets:
         try:
-            async with httpx.AsyncClient(timeout=45.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
-                resp = await client.get(f"{target}/status?sessionId={session_id}")
+            # If target is localhost, use a fast 2.0s timeout so we immediately fail over to the cloud Render bridge when laptop is off
+            target_timeout = 2.0 if "localhost" in target or "127.0.0.1" in target else 15.0
+            async with httpx.AsyncClient(timeout=target_timeout, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
+                resp = await client.get(f"{target}/status?sessionId={effective_session}")
                 if resp.status_code == 200:
                     data = resp.json()
                     data["gateway_online"] = True
-                    _qr_status_cache[session_id] = {"data": data, "ts": time.time()}
+                    _qr_status_cache[effective_session] = {"data": data, "ts": time.time()}
 
                     # Update User.whatsapp_phone_number for the authenticated user
                     if data.get("status") == "CONNECTED" and data.get("phone") and current_user:
@@ -1097,7 +1109,7 @@ async def get_whatsapp_qr_status(
 
                     return data
         except Exception as e:
-            logger.debug(f"WhatsApp QR Gateway at {target} not reachable for {session_id}: {e}")
+            logger.debug(f"WhatsApp QR Gateway at {target} not reachable for {effective_session}: {e}")
 
     if user_cache["data"] and user_cache["data"].get("gateway_online") and (now - user_cache["ts"] < 15.0):
         return user_cache["data"]
@@ -1109,20 +1121,22 @@ async def get_whatsapp_qr_status(
         "avatar_url": None,
         "qr": None,
         "gateway_online": False,
-        "session_id": session_id,
+        "session_id": effective_session,
         "logged_out": False
     }
 
 @router.post("/qr/refresh")
 async def refresh_whatsapp_qr(
+    sessionId: Optional[str] = Query(None),
+    session_id: Optional[str] = Query(None),
     current_user: Optional[User] = Depends(get_optional_current_user)
 ):
     """
     Requests a fresh QR code from the Baileys gateway for the current user's session.
     """
     global _qr_status_cache
-    session_id = current_user.id if current_user else "default"
-    _qr_status_cache[session_id] = {"data": None, "ts": 0}
+    effective_session = sessionId or session_id or (current_user.id if current_user else "default")
+    _qr_status_cache[effective_session] = {"data": None, "ts": 0}
 
     gateway_url = get_gateway_url()
     targets = [gateway_url]
@@ -1132,9 +1146,13 @@ async def refresh_whatsapp_qr(
     last_err = None
     for target in targets:
         try:
-            async with httpx.AsyncClient(timeout=50.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
-                resp = await client.post(f"{target}/refresh-qr?sessionId={session_id}", json={"sessionId": session_id})
-                return resp.json()
+            target_timeout = 2.0 if "localhost" in target or "127.0.0.1" in target else 25.0
+            async with httpx.AsyncClient(timeout=target_timeout, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
+                resp = await client.post(f"{target}/refresh-qr?sessionId={effective_session}", json={"sessionId": effective_session})
+                data = resp.json()
+                if data.get("qr"):
+                    _qr_status_cache[effective_session] = {"data": {**data, "gateway_online": True}, "ts": time.time()}
+                return data
         except Exception as e:
             last_err = e
 
@@ -1142,6 +1160,8 @@ async def refresh_whatsapp_qr(
 
 @router.post("/qr/disconnect")
 async def disconnect_whatsapp_qr(
+    sessionId: Optional[str] = Query(None),
+    session_id: Optional[str] = Query(None),
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -1149,8 +1169,8 @@ async def disconnect_whatsapp_qr(
     Disconnects and logs out the Baileys QR session for the current user.
     """
     global _qr_status_cache
-    session_id = current_user.id if current_user else "default"
-    _qr_status_cache[session_id] = {"data": None, "ts": 0}
+    effective_session = sessionId or session_id or (current_user.id if current_user else "default")
+    _qr_status_cache[effective_session] = {"data": None, "ts": 0}
 
     if current_user:
         current_user.whatsapp_phone_number = None
@@ -1164,8 +1184,9 @@ async def disconnect_whatsapp_qr(
     last_err = None
     for target in targets:
         try:
-            async with httpx.AsyncClient(timeout=25.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
-                resp = await client.post(f"{target}/disconnect?sessionId={session_id}", json={"sessionId": session_id})
+            target_timeout = 2.0 if "localhost" in target or "127.0.0.1" in target else 15.0
+            async with httpx.AsyncClient(timeout=target_timeout, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
+                resp = await client.post(f"{target}/disconnect?sessionId={effective_session}", json={"sessionId": effective_session})
                 return resp.json()
         except Exception as e:
             last_err = e

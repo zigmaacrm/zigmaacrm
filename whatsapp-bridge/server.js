@@ -1316,10 +1316,10 @@ async function disconnectSession(sessionId) {
 // Express Routes
 // ==========================================
 
-app.get('/status', (req, res) => {
+app.get('/status', async (req, res) => {
   const rawId = req.query.sessionId || req.query.session_id || req.query.userId || req.query.user_id;
-  // Generic keep-alive/health ping - NEVER expose another user's phone or session
-  if (!rawId || rawId === 'keepalive' || rawId === 'default' || req.query.ping) {
+  // Generic keep-alive/health ping - only when ping parameter or explicit keepalive string
+  if (!rawId || rawId === 'keepalive' || req.query.ping) {
     return res.json({
       status: 'ONLINE',
       gateway_online: true,
@@ -1340,21 +1340,22 @@ app.get('/status', (req, res) => {
     }
   }
 
-  // If not in memory, restore ONLY this user's session if credentials exist on disk
+  // If not in memory, retrieve/create and auto-initialize so QR generation begins immediately
   if (!session) {
-    const authDir = getSessionAuthDir(sId);
-    if (fs.existsSync(path.join(authDir, 'creds.json'))) {
-      session = getSession(sId, true);
+    session = getSession(sId, true);
+    if (!session.isStarting && session.status !== 'CONNECTED') {
       initWhatsApp(sId, false);
-    } else {
-      return res.json({
-        status: 'DISCONNECTED',
-        phone: null,
-        name: null,
-        avatar_url: null,
-        qr: null,
-        session_id: sId
-      });
+    }
+  } else if (!session.qr && session.status !== 'CONNECTED' && !session.isStarting) {
+    initWhatsApp(sId, false);
+  }
+
+  // If QR code is being generated, briefly wait up to 3.5s so the client gets it on the very first request
+  if (!session.qr && session.status !== 'CONNECTED' && session.isStarting) {
+    let waited = 0;
+    while (!session.qr && session.status !== 'CONNECTED' && waited < 3500) {
+      await new Promise(r => setTimeout(r, 200));
+      waited += 200;
     }
   }
 

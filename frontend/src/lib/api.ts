@@ -24,7 +24,14 @@ import {
 } from "./mockData";
 
 function resolveApiBase(): string {
-  let raw = (process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1").trim().replace(/\/+$/, "");
+  let raw = (process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || "").trim().replace(/\/+$/, "");
+  if (!raw) {
+    if (typeof window !== "undefined" && !["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+      raw = "https://zigmaacrm-backend.onrender.com/api/v1";
+    } else {
+      raw = "http://localhost:8000/api/v1";
+    }
+  }
   if (!raw.endsWith("/api/v1")) {
     raw = `${raw}/api/v1`;
   }
@@ -3601,7 +3608,7 @@ export const zigmaaApi = {
   },
 
   // ===== WHATSAPP QR GATEWAY (LINKED DEVICE) =====
-  async getWhatsAppQRStatus(): Promise<{
+  async getWhatsAppQRStatus(sessionId?: string): Promise<{
     status: "DISCONNECTED" | "SCAN_QR" | "CONNECTED";
     phone: string | null;
     name: string | null;
@@ -3610,7 +3617,15 @@ export const zigmaaApi = {
     gateway_online: boolean;
   }> {
     try {
-      const res = await fetch(`${API_BASE}/whatsapp/qr/status`, {
+      let sid = sessionId;
+      if (!sid && typeof window !== "undefined") {
+        try {
+          const uStr = localStorage.getItem("zigmaa_user");
+          if (uStr) sid = JSON.parse(uStr)?.id || null;
+        } catch (_) {}
+      }
+      const query = sid ? `?sessionId=${encodeURIComponent(sid)}` : "";
+      const res = await fetch(`${API_BASE}/whatsapp/qr/status${query}`, {
         headers: getAuthHeaders(),
         cache: "no-store"
       });
@@ -3629,10 +3644,22 @@ export const zigmaaApi = {
     };
   },
 
-  async refreshWhatsAppQR(): Promise<any> {
-    const res = await fetch(`${API_BASE}/whatsapp/qr/refresh`, {
+  async refreshWhatsAppQR(sessionId?: string): Promise<any> {
+    let sid = sessionId;
+    if (!sid && typeof window !== "undefined") {
+      try {
+        const uStr = localStorage.getItem("zigmaa_user");
+        if (uStr) sid = JSON.parse(uStr)?.id || null;
+      } catch (_) {}
+    }
+    const query = sid ? `?sessionId=${encodeURIComponent(sid)}` : "";
+    const res = await fetch(`${API_BASE}/whatsapp/qr/refresh${query}`, {
       method: "POST",
-      headers: getAuthHeaders()
+      headers: {
+        ...getAuthHeaders(),
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ sessionId: sid })
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -3641,10 +3668,22 @@ export const zigmaaApi = {
     return await res.json();
   },
 
-  async disconnectWhatsAppQR(): Promise<any> {
-    const res = await fetch(`${API_BASE}/whatsapp/qr/disconnect`, {
+  async disconnectWhatsAppQR(sessionId?: string): Promise<any> {
+    let sid = sessionId;
+    if (!sid && typeof window !== "undefined") {
+      try {
+        const uStr = localStorage.getItem("zigmaa_user");
+        if (uStr) sid = JSON.parse(uStr)?.id || null;
+      } catch (_) {}
+    }
+    const query = sid ? `?sessionId=${encodeURIComponent(sid)}` : "";
+    const res = await fetch(`${API_BASE}/whatsapp/qr/disconnect${query}`, {
       method: "POST",
-      headers: getAuthHeaders()
+      headers: {
+        ...getAuthHeaders(),
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ sessionId: sid })
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
