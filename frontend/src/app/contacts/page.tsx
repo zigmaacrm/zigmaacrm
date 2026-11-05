@@ -27,7 +27,13 @@ import {
   Upload,
   Menu,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  GripVertical,
+  LayoutGrid,
+  Table as TableIcon,
+  SlidersHorizontal
 } from "lucide-react";
 import Sidebar from "@/components/layout/Sidebar";
 import Header from "@/components/layout/Header";
@@ -47,6 +53,12 @@ import ColumnCustomizerPopover, { ColumnDefinition, useColumnVisibility } from "
 import { SourceBadge } from "@/components/common/SourceBadge";
 import CustomDropdown from "@/components/common/CustomDropdown";
 import WhatsAppIcon from "@/components/common/WhatsAppIcon";
+import ContactStagesModal, {
+  ContactStageConfig,
+  DEFAULT_CONTACT_STAGES,
+  CONTACT_STAGES_STORAGE_KEY,
+  getContactStageColorPreset
+} from "@/components/contacts/ContactStagesModal";
 
 const CONTACT_COLUMNS: ColumnDefinition[] = [
   { id: "name", label: "Contact Name", locked: true },
@@ -117,6 +129,11 @@ export default function ContactsPage() {
   const [showMoreViewsDropdown, setShowMoreViewsDropdown] = useState(false);
   const [selectedSource, setSelectedSource] = useState<string>("All Sources");
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Dual View Mode: Table vs Kanban
+  const [viewMode, setViewMode] = useState<"table" | "kanban">("table");
+  const [contactStages, setContactStages] = useState<ContactStageConfig[]>(DEFAULT_CONTACT_STAGES);
+  const [showStageSettingsModal, setShowStageSettingsModal] = useState(false);
   
   // Sleek Slide-Over Drawer for New Contact & Bulk Import Modal
   const [showAddDrawer, setShowAddDrawer] = useState(false);
@@ -164,6 +181,119 @@ export default function ContactsPage() {
 
   // In-App Phone Call Dialer Modal
   const [callModalContact, setCallModalContact] = useState<Contact | null>(null);
+
+  // Load persisted contact stages from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(CONTACT_STAGES_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setContactStages(parsed);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to read contact stages from localStorage:", err);
+    }
+  }, []);
+
+  // Helper: Get Initials for Avatar
+  const getInitials = (name?: string) => {
+    if (!name) return "CT";
+    const parts = name.trim().split(/\s+/);
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  };
+
+  // Helper: Filter contacts for a specific Kanban stage
+  const getContactsForStage = (stage: ContactStageConfig, colIndex: number) => {
+    return filteredContacts.filter((c) => {
+      const rawStage = (c.lifecycle_stage || c.status || "").trim().toLowerCase();
+      const stageId = stage.id.trim().toLowerCase();
+      const stageName = stage.name.trim().toLowerCase();
+
+      // 1. Direct match on id or name
+      if (rawStage === stageId || rawStage === stageName) return true;
+
+      // 2. Standard normalized mapping
+      if (stageId === "new_leads" || stageName.includes("new") || stageName.includes("lead")) {
+        if (rawStage === "new" || rawStage === "new lead" || rawStage === "new leads" || rawStage === "lead" || rawStage === "new_leads" || !rawStage) {
+          return true;
+        }
+      }
+      if (stageId === "contacted" || stageName.includes("contacted")) {
+        if (rawStage === "contacted" || rawStage === "in_contact" || rawStage === "reached") {
+          return true;
+        }
+      }
+      if (stageId === "qualified" || stageName.includes("qualified")) {
+        if (rawStage === "qualified" || rawStage === "interested") {
+          return true;
+        }
+      }
+      if (stageId === "proposal_sent" || stageName.includes("proposal")) {
+        if (rawStage.includes("proposal") || rawStage.includes("quote") || rawStage === "proposal_sent") {
+          return true;
+        }
+      }
+      if (stageId === "customer" || stageName.includes("customer")) {
+        if (rawStage === "customer" || rawStage === "client" || rawStage === "won" || rawStage === "converted") {
+          return true;
+        }
+      }
+      if (stageId === "lost" || stageName.includes("lost") || stageName.includes("unqualified")) {
+        if (rawStage === "lost" || rawStage === "unqualified" || rawStage === "disqualified" || rawStage === "junk") {
+          return true;
+        }
+      }
+
+      // 3. Fallback: If colIndex === 0 (the first stage, e.g. "New Leads"),
+      // any contact that doesn't match any other column goes into the first stage!
+      if (colIndex === 0) {
+        const matchesAnyOther = contactStages.some((otherSt, idx) => {
+          if (idx === 0) return false;
+          const osl = otherSt.name.trim().toLowerCase();
+          const osi = otherSt.id.trim().toLowerCase();
+          if (rawStage === osi || rawStage === osl) return true;
+          if ((osi === "contacted" || osl.includes("contacted")) && (rawStage === "contacted" || rawStage === "in_contact" || rawStage === "reached")) return true;
+          if ((osi === "qualified" || osl.includes("qualified")) && (rawStage === "qualified" || rawStage === "interested")) return true;
+          if ((osi === "proposal_sent" || osl.includes("proposal")) && (rawStage.includes("proposal") || rawStage.includes("quote") || rawStage === "proposal_sent")) return true;
+          if ((osi === "customer" || osl.includes("customer")) && (rawStage === "customer" || rawStage === "client" || rawStage === "won" || rawStage === "converted")) return true;
+          if ((osi === "lost" || osl.includes("lost") || osl.includes("unqualified")) && (rawStage === "lost" || rawStage === "unqualified" || rawStage === "disqualified" || rawStage === "junk")) return true;
+          return false;
+        });
+        if (!matchesAnyOther) return true;
+      }
+
+      return false;
+    });
+  };
+
+  // Kanban Stage Change Handler with Optimistic UI & Backend Persist
+  const handleKanbanStageChange = async (contactId: string | number, targetStage: ContactStageConfig) => {
+    const previous = contacts.find((c) => String(c.id) === String(contactId));
+    setContacts((prev) =>
+      prev.map((c) =>
+        String(c.id) === String(contactId)
+          ? { ...c, lifecycle_stage: targetStage.id, status: targetStage.name }
+          : c
+      )
+    );
+    toast.info("Stage Changed", `Contact moved to "${targetStage.name}"`);
+    try {
+      await api.updateContact(contactId, {
+        lifecycle_stage: targetStage.id,
+        status: targetStage.name
+      });
+    } catch (err: any) {
+      if (previous) {
+        setContacts((prev) =>
+          prev.map((c) => (String(c.id) === String(contactId) ? previous : c))
+        );
+      }
+      toast.error("Update Failed", "Could not update contact stage. Reverted.");
+    }
+  };
 
   const loadContacts = async (forceRefresh = false) => {
     try {
@@ -832,21 +962,63 @@ export default function ContactsPage() {
                 Export
               </button>
 
-              {/* Table Column Customizer Dropdown */}
-              <ColumnCustomizerPopover
-                storageKey="zigmaa_contacts_columns"
-                module="contacts"
-                columns={CONTACT_COLUMNS}
-                visibleColumns={visibleColumns}
-                onToggle={toggleColumn}
-                onReset={resetColumns}
-                onCustomFieldsLoaded={handleCustomFieldsLoaded}
-                onOpenCustomFields={() => setShowCustomFields(true)}
-              />
+              {/* View Switcher Toggle: Table / Kanban */}
+              <div className="flex items-center bg-slate-100/90 p-0.5 rounded-xl border border-slate-200/80 shadow-2xs shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setViewMode("table")}
+                  className={`h-8 px-2 sm:px-2.5 flex items-center gap-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    viewMode === "table"
+                      ? "bg-white text-slate-900 shadow-xs"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                  title="Table View"
+                >
+                  <TableIcon className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Table</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("kanban")}
+                  className={`h-8 px-2 sm:px-2.5 flex items-center gap-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    viewMode === "kanban"
+                      ? "bg-white text-slate-900 shadow-xs"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                  title="Kanban View"
+                >
+                  <LayoutGrid className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Kanban</span>
+                </button>
+              </div>
+
+              {/* Context-Aware Settings Icon: Table -> Customize Columns, Kanban -> Contact Stages Settings */}
+              {viewMode === "table" ? (
+                <ColumnCustomizerPopover
+                  storageKey="zigmaa_contacts_columns"
+                  module="contacts"
+                  columns={CONTACT_COLUMNS}
+                  visibleColumns={visibleColumns}
+                  onToggle={toggleColumn}
+                  onReset={resetColumns}
+                  onCustomFieldsLoaded={handleCustomFieldsLoaded}
+                  onOpenCustomFields={() => setShowCustomFields(true)}
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowStageSettingsModal(true)}
+                  title="Contact Stages Settings"
+                  className="h-9 w-9 p-0 bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 rounded-xl text-xs sm:text-sm font-semibold shadow-2xs transition-colors cursor-pointer flex items-center justify-center shrink-0"
+                >
+                  <SlidersHorizontal className="w-4 h-4" />
+                </button>
+              )}
             </div>
           </div>
 
-          {/* TABLE CONTAINER: Stretches full remaining height so footer is strictly anchored at the bottom */}
+          {/* DUAL VIEW RENDER: TABLE VIEW OR KANBAN BOARD */}
+          {viewMode === "table" ? (
           <div className="bg-white border border-slate-200/80 rounded-xl shadow-xs flex-1 flex flex-col min-h-0 overflow-hidden">
             {/* Scrollable table body area */}
             <div className="flex-1 overflow-auto custom-scrollbar">
@@ -1826,6 +1998,220 @@ export default function ContactsPage() {
               </div>
             </div>
           </div>
+          ) : (
+          <div className="w-full flex-1 min-h-0 overflow-x-auto pb-4 pt-1 custom-scrollbar">
+            <div className="flex items-start gap-4 min-w-max h-full">
+              {contactStages.map((stage, colIndex) => {
+                const stageContacts = getContactsForStage(stage, colIndex);
+                const colorPreset = getContactStageColorPreset(stage.color);
+
+                return (
+                  <div
+                    key={stage.id || colIndex}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const contactId = e.dataTransfer.getData("contactId");
+                      if (contactId) handleKanbanStageChange(contactId, stage);
+                    }}
+                    className="w-[300px] shrink-0 bg-white rounded-2xl border border-slate-200 shadow-xs flex flex-col h-[calc(100vh-215px)] min-h-[500px] max-h-[750px] transition-all"
+                  >
+                    {/* Column Header: [Dot] [Grip] [Title] [Count Pill] */}
+                    <div className="p-3.5 border-b border-slate-100 flex items-center justify-between select-none shrink-0 bg-white rounded-t-2xl">
+                      <div className="flex items-center gap-2">
+                        <span className={`w-2.5 h-2.5 rounded-full ${colorPreset.dot} shrink-0`} />
+                        <GripVertical className="w-3.5 h-3.5 text-slate-300" />
+                        <h3 className="text-[13px] font-bold text-slate-800 tracking-tight truncate max-w-[170px]">
+                          {stage.name}
+                        </h3>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="w-5 h-5 rounded-full bg-slate-100 text-slate-600 text-[11px] font-semibold flex items-center justify-center">
+                          {stageContacts.length}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Column Body: Scrollable Cards Container */}
+                    <div className="flex-1 p-3 space-y-2.5 overflow-y-auto custom-scrollbar flex flex-col">
+                      {stageContacts.length === 0 ? (
+                        <div className="min-h-[140px] border-2 border-dashed border-slate-200/80 rounded-xl flex items-center justify-center text-slate-400 text-xs font-normal select-none">
+                          Drop contact here
+                        </div>
+                      ) : (
+                        stageContacts.map((contact) => {
+                          const displayName = contact.name || contact.full_name || "Unnamed Contact";
+                          const displayCompany = contact.company_name || contact.company || "";
+                          const initials = getInitials(displayName);
+
+                          return (
+                            <div
+                              key={contact.id}
+                              draggable
+                              onDragStart={(e) => e.dataTransfer.setData("contactId", String(contact.id))}
+                              onClick={() => {
+                                setOpenDrawerInEditMode(false);
+                                setSelectedContact(contact);
+                              }}
+                              className="border border-slate-200/80 rounded-xl shadow-xs hover:shadow-md transition-shadow p-3.5 bg-white cursor-grab active:cursor-grabbing space-y-2.5 group shrink-0 select-none"
+                            >
+                              {/* Top Row: Avatar + Name + Source Badge */}
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex items-center gap-2 min-w-0 flex-1">
+                                  <div className="w-8 h-8 rounded-full bg-red-50 text-red-600 border border-red-100 font-bold text-xs flex items-center justify-center shrink-0">
+                                    {initials}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <h4 className="font-bold text-slate-800 text-sm group-hover:text-red-600 transition-colors truncate leading-tight">
+                                      {displayName}
+                                    </h4>
+                                    {(displayCompany || contact.job_title) && (
+                                      <div className="flex items-center gap-1 text-[11px] text-slate-500 font-medium truncate mt-0.5">
+                                        <Building2 className="w-3 h-3 text-slate-400 shrink-0" />
+                                        <span className="truncate">
+                                          {displayCompany}
+                                          {displayCompany && contact.job_title ? " • " : ""}
+                                          {contact.job_title || ""}
+                                        </span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                                  <SourceBadge source={contact.source || "Manual"} />
+                                </div>
+                              </div>
+
+                              {/* Contact Data Row: Email & Phone */}
+                              <div className="space-y-1 pt-1 border-t border-slate-100/80">
+                                <div className="flex items-center gap-1.5 text-xs text-slate-600 min-w-0">
+                                  <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                  {contact.email ? (
+                                    <a
+                                      href={`mailto:${contact.email}`}
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="truncate hover:text-red-600 hover:underline transition-colors"
+                                      title={contact.email}
+                                    >
+                                      {contact.email}
+                                    </a>
+                                  ) : (
+                                    <span className="text-slate-400">—</span>
+                                  )}
+                                </div>
+
+                                <div className="flex items-center gap-1.5 text-xs text-slate-600 min-w-0">
+                                  <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                  {contact.phone ? (
+                                    <a
+                                      href={`tel:${contact.phone}`}
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="truncate hover:text-red-600 hover:underline font-mono text-[11px] transition-colors"
+                                      title={contact.phone}
+                                    >
+                                      {contact.phone}
+                                    </a>
+                                  ) : (
+                                    <span className="text-slate-400">—</span>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Interactive Action Strip: Call, WhatsApp, Email, and Move Arrows */}
+                              <div className="flex items-center justify-between pt-1 border-t border-slate-100" onClick={(e) => e.stopPropagation()}>
+                                <div className="flex items-center gap-1">
+                                  {/* Call Dialer Button */}
+                                  <button
+                                    type="button"
+                                    onClick={() => setCallModalContact(contact)}
+                                    className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                                    title="Call Phone"
+                                  >
+                                    <Phone className="w-3.5 h-3.5" />
+                                  </button>
+
+                                  {/* WhatsApp Direct Chat Button */}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const clean = String(contact.phone || "").replace(/[^0-9]/g, "");
+                                      window.location.href = `/whatsapp?phone=${clean}&name=${encodeURIComponent(displayName)}`;
+                                    }}
+                                    className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                                    title="Open WhatsApp Chat"
+                                  >
+                                    <WhatsAppIcon className="w-3.5 h-3.5" />
+                                  </button>
+
+                                  {/* Email Compose Button */}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (contact.email) {
+                                        window.location.href = `mailto:${contact.email}`;
+                                      } else {
+                                        toast.warning("No Email", "This contact does not have an email address.");
+                                      }
+                                    }}
+                                    className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                                    title="Send Email"
+                                  >
+                                    <Mail className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+
+                                {/* Stage Move Arrows */}
+                                <div className="flex items-center gap-0.5">
+                                  {colIndex > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleKanbanStageChange(contact.id, contactStages[colIndex - 1])}
+                                      className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md transition-colors cursor-pointer"
+                                      title={`Move back to ${contactStages[colIndex - 1].name}`}
+                                    >
+                                      <ArrowLeft className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                  {colIndex < contactStages.length - 1 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleKanbanStageChange(contact.id, contactStages[colIndex + 1])}
+                                      className="p-1 text-red-600 hover:bg-red-50 rounded-md transition-colors cursor-pointer"
+                                      title={`Advance to ${contactStages[colIndex + 1].name}`}
+                                    >
+                                      <ArrowRight className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Footer: Owner + Creation Date */}
+                              <div className="flex items-center justify-between text-[11px] text-slate-400 pt-0.5">
+                                <div className="flex items-center gap-1.5 truncate max-w-[160px]">
+                                  <div className="w-4 h-4 rounded-full bg-slate-100 text-slate-600 text-[9px] font-bold flex items-center justify-center shrink-0">
+                                    {(contact.assigned_to || (contact as any).assigned_user_name || "SR").slice(0, 2).toUpperCase()}
+                                  </div>
+                                  <span className="truncate">
+                                    {contact.assigned_to || (contact as any).assigned_user_name || "Unassigned"}
+                                  </span>
+                                </div>
+                                <span className="shrink-0">
+                                  {formatDate(contact.created_at || (contact as any).date)}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          )}
         </main>
       </div>
 
@@ -1965,6 +2351,14 @@ export default function ContactsPage() {
           onCallLogged={() => loadContacts()}
         />
       )}
+
+      {/* CONTACT STAGES SETTINGS MODAL */}
+      <ContactStagesModal
+        isOpen={showStageSettingsModal}
+        onClose={() => setShowStageSettingsModal(false)}
+        stages={contactStages}
+        onSave={(newStages) => setContactStages(newStages)}
+      />
     </div>
   );
 }
