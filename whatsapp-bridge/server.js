@@ -624,7 +624,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
       logger,
       printQRInTerminal: false,
       auth: state,
-      browser: Browsers.windows('Chrome'),
+      browser: ['Zigmaa CRM', 'Desktop', '1.0.0'],
       syncFullHistory: false,
       markOnlineOnConnect: true,
       connectTimeoutMs: 60000,
@@ -869,33 +869,49 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
         }
       }
 
-      // 3. Rank by latest message timestamp descending and take EXACTLY the top 20 active chats
-      const top20Phones = Array.from(latestTsByPhone.entries())
+      // 3. Rank ALL active direct chats by latest message timestamp descending (Exact WhatsApp Web order)
+      const activePhones = Array.from(latestTsByPhone.entries())
         .sort((a, b) => b[1] - a[1])
-        .slice(0, 20)
         .map(e => e[0]);
 
-      console.log(`[WhatsApp Gateway:${session.id}] Ranked top ${top20Phones.length} active direct chatting contacts:`, top20Phones);
+      console.log(`[WhatsApp Gateway:${session.id}] Ranked all ${activePhones.length} active direct chatting contacts (WhatsApp Web sync):`, activePhones);
 
-      // Register ONLY these 20 active direct chatting contacts
-      for (const phone of top20Phones) {
+      // Register all active direct chatting contacts into pendingContacts
+      for (const phone of activePhones) {
         const savedContact = session.contactsStore ? session.contactsStore.get(phone) : null;
         session.pendingContacts.set(phone, {
           phone: phone,
-          name: savedContact?.name || null,
+          name: savedContact?.phonebook_name || savedContact?.name || savedContact?.push_name || null,
           phonebook_name: savedContact?.phonebook_name || null,
           push_name: savedContact?.push_name || null,
           jid: `${phone}@s.whatsapp.net`,
-          avatar_url: null
+          avatar_url: savedContact?.avatar_url || null
         });
       }
+
+      // Also register all other address-book contacts from session.contactsStore
+      if (session.contactsStore) {
+        for (const [phone, c] of session.contactsStore.entries()) {
+          if (!session.pendingContacts.has(phone)) {
+            session.pendingContacts.set(phone, {
+              phone: phone,
+              name: c.phonebook_name || c.name || c.push_name || null,
+              phonebook_name: c.phonebook_name || null,
+              push_name: c.push_name || null,
+              jid: c.jid || `${phone}@s.whatsapp.net`,
+              avatar_url: c.avatar_url || null
+            });
+          }
+        }
+      }
+
       if (session.pendingContacts.size > 0) {
         scheduleContactSync(session);
       }
 
-      // 4. Extract real messages for ONLY these top 20 active chatting conversations
+      // 4. Extract real messages for all active chatting conversations
       const validMessages = [];
-      for (const phone of top20Phones) {
+      for (const phone of activePhones) {
         const msgs = messagesByPhone.get(phone) || [];
         const savedContact = session.contactsStore ? session.contactsStore.get(phone) : null;
         const contactName = savedContact?.phonebook_name || savedContact?.name || null;
@@ -980,6 +996,33 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
           }
         }
       }
+
+      // Background fast avatar prefetch for active chatting contacts
+      (async () => {
+        const topChatsForAvatars = activePhones.slice(0, 40);
+        for (const phone of topChatsForAvatars) {
+          try {
+            const jid = `${phone}@s.whatsapp.net`;
+            const avatarUrl = await session.sock.profilePictureUrl(jid, 'image').catch(() => null);
+            if (avatarUrl) {
+              const existing = session.contactsStore ? session.contactsStore.get(phone) : null;
+              if (existing) {
+                existing.avatar_url = avatarUrl;
+              }
+              session.pendingContacts.set(phone, {
+                phone: phone,
+                name: existing?.name || null,
+                phonebook_name: existing?.phonebook_name || null,
+                push_name: existing?.push_name || null,
+                jid: jid,
+                avatar_url: avatarUrl
+              });
+              scheduleContactSync(session);
+            }
+          } catch (_) {}
+          await new Promise(r => setTimeout(r, 100));
+        }
+      })().catch(() => {});
     });
 
     // Chats upsert (Update contactStore names only; do not dump arbitrary non-message chats into CRM)
@@ -991,12 +1034,16 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
         if (!cleanPhone || cleanPhone.length < 8 || cleanPhone.length > 13) continue;
         if (chat.name && session.contactsStore) {
           const existing = session.contactsStore.get(cleanPhone);
-          session.contactsStore.set(cleanPhone, {
+          const item = {
             ...(existing || {}),
             phone: cleanPhone,
-            name: existing?.name || chat.name,
+            name: chat.name || existing?.name,
+            phonebook_name: chat.name || existing?.phonebook_name,
             jid: chat.id
-          });
+          };
+          session.contactsStore.set(cleanPhone, item);
+          session.pendingContacts.set(cleanPhone, item);
+          scheduleContactSync(session);
         }
       }
     });

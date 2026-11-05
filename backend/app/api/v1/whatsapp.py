@@ -553,7 +553,7 @@ async def get_whatsapp_conversations(
     assigned_user_id: Optional[str] = Query(None),
     active_session_phone: Optional[str] = Query(None),
     session_id: Optional[str] = Query(None),
-    limit: int = Query(25, le=100),
+    limit: int = Query(100, le=500),
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -828,7 +828,7 @@ async def get_whatsapp_conversations(
 
     return {
         "status": "success",
-        "conversations": active_conversations[:20]
+        "conversations": active_conversations[:effective_limit]
     }
 
 @router.patch("/conversations/{phone_number}/assign")

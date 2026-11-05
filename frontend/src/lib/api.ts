@@ -3232,7 +3232,7 @@ export const zigmaaApi = {
     return null;
   },
 
-  async getWhatsAppConversations(limit = 30, assigned_user_id?: string, active_session_phone?: string | null): Promise<any> {
+  async getWhatsAppConversations(limit = 100, assigned_user_id?: string, active_session_phone?: string | null): Promise<any> {
     try {
       let url = `${API_BASE}/whatsapp/conversations?limit=${limit}`;
       if (assigned_user_id && assigned_user_id.toLowerCase() !== "all") {

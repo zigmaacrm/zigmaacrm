@@ -1611,7 +1611,7 @@ export default function WhatsAppPage() {
   // Background lazy-loader for avatars of the top 20 conversations
   useEffect(() => {
     if (!conversations.length) return;
-    const missingAvatars = conversations.filter((c) => !c.avatar_url && c.phone).slice(0, 6);
+    const missingAvatars = conversations.filter((c) => !c.avatar_url && c.phone).slice(0, 15);
     if (!missingAvatars.length) return;
     missingAvatars.forEach((c) => {
       const clean = c.phone.replace(/[^0-9]/g, "");
