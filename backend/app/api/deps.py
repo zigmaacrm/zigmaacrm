@@ -1,4 +1,4 @@
-from fastapi import Depends, HTTPException, Header, Query, status
+from fastapi import Depends, HTTPException, Header, Query, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -111,29 +111,52 @@ async def get_current_super_admin(
     return current_user
 
 async def get_optional_current_user(
+    request: Request,
     auth: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: AsyncSession = Depends(get_db)
 ) -> Optional[User]:
     """
     Optional user dependency. If a valid Bearer token is provided, returns the active User.
-    If no token or invalid token, returns None without raising an HTTPException.
+    If token is invalid or missing, falls back to X-User-Id / X-User-Email headers before returning None.
     """
-    if not auth or not auth.credentials:
-        return None
-    token = auth.credentials.strip()
-    try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        user_id = payload.get("sub")
-        if not user_id:
-            return None
-        res = await db.execute(select(User).where(User.id == str(user_id)))
-        user = res.scalar_one_or_none()
-        if not user and payload.get("email"):
-            res = await db.execute(select(User).where(User.email == payload.get("email").lower().strip()))
+    if auth and auth.credentials:
+        token = auth.credentials.strip()
+        try:
+            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+            user_id = payload.get("sub")
+            if user_id:
+                res = await db.execute(select(User).where(User.id == str(user_id)))
+                user = res.scalar_one_or_none()
+                if user and user.is_active:
+                    return user
+            if payload.get("email"):
+                res = await db.execute(select(User).where(User.email == payload.get("email").lower().strip()))
+                user = res.scalar_one_or_none()
+                if user and user.is_active:
+                    return user
+        except Exception:
+            pass
+
+    # Header-based fallback for high availability and resilient client sync
+    header_user_id = request.headers.get("x-user-id")
+    if header_user_id:
+        try:
+            res = await db.execute(select(User).where(User.id == str(header_user_id)))
             user = res.scalar_one_or_none()
-        if user and user.is_active:
-            return user
-    except Exception:
-        return None
+            if user and user.is_active:
+                return user
+        except Exception:
+            pass
+
+    header_user_email = request.headers.get("x-user-email")
+    if header_user_email:
+        try:
+            res = await db.execute(select(User).where(User.email == str(header_user_email).lower().strip()))
+            user = res.scalar_one_or_none()
+            if user and user.is_active:
+                return user
+        except Exception:
+            pass
+
     return None
 

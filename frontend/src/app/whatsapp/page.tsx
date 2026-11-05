@@ -1097,7 +1097,9 @@ export default function WhatsAppPage() {
 
   useEffect(() => {
     const fetchStatus = () => {
-      api.getWhatsAppQRStatus().then((data) => {
+      const u = api.getCurrentUser();
+      const sId = u?.id || undefined;
+      api.getWhatsAppQRStatus(sId).then((data) => {
         setQrStatus(data.status);
         if (data.status === "CONNECTED" && data.phone) {
           setQrPhone(data.phone);
@@ -4386,6 +4388,7 @@ export default function WhatsAppPage() {
         isOpen={showQRModal}
         onClose={() => setShowQRModal(false)}
         initialQR={cachedQR}
+        sessionId={currentUser?.id || api.getCurrentUser()?.id || null}
         onStatusChange={(status, phone) => {
           setQrStatus(status);
           setQrPhone(phone);

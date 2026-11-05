@@ -3620,9 +3620,18 @@ export const zigmaaApi = {
       let sid = sessionId;
       if (!sid && typeof window !== "undefined") {
         try {
-          const uStr = localStorage.getItem("zigmaa_user");
-          if (uStr) sid = JSON.parse(uStr)?.id || null;
+          const u = this.getCurrentUser();
+          if (u?.id) sid = u.id;
         } catch (_) {}
+        if (!sid) {
+          try {
+            const uStr = localStorage.getItem("zigmaa_user") || localStorage.getItem("zigmaa_current_user");
+            if (uStr) {
+              const p = JSON.parse(uStr);
+              sid = p?.id || p?.userId || p?._id || null;
+            }
+          } catch (_) {}
+        }
       }
       const query = sid ? `?sessionId=${encodeURIComponent(sid)}` : "";
       const res = await fetch(`${API_BASE}/whatsapp/qr/status${query}`, {
@@ -3648,9 +3657,18 @@ export const zigmaaApi = {
     let sid = sessionId;
     if (!sid && typeof window !== "undefined") {
       try {
-        const uStr = localStorage.getItem("zigmaa_user");
-        if (uStr) sid = JSON.parse(uStr)?.id || null;
+        const u = this.getCurrentUser();
+        if (u?.id) sid = u.id;
       } catch (_) {}
+      if (!sid) {
+        try {
+          const uStr = localStorage.getItem("zigmaa_user") || localStorage.getItem("zigmaa_current_user");
+          if (uStr) {
+            const p = JSON.parse(uStr);
+            sid = p?.id || p?.userId || p?._id || null;
+          }
+        } catch (_) {}
+      }
     }
     const query = sid ? `?sessionId=${encodeURIComponent(sid)}` : "";
     const res = await fetch(`${API_BASE}/whatsapp/qr/refresh${query}`, {
@@ -3672,9 +3690,18 @@ export const zigmaaApi = {
     let sid = sessionId;
     if (!sid && typeof window !== "undefined") {
       try {
-        const uStr = localStorage.getItem("zigmaa_user");
-        if (uStr) sid = JSON.parse(uStr)?.id || null;
+        const u = this.getCurrentUser();
+        if (u?.id) sid = u.id;
       } catch (_) {}
+      if (!sid) {
+        try {
+          const uStr = localStorage.getItem("zigmaa_user") || localStorage.getItem("zigmaa_current_user");
+          if (uStr) {
+            const p = JSON.parse(uStr);
+            sid = p?.id || p?.userId || p?._id || null;
+          }
+        } catch (_) {}
+      }
     }
     const query = sid ? `?sessionId=${encodeURIComponent(sid)}` : "";
     const res = await fetch(`${API_BASE}/whatsapp/qr/disconnect${query}`, {

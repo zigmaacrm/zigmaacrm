@@ -191,7 +191,7 @@ async def resolve_valid_user_id(db: AsyncSession, assigned_user_id: Optional[str
         row = chk.scalar_one_or_none()
         if row:
             return row
-    if session_id:
+    if session_id and session_id != "default":
         chk = await db.execute(select(User.id).where(User.id == session_id).limit(1))
         row = chk.scalar_one_or_none()
         if row:
@@ -203,8 +203,7 @@ async def resolve_valid_user_id(db: AsyncSession, assigned_user_id: Optional[str
             row = chk.scalar_one_or_none()
             if row:
                 return row
-    first_u = await db.execute(select(User.id).limit(1))
-    return first_u.scalar_one_or_none()
+    return None
 
 @router.post("/send", status_code=status.HTTP_201_CREATED)
 @router.post("/messages", status_code=status.HTTP_201_CREATED)
@@ -573,56 +572,50 @@ async def get_whatsapp_conversations(
 
     effective_limit = int(limit) if isinstance(limit, (int, str)) and str(limit).isdigit() else 25
 
-    # 1. Resolve currently active linked WhatsApp phone strictly from live connected session
-    clean_param = (active_session_phone or session_id or '').replace('+', '').strip()
-    target_session = clean_param if clean_param else None
+    # 1. Resolve currently active linked WhatsApp status strictly for this current user
+    user_session_id = current_user.id if current_user else (session_id or "default")
+    user_connected = False
+    target_session = None
 
-    # Check live QR status cache for current user to verify device is actually CONNECTED
-    if not target_session and current_user:
-        c_entry = _qr_status_cache.get(current_user.id)
-        if c_entry and c_entry.get("data") and c_entry["data"].get("status") == "CONNECTED":
-            p = c_entry["data"].get("phone")
-            if p:
-                target_session = normalize_phone(p)
+    c_entry = _qr_status_cache.get(user_session_id)
+    if c_entry and c_entry.get("data") and c_entry["data"].get("status") == "CONNECTED":
+        user_connected = True
+        p = c_entry["data"].get("phone")
+        if p:
+            target_session = normalize_phone(p)
 
-    # Check whether any session is actively CONNECTED
-    is_live_connected = False
-    for k in [current_user.id if current_user else None, target_session, "default"]:
-        if k and k in _qr_status_cache:
-            entry = _qr_status_cache[k]
-            if entry and entry.get("data") and entry["data"].get("status") == "CONNECTED":
-                is_live_connected = True
-                break
+    if not target_session and current_user and current_user.whatsapp_phone_number:
+        target_session = normalize_phone(current_user.whatsapp_phone_number)
+        user_connected = True
 
-    # If device is NOT actively connected, return 0 conversations immediately!
-    if not target_session or (not is_live_connected and _qr_status_cache):
-        any_connected = any(
-            v.get("data") and v["data"].get("status") == "CONNECTED"
-            for v in _qr_status_cache.values()
-        )
-        if not any_connected:
-            return {
-                "status": "success",
-                "count": 0,
-                "conversations": [],
-                "is_connected": False,
-                "message": "WhatsApp device is not connected. Please scan QR to access inbox."
-            }
+    # If the current user has no connected device, return 0 conversations immediately!
+    if not user_connected or not target_session:
+        return {
+            "status": "success",
+            "count": 0,
+            "conversations": [],
+            "is_connected": False,
+            "message": "WhatsApp device is not connected. Please scan QR to access inbox."
+        }
 
     session_suffix = target_session[-10:] if len(target_session) >= 10 else target_session
 
-    # Strict isolation: ONLY messages tagged with this active session phone or user
+    # Strict isolation: ONLY messages tagged with this user's active session phone or user ID
     conv_conditions = [
+        and_(
+            WhatsAppMessage.session_id.in_([target_session, user_session_id]),
+            or_(
+                WhatsAppMessage.assigned_user_id == user_session_id,
+                WhatsAppMessage.assigned_user_id.is_(None)
+            )
+        ),
         WhatsAppMessage.session_id == target_session,
         WhatsAppMessage.session_id.like(f"%{session_suffix}%"),
         WhatsAppMessage.business_phone_number_id == target_session,
         WhatsAppMessage.business_phone_number_id.like(f"%{session_suffix}%")
     ]
     if current_user:
-        conv_conditions.extend([
-            WhatsAppMessage.session_id == current_user.id,
-            WhatsAppMessage.assigned_user_id == current_user.id
-        ])
+        conv_conditions.append(WhatsAppMessage.assigned_user_id == current_user.id)
     stmt = stmt.where(or_(*conv_conditions))
 
 
@@ -1084,10 +1077,19 @@ async def get_whatsapp_qr_status(
 ):
     """
     Checks connection status, linked phone, and current QR code from Baileys gateway
-    specifically scoped to the current user or active session.
+    specifically scoped to the current user's isolated session.
     """
     global _qr_status_cache
-    effective_session = sessionId or session_id or (current_user.id if current_user else "default")
+    effective_session = sessionId or session_id or (current_user.id if current_user else None)
+    if not effective_session:
+        # Fallback to active admin or primary user so local dev tabs or unauthenticated initial page renders always obtain a valid pairing QR
+        admin_res = await db.execute(select(User.id).where(User.role.ilike("%admin%")).limit(1))
+        fallback_id = admin_res.scalar_one_or_none()
+        if not fallback_id:
+            any_u = await db.execute(select(User.id).limit(1))
+            fallback_id = any_u.scalar_one_or_none()
+        effective_session = str(fallback_id) if fallback_id else "default"
+
     now = time.time()
     user_cache = _qr_status_cache.get(effective_session, {"data": None, "ts": 0})
     if user_cache["data"] and (now - user_cache["ts"] < 2.0):
@@ -1108,30 +1110,20 @@ async def get_whatsapp_qr_status(
                     data = resp.json()
                     data["gateway_online"] = True
 
-                    # Fallback to default session QR if user session QR is not ready
-                    if not data.get("qr") and data.get("status") != "CONNECTED" and effective_session != "default":
-                        try:
-                            def_resp = await client.get(f"{target}/status?sessionId=default")
-                            if def_resp.status_code == 200:
-                                def_data = def_resp.json()
-                                if def_data.get("qr") or def_data.get("status") == "CONNECTED":
-                                    data = def_data
-                        except Exception:
-                            pass
-
                     _qr_status_cache[effective_session] = {"data": data, "ts": time.time()}
 
-                    # Update User.whatsapp_phone_number for the authenticated user
-                    if data.get("status") == "CONNECTED" and data.get("phone") and current_user:
-                        if current_user.whatsapp_phone_number != data.get("phone"):
-                            current_user.whatsapp_phone_number = data.get("phone")
-                            await db.commit()
-                    elif data.get("status") != "CONNECTED" and current_user:
-                        # Clean disconnected phone from user profile
-                        if current_user.whatsapp_phone_number is not None:
-                            current_user.whatsapp_phone_number = None
-                            await db.commit()
-                        data["phone"] = None
+                    # Strict User WhatsApp Phone Synchronization:
+                    # ONLY update current_user phone if the bridge session is verified to belong to this user
+                    if current_user and effective_session == current_user.id:
+                        if data.get("status") == "CONNECTED" and data.get("phone") and data.get("session_id") == current_user.id:
+                            if current_user.whatsapp_phone_number != data.get("phone"):
+                                current_user.whatsapp_phone_number = data.get("phone")
+                                await db.commit()
+                        elif data.get("status") != "CONNECTED":
+                            if current_user.whatsapp_phone_number is not None:
+                                current_user.whatsapp_phone_number = None
+                                await db.commit()
+                            data["phone"] = None
 
                     return data
         except Exception as e:
@@ -1155,13 +1147,21 @@ async def get_whatsapp_qr_status(
 async def refresh_whatsapp_qr(
     sessionId: Optional[str] = Query(None),
     session_id: Optional[str] = Query(None),
-    current_user: Optional[User] = Depends(get_optional_current_user)
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Requests a fresh QR code from the Baileys gateway for the current user's session.
     """
     global _qr_status_cache
-    effective_session = sessionId or session_id or (current_user.id if current_user else "default")
+    effective_session = sessionId or session_id or (current_user.id if current_user else None)
+    if not effective_session:
+        admin_res = await db.execute(select(User.id).where(User.role.ilike("%admin%")).limit(1))
+        fallback_id = admin_res.scalar_one_or_none()
+        if not fallback_id:
+            any_u = await db.execute(select(User.id).limit(1))
+            fallback_id = any_u.scalar_one_or_none()
+        effective_session = str(fallback_id) if fallback_id else "default"
     _qr_status_cache[effective_session] = {"data": None, "ts": 0}
 
     gateway_url = get_gateway_url()
@@ -1176,15 +1176,6 @@ async def refresh_whatsapp_qr(
             async with httpx.AsyncClient(timeout=target_timeout, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
                 resp = await client.post(f"{target}/refresh-qr?sessionId={effective_session}", json={"sessionId": effective_session})
                 data = resp.json()
-                if not data.get("qr") and effective_session != "default":
-                    try:
-                        def_resp = await client.post(f"{target}/refresh-qr?sessionId=default", json={"sessionId": "default"})
-                        if def_resp.status_code == 200:
-                            def_data = def_resp.json()
-                            if def_data.get("qr"):
-                                data = def_data
-                    except Exception:
-                        pass
                 if data.get("qr"):
                     _qr_status_cache[effective_session] = {"data": {**data, "gateway_online": True}, "ts": time.time()}
                 return data
@@ -1204,10 +1195,14 @@ async def disconnect_whatsapp_qr(
     Disconnects and logs out the Baileys QR session for the current user.
     """
     global _qr_status_cache
-    effective_session = sessionId or session_id or (current_user.id if current_user else "default")
+    effective_session = sessionId or session_id or (current_user.id if current_user else None)
+    if not effective_session:
+        admin_res = await db.execute(select(User.id).where(User.role.ilike("%admin%")).limit(1))
+        fallback_id = admin_res.scalar_one_or_none()
+        effective_session = str(fallback_id) if fallback_id else "default"
     _qr_status_cache[effective_session] = {"data": None, "ts": 0}
 
-    if current_user:
+    if current_user and effective_session == current_user.id:
         current_user.whatsapp_phone_number = None
         await db.commit()
 

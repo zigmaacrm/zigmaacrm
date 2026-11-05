@@ -21,6 +21,7 @@ interface WhatsAppQRModalProps {
   isOpen: boolean;
   onClose: () => void;
   initialQR?: string | null;
+  sessionId?: string | null;
   onStatusChange?: (status: "DISCONNECTED" | "SCAN_QR" | "CONNECTED", phone: string | null) => void;
 }
 
@@ -28,6 +29,7 @@ export default function WhatsAppQRModal({
   isOpen,
   onClose,
   initialQR,
+  sessionId,
   onStatusChange
 }: WhatsAppQRModalProps) {
   const { toast } = useToast();
@@ -42,6 +44,15 @@ export default function WhatsAppQRModal({
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isCheckingRef = useRef(false);
 
+  const getResolvedSessionId = (): string | undefined => {
+    if (sessionId) return sessionId;
+    try {
+      const u = api.getCurrentUser();
+      if (u?.id) return u.id;
+    } catch (_) {}
+    return undefined;
+  };
+
   useEffect(() => {
     if (initialQR) {
       setQrCode(initialQR);
@@ -52,7 +63,8 @@ export default function WhatsAppQRModal({
     if (isCheckingRef.current) return;
     isCheckingRef.current = true;
     try {
-      const data = await api.getWhatsAppQRStatus();
+      const sId = getResolvedSessionId();
+      const data = await api.getWhatsAppQRStatus(sId);
       setStatus(data.status);
       setPhone(data.phone);
       setName(data.name);
@@ -62,6 +74,10 @@ export default function WhatsAppQRModal({
       setGatewayOnline(data.gateway_online);
       if (onStatusChange) {
         onStatusChange(data.status, data.phone);
+      }
+      if (data.status === "CONNECTED" && pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
       }
     } catch (e) {
       console.warn("Failed to check QR status", e);
@@ -83,7 +99,8 @@ export default function WhatsAppQRModal({
 
     const initQR = async () => {
       try {
-        const data = await api.getWhatsAppQRStatus();
+        const sId = getResolvedSessionId();
+        const data = await api.getWhatsAppQRStatus(sId);
         if (!isMounted) return;
         setStatus(data.status);
         setPhone(data.phone);
@@ -97,7 +114,7 @@ export default function WhatsAppQRModal({
         }
         // If not connected and still no QR, request refresh immediately
         if (data.status !== "CONNECTED" && !data.qr) {
-          const res = await api.refreshWhatsAppQR().catch(() => null);
+          const res = await api.refreshWhatsAppQR(sId).catch(() => null);
           if (!isMounted) return;
           if (res?.qr) {
             setQrCode(res.qr);
@@ -120,12 +137,13 @@ export default function WhatsAppQRModal({
         pollIntervalRef.current = null;
       }
     };
-  }, [isOpen]);
+  }, [isOpen, sessionId]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
-      const res = await api.refreshWhatsAppQR();
+      const sId = getResolvedSessionId();
+      const res = await api.refreshWhatsAppQR(sId);
       if (res?.qr) {
         setQrCode(res.qr);
         setGatewayOnline(true);
@@ -143,7 +161,8 @@ export default function WhatsAppQRModal({
   const handleDisconnect = async () => {
     setIsDisconnecting(true);
     try {
-      await api.disconnectWhatsAppQR();
+      const sId = getResolvedSessionId();
+      await api.disconnectWhatsAppQR(sId);
       toast.success("Disconnected", "WhatsApp session logged out successfully.");
       await checkStatus();
     } catch (err: any) {
@@ -263,7 +282,7 @@ export default function WhatsAppQRModal({
                   onClick={async () => {
                     setIsRefreshing(true);
                     try {
-                      const res = await api.refreshWhatsAppQR();
+                      const res = await api.refreshWhatsAppQR(getResolvedSessionId());
                       if (res?.qr) {
                         setQrCode(res.qr);
                         setGatewayOnline(true);
