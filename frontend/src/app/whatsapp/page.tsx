@@ -1074,6 +1074,8 @@ export default function WhatsAppPage() {
   const [showNewChatModal, setShowNewChatModal] = useState(false);
   const [qrStatus, setQrStatus] = useState<"DISCONNECTED" | "SCAN_QR" | "CONNECTED">("DISCONNECTED");
   const [qrPhone, setQrPhone] = useState<string | null>(null);
+  const qrPhoneRef = useRef<string | null>(null);
+  qrPhoneRef.current = qrPhone;
   const [linkedUserAvatar, setLinkedUserAvatar] = useState<string | null>(null);
   const [cachedQR, setCachedQR] = useState<string | null>(null);
 
@@ -1383,7 +1385,8 @@ export default function WhatsAppPage() {
     try {
       const activeFilter = repFilter !== undefined ? repFilter : selectedRepFilter;
       const repParam = activeFilter === "ALL" ? undefined : activeFilter;
-      const cleanSession = qrPhone ? qrPhone.replace(/[^0-9]/g, "") : undefined;
+      const liveSession = qrPhoneRef.current || qrPhone;
+      const cleanSession = liveSession ? liveSession.replace(/[^0-9]/g, "") : undefined;
       const data = await api.getWhatsAppConversations(100, repParam, cleanSession);
       if (data && data.status === "success" && Array.isArray(data.conversations)) {
         if (data.is_connected === false && qrStatus === "DISCONNECTED" && !qrPhone) {
@@ -1474,7 +1477,8 @@ export default function WhatsAppPage() {
 
     try {
       const clean = phone.replace(/[^0-9]/g, "");
-      const data = await api.getWhatsAppMessages({ phone_number: clean, active_session_phone: qrPhone });
+      const liveSession = qrPhoneRef.current || qrPhone;
+      const data = await api.getWhatsAppMessages({ phone_number: clean, active_session_phone: liveSession });
 
       if (data && data.status === "success" && Array.isArray(data.messages)) {
         const mappedMsgs: WhatsAppMessage[] = data.messages.map((m: any) => {
@@ -1601,8 +1605,29 @@ export default function WhatsAppPage() {
           )
         );
       }
-    });
+    }).catch(() => {});
   }, [activeChat?.phone]);
+
+  // Background lazy-loader for avatars of the top 20 conversations
+  useEffect(() => {
+    if (!conversations.length) return;
+    const missingAvatars = conversations.filter((c) => !c.avatar_url && c.phone).slice(0, 6);
+    if (!missingAvatars.length) return;
+    missingAvatars.forEach((c) => {
+      const clean = c.phone.replace(/[^0-9]/g, "");
+      if (clean) {
+        api.getWhatsAppContactAvatar(clean).then((res) => {
+          if (res?.avatar_url) {
+            setConversations((prev) =>
+              prev.map((conv) =>
+                conv.phone.replace(/[^0-9]/g, "") === clean ? { ...conv, avatar_url: res.avatar_url } : conv
+              )
+            );
+          }
+        }).catch(() => {});
+      }
+    });
+  }, [conversations.length]);
 
   // Close emoji picker on outside click
   useEffect(() => {

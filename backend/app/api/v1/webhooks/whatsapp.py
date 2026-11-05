@@ -661,7 +661,10 @@ async def receive_whatsapp_qr_inbound(
     # Precise message timestamp to ensure accurate chronological order
     if payload.timestamp:
         try:
-            msg_dt = dt_utcnow.fromtimestamp(payload.timestamp, tz=datetime.timezone.utc).replace(tzinfo=None)
+            ts_val = float(payload.timestamp)
+            if ts_val > 1e11:
+                ts_val = ts_val / 1000.0
+            msg_dt = dt_utcnow.fromtimestamp(ts_val, tz=datetime.timezone.utc).replace(tzinfo=None)
         except Exception:
             msg_dt = dt_utcnow.utcnow()
     else:
@@ -675,6 +678,11 @@ async def receive_whatsapp_qr_inbound(
             quoted_str = str(payload.quoted_context)
 
     clean_session_val = normalize_phone(payload.session_id) if payload.session_id else None
+    if effective_user_id and (not clean_session_val or len(clean_session_val) < 8):
+        owner_u_res = await db.execute(select(User).where(User.id == effective_user_id).limit(1))
+        owner_u = owner_u_res.scalar_one_or_none()
+        if owner_u and owner_u.whatsapp_phone_number:
+            clean_session_val = normalize_phone(owner_u.whatsapp_phone_number)
     wa_msg = WhatsAppMessage(
         organization_id=default_org_id,
         contact_id=contact.id if contact else None,

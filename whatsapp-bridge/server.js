@@ -39,6 +39,8 @@ const FASTAPI_WEBHOOK_URL = process.env.FASTAPI_WEBHOOK_URL || `${BACKEND_BASE}/
 const FASTAPI_BULK_SYNC_URL = process.env.FASTAPI_BULK_SYNC_URL || `${BACKEND_BASE}/api/v1/whatsapp/contacts/bulk-sync`;
 const FASTAPI_SYNC_HISTORY_URL = process.env.FASTAPI_SYNC_HISTORY_URL || `${BACKEND_BASE}/api/v1/whatsapp/chats/sync-history`;
 const FASTAPI_STATUS_UPDATE_URL = process.env.FASTAPI_STATUS_UPDATE_URL || `${BACKEND_BASE}/api/v1/webhooks/whatsapp/status-update`;
+const FASTAPI_SESSION_BACKUP_URL = process.env.FASTAPI_SESSION_BACKUP_URL || `${BACKEND_BASE}/api/v1/whatsapp/session-backup`;
+const FASTAPI_SESSION_RESTORE_URL = process.env.FASTAPI_SESSION_RESTORE_URL || `${BACKEND_BASE}/api/v1/whatsapp/session-restore`;
 
 // Legacy single-session auth directory
 const AUTH_DIR = path.join(__dirname, 'auth_info_baileys');
@@ -447,12 +449,16 @@ async function decryptAndSaveMedia(msgObj) {
       return null;
     }
 
-    const buffer = await downloadMediaMessage(
+    const downloadPromise = downloadMediaMessage(
       msgObj,
       'buffer',
       {},
       { logger, reuploadRequest: () => Promise.resolve() }
     );
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Media download timeout (10s)')), 10000)
+    );
+    const buffer = await Promise.race([downloadPromise, timeoutPromise]);
 
     if (!buffer || buffer.length === 0) return null;
 
@@ -473,12 +479,66 @@ async function decryptAndSaveMedia(msgObj) {
       is_voice_note: isVoiceNote,
       duration: durationSecs,
       file_size: buffer.length,
-      media_base64: buffer.toString('base64')
+      media_base64: buffer.length <= 4 * 1024 * 1024 ? buffer.toString('base64') : null
     };
   } catch (err) {
     console.error('[WhatsApp Media Decrypt Error]:', err.message);
     return null;
   }
+}
+
+
+async function backupSessionToDatabase(session) {
+  if (!session || !fs.existsSync(session.authDir)) return;
+  try {
+    const credsFile = path.join(session.authDir, 'creds.json');
+    if (!fs.existsSync(credsFile)) return;
+
+    const files = fs.readdirSync(session.authDir);
+    const bundle = {};
+    for (const f of files) {
+      if (f.endsWith('.json')) {
+        try {
+          const content = fs.readFileSync(path.join(session.authDir, f), 'utf8');
+          bundle[f] = content;
+        } catch (_) {}
+      }
+    }
+
+    await fetch(FASTAPI_SESSION_BACKUP_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: session.id,
+        owner_phone: session.ownerPhone || null,
+        auth_data: JSON.stringify(bundle)
+      })
+    });
+  } catch (err) {
+    console.debug(`[WhatsApp Gateway:${session.id}] Session backup note:`, err.message);
+  }
+}
+
+async function restoreSessionFromDatabase(session) {
+  if (!session) return false;
+  try {
+    const res = await fetch(`${FASTAPI_SESSION_RESTORE_URL}/${session.id}`);
+    if (res.status === 200) {
+      const data = await res.json();
+      if (data && data.auth_data) {
+        const bundle = typeof data.auth_data === 'string' ? JSON.parse(data.auth_data) : data.auth_data;
+        if (!fs.existsSync(session.authDir)) fs.mkdirSync(session.authDir, { recursive: true });
+        for (const [fname, content] of Object.entries(bundle)) {
+          fs.writeFileSync(path.join(session.authDir, fname), typeof content === 'string' ? content : JSON.stringify(content));
+        }
+        console.log(`[WhatsApp Gateway:${session.id}] Restored session auth credentials bundle from database!`);
+        return true;
+      }
+    }
+  } catch (err) {
+    console.debug(`[WhatsApp Gateway:${session.id}] Session restore check note:`, err.message);
+  }
+  return false;
 }
 
 function scheduleContactSync(session) {
@@ -544,9 +604,19 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
     if (!fs.existsSync(session.authDir)) {
       fs.mkdirSync(session.authDir, { recursive: true });
     }
+    if (!forceClean && !fs.existsSync(path.join(session.authDir, 'creds.json'))) {
+      await restoreSessionFromDatabase(session);
+    }
     loadLidMappingsForSession(session);
 
     const { state, saveCreds } = await useMultiFileAuthState(session.authDir);
+    if (state?.creds?.me?.id) {
+      const mePhone = state.creds.me.id.split(':')[0].replace(/[^0-9]/g, '');
+      if (mePhone) {
+        session.ownerPhone = mePhone;
+        session.phone = `+${mePhone}`;
+      }
+    }
     const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307], isLatest: true }));
 
     const thisSock = makeWASocket({
@@ -566,7 +636,10 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
     });
 
     session.sock = thisSock;
-    session.sock.ev.on('creds.update', saveCreds);
+    session.sock.ev.on('creds.update', async () => {
+      await saveCreds();
+      backupSessionToDatabase(session);
+    });
 
     session.sock.ev.on('connection.update', async (update) => {
       // Guard: Ignore events from old/replaced sockets
@@ -953,8 +1026,10 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
             avatar_url: null
           };
           if (session.contactsStore) session.contactsStore.set(clean, item);
+          if (bestName) session.pendingContacts.set(clean, item);
         }
       }
+      if (session.pendingContacts.size > 0) scheduleContactSync(session);
     });
 
     // Contacts upsert (Address book name changes - update local store ONLY)
@@ -981,8 +1056,10 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
             avatar_url: null
           };
           if (session.contactsStore) session.contactsStore.set(clean, item);
+          if (bestName) session.pendingContacts.set(clean, item);
         }
       }
+      if (session.pendingContacts.size > 0) scheduleContactSync(session);
     });
 
     // Contacts update (Address book name updates - update local store ONLY)
@@ -1009,8 +1086,10 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
             avatar_url: null
           };
           if (session.contactsStore) session.contactsStore.set(clean, item);
+          if (bestName) session.pendingContacts.set(clean, item);
         }
       }
+      if (session.pendingContacts.size > 0) scheduleContactSync(session);
     });
 
     // Messages upsert
@@ -1043,7 +1122,11 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
             continue;
           }
 
-          const senderPhone = resolvePhoneFromJid(remoteJid, session);
+          let senderPhone = resolvePhoneFromJid(remoteJid, session);
+          if (!senderPhone && remoteJid.endsWith('@lid')) {
+            const partJid = msg.key?.participant || msg.participant || '';
+            if (partJid) senderPhone = resolvePhoneFromJid(partJid, session);
+          }
           if (!senderPhone || senderPhone.length < 7) {
             continue;
           }

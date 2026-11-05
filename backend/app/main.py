@@ -199,6 +199,15 @@ async def on_startup():
                 await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS message_type VARCHAR(50) DEFAULT 'text';"))
                 await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS session_id VARCHAR(100);"))
                 await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS quoted_context TEXT;"))
+                # WhatsApp Session Multi-Instance Cloud Persistence Table
+                await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS whatsapp_session_backups (
+                        session_id VARCHAR(100) PRIMARY KEY,
+                        owner_phone VARCHAR(50),
+                        auth_data TEXT NOT NULL,
+                        updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()
+                    );
+                """))
                 # Clean up corrupt WhatsApp Linked Device IDs (@lid) and invalid length numbers
                 await conn.execute(text("DELETE FROM whatsapp_messages WHERE LENGTH(REGEXP_REPLACE(phone_number, '[^0-9]', '', 'g')) > 13 OR LENGTH(REGEXP_REPLACE(phone_number, '[^0-9]', '', 'g')) < 8;"))
                 await conn.execute(text("DELETE FROM contacts WHERE source = 'WHATSAPP' AND (LENGTH(REGEXP_REPLACE(phone, '[^0-9]', '', 'g')) > 13 OR LENGTH(REGEXP_REPLACE(phone, '[^0-9]', '', 'g')) < 8);"))

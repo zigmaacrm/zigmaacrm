@@ -235,6 +235,7 @@ async def send_whatsapp_message(
         first_org = org_res.scalars().first()
         org_id = first_org.id if first_org else None
 
+    effective_user_id = current_user.id if current_user else None
     contact_id = payload.contact_id
     if not contact_id:
         search_suffix = clean_phone[-10:] if len(clean_phone) >= 10 else clean_phone
@@ -497,14 +498,18 @@ async def get_whatsapp_messages(
 
     if target_session:
         session_suffix = target_session[-10:] if len(target_session) >= 10 else target_session
-        stmt = stmt.where(
-            or_(
-                WhatsAppMessage.session_id == target_session,
-                WhatsAppMessage.session_id.like(f"%{session_suffix}%"),
-                WhatsAppMessage.business_phone_number_id == target_session,
-                WhatsAppMessage.business_phone_number_id.like(f"%{session_suffix}%")
-            )
-        )
+        msg_conditions = [
+            WhatsAppMessage.session_id == target_session,
+            WhatsAppMessage.session_id.like(f"%{session_suffix}%"),
+            WhatsAppMessage.business_phone_number_id == target_session,
+            WhatsAppMessage.business_phone_number_id.like(f"%{session_suffix}%")
+        ]
+        if current_user:
+            msg_conditions.extend([
+                WhatsAppMessage.session_id == current_user.id,
+                WhatsAppMessage.assigned_user_id == current_user.id
+            ])
+        stmt = stmt.where(or_(*msg_conditions))
     elif current_user:
         stmt = stmt.where(WhatsAppMessage.assigned_user_id == current_user.id)
 
@@ -583,15 +588,19 @@ async def get_whatsapp_conversations(
 
     session_suffix = target_session[-10:] if len(target_session) >= 10 else target_session
 
-    # Strict isolation: ONLY messages tagged with this active session phone
-    stmt = stmt.where(
-        or_(
-            WhatsAppMessage.session_id == target_session,
-            WhatsAppMessage.session_id.like(f"%{session_suffix}%"),
-            WhatsAppMessage.business_phone_number_id == target_session,
-            WhatsAppMessage.business_phone_number_id.like(f"%{session_suffix}%")
-        )
-    )
+    # Strict isolation: ONLY messages tagged with this active session phone or user
+    conv_conditions = [
+        WhatsAppMessage.session_id == target_session,
+        WhatsAppMessage.session_id.like(f"%{session_suffix}%"),
+        WhatsAppMessage.business_phone_number_id == target_session,
+        WhatsAppMessage.business_phone_number_id.like(f"%{session_suffix}%")
+    ]
+    if current_user:
+        conv_conditions.extend([
+            WhatsAppMessage.session_id == current_user.id,
+            WhatsAppMessage.assigned_user_id == current_user.id
+        ])
+    stmt = stmt.where(or_(*conv_conditions))
 
 
     # Optional Rep Filter
@@ -699,12 +708,21 @@ async def get_whatsapp_conversations(
                 continue
 
             if m.phone_number not in conv_map:
-                contact = contacts_by_id.get(m.contact_id)
                 clean_m = normalize_phone(m.phone_number)
+                suffix_m = clean_m[-10:] if len(clean_m) >= 10 else clean_m
+
+                contact = contacts_by_id.get(m.contact_id)
+                # Verification: verify contact phone matches m.phone_number to prevent cross-contact name bleeding!
+                if contact and contact.phone:
+                    c_clean = normalize_phone(contact.phone)
+                    c_suf = c_clean[-10:] if len(c_clean) >= 10 else c_clean
+                    if c_suf != suffix_m:
+                        contact = None
+
                 if not contact and clean_m:
                     contact = contacts_by_phone.get(clean_m)
-                if not contact and len(clean_m) >= 10:
-                    contact = contacts_by_phone.get(clean_m[-10:])
+                if not contact and suffix_m:
+                    contact = contacts_by_phone.get(suffix_m)
 
                 prof_name = None
                 avatar_url = None
@@ -1005,21 +1023,26 @@ async def get_whatsapp_contact_avatar(
             return {"phone": clean_phone, "avatar_url": cached_avatar}
 
     # Query gateway dynamically
-    gateway_url = getattr(settings, "WHATSAPP_GATEWAY_URL", "http://localhost:5001")
-    try:
-        async with httpx.AsyncClient(timeout=4.0) as client:
-            resp = await client.get(f"{gateway_url}/avatar/{clean_phone}")
-            if resp.status_code == 200:
-                data = resp.json()
-                avatar_url = data.get("avatar_url")
-                if avatar_url and contact:
-                    curr_data = dict(contact.custom_data or {})
-                    curr_data["avatar_url"] = avatar_url
-                    contact.custom_data = curr_data
-                    await db.commit()
-                return {"phone": clean_phone, "avatar_url": avatar_url}
-    except Exception as e:
-        logger.debug(f"Failed to fetch avatar from gateway for {clean_phone}: {e}")
+    gateway_url = get_gateway_url()
+    target_urls = [f"{gateway_url}/avatar/{clean_phone}"]
+    if gateway_url != "https://zigmaa-whatsapp-bridge.onrender.com":
+        target_urls.append(f"https://zigmaa-whatsapp-bridge.onrender.com/avatar/{clean_phone}")
+    for t_url in target_urls:
+        try:
+            async with httpx.AsyncClient(timeout=4.0) as client:
+                resp = await client.get(t_url)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    avatar_url = data.get("avatar_url")
+                    if avatar_url and contact:
+                        curr_data = dict(contact.custom_data or {})
+                        curr_data["avatar_url"] = avatar_url
+                        contact.custom_data = curr_data
+                        await db.commit()
+                    if avatar_url:
+                        return {"phone": clean_phone, "avatar_url": avatar_url}
+        except Exception as e:
+            logger.debug(f"Failed to fetch avatar from {t_url}: {e}")
 
     return {"phone": clean_phone, "avatar_url": None}
 
@@ -1810,4 +1833,69 @@ async def wipe_whatsapp_database_live(
         "deleted_messages": m_res.rowcount,
         "deleted_contacts": c_res.rowcount,
         "reset_users": u_res.rowcount
+    }
+
+
+class SessionBackupPayload(BaseModel):
+    session_id: str
+    owner_phone: Optional[str] = None
+    auth_data: str
+
+@router.post("/session-backup")
+async def backup_whatsapp_session(
+    payload: SessionBackupPayload,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Persists WhatsApp Baileys session authentication bundle into PostgreSQL
+    so that Render restarts or overnight tab closures NEVER lose active sessions.
+    """
+    clean_session = payload.session_id.strip()
+    clean_phone = normalize_phone(payload.owner_phone) if payload.owner_phone else None
+
+    await db.execute(
+        text("""
+            INSERT INTO whatsapp_session_backups (session_id, owner_phone, auth_data, updated_at)
+            VALUES (:s_id, :phone, :data, NOW())
+            ON CONFLICT (session_id) DO UPDATE
+            SET owner_phone = COALESCE(EXCLUDED.owner_phone, whatsapp_session_backups.owner_phone),
+                auth_data = EXCLUDED.auth_data,
+                updated_at = NOW();
+        """),
+        {"s_id": clean_session, "phone": clean_phone, "data": payload.auth_data}
+    )
+    await db.commit()
+    return {"status": "success", "session_id": clean_session}
+
+@router.get("/session-restore/{session_id}")
+async def restore_whatsapp_session(
+    session_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Restores Baileys authentication bundle from PostgreSQL into a freshly booted container.
+    """
+    clean_id = session_id.strip()
+    res = await db.execute(
+        text("SELECT session_id, owner_phone, auth_data FROM whatsapp_session_backups WHERE session_id = :s_id LIMIT 1;"),
+        {"s_id": clean_id}
+    )
+    row = res.fetchone()
+    if not row and clean_id != "default":
+        num_clean = normalize_phone(clean_id)
+        if num_clean:
+            res = await db.execute(
+                text("SELECT session_id, owner_phone, auth_data FROM whatsapp_session_backups WHERE owner_phone = :phone LIMIT 1;"),
+                {"phone": num_clean}
+            )
+            row = res.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="No session backup found")
+
+    return {
+        "status": "success",
+        "session_id": row[0],
+        "owner_phone": row[1],
+        "auth_data": row[2]
     }
