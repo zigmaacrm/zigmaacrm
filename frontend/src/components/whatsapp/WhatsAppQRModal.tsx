@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useToast } from "@/components/common/ToastProvider";
+import { cn } from "@/lib/utils";
 
 interface WhatsAppQRModalProps {
   isOpen: boolean;
@@ -78,13 +79,21 @@ export default function WhatsAppQRModal({
       return;
     }
 
-    checkStatus().then(() => {
-      // If no QR code and status is disconnected, auto-trigger a fresh session
+    const autoConnect = async () => {
+      await checkStatus();
       if (!initialQR) {
-        api.refreshWhatsAppQR().catch(() => {});
+        try {
+          const res = await api.refreshWhatsAppQR();
+          if (res?.qr) {
+            setQrCode(res.qr);
+            setGatewayOnline(true);
+            setStatus(res.status || "SCAN_QR");
+          }
+        } catch (_) {}
       }
-    });
-    pollIntervalRef.current = setInterval(checkStatus, 3000);
+    };
+    autoConnect();
+    pollIntervalRef.current = setInterval(checkStatus, 2500);
 
     return () => {
       if (pollIntervalRef.current) {
@@ -97,7 +106,12 @@ export default function WhatsAppQRModal({
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
-      await api.refreshWhatsAppQR();
+      const res = await api.refreshWhatsAppQR();
+      if (res?.qr) {
+        setQrCode(res.qr);
+        setGatewayOnline(true);
+        setStatus(res.status || "SCAN_QR");
+      }
       toast.success("QR Code Refreshed", "Generating fresh pairing session...");
       await checkStatus();
     } catch (err: any) {
@@ -227,11 +241,24 @@ export default function WhatsAppQRModal({
               </div>
               <div className="flex items-center justify-center gap-2 pt-2">
                 <button
-                  onClick={checkStatus}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                  onClick={async () => {
+                    setIsRefreshing(true);
+                    try {
+                      const res = await api.refreshWhatsAppQR();
+                      if (res?.qr) {
+                        setQrCode(res.qr);
+                        setGatewayOnline(true);
+                        setStatus(res.status || "SCAN_QR");
+                      }
+                    } catch (_) {}
+                    await checkStatus();
+                    setIsRefreshing(false);
+                  }}
+                  disabled={isRefreshing}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs disabled:opacity-60"
                 >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Check Now</span>
+                  <RefreshCw className={cn("w-3.5 h-3.5", isRefreshing && "animate-spin")} />
+                  <span>{isRefreshing ? "Waking Cloud Bridge..." : "Check Now"}</span>
                 </button>
                 <button
                   onClick={onClose}

@@ -1224,7 +1224,7 @@ app.post('/refresh-qr', async (req, res) => {
 
     // Wait up to 5s for QR code to be generated so the frontend modal gets it instantly
     let waited = 0;
-    while (!session.qr && session.status !== 'CONNECTED' && waited < 5000) {
+    while (!session.qr && session.status !== 'CONNECTED' && waited < 12000) {
       await new Promise(r => setTimeout(r, 250));
       waited += 250;
     }
@@ -1694,3 +1694,15 @@ server.on('error', (err) => {
     console.error('[WhatsApp Gateway Server Error]:', err);
   }
 });
+
+
+// 24/7 Cloud Keep-Alive Pulse: pings self and backend every 4 minutes (240s)
+// Prevents Render from hibernating/sleeping when laptop tabs are closed at night.
+const KEEPALIVE_INTERVAL_MS = 4 * 60 * 1000;
+setInterval(() => {
+  const ownUrl = (process.env.RENDER_EXTERNAL_URL || 'https://zigmaa-whatsapp-bridge.onrender.com').replace(/\/+$/, '');
+  const backendHealthUrl = `${BACKEND_BASE}/health`;
+
+  fetch(`${ownUrl}/status?ping=self`, { headers: { 'User-Agent': 'Bridge-Self-KeepAlive' } }).catch(() => {});
+  fetch(backendHealthUrl, { headers: { 'User-Agent': 'Bridge-Backend-KeepAlive' } }).catch(() => {});
+}, KEEPALIVE_INTERVAL_MS);

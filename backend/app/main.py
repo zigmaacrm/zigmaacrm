@@ -319,3 +319,43 @@ async def global_exception_handler(request: Request, exc: Exception):
     response.headers["Access-Control-Allow-Methods"] = "*"
     response.headers["Access-Control-Allow-Headers"] = "*"
     return response
+
+
+import asyncio
+import logging
+
+keepalive_logger = logging.getLogger("zigmaa.keepalive")
+
+async def keepalive_cloud_services_loop():
+    """
+    24/7 background pinger running in FastAPI.
+    Pings the WhatsApp Bridge gateway and Backend every 4 minutes (240s)
+    so Render free tier NEVER spins down or enters sleep mode.
+    Even when all user laptop tabs are closed at night, the bridge stays alive!
+    """
+    bridge_url = (os.getenv("WHATSAPP_GATEWAY_URL") or "https://zigmaa-whatsapp-bridge.onrender.com").rstrip("/")
+    backend_url = "https://zigmaacrm-backend.onrender.com"
+
+    await asyncio.sleep(10)
+    keepalive_logger.info("[KEEPALIVE] 24/7 Cloud Bridge Keep-Alive Loop started.")
+
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=30.0, headers={"User-Agent": "ZigmaaCRM-KeepAlive/2.0"}) as client:
+                try:
+                    await client.get(f"{bridge_url}/status?ping=keepalive")
+                except Exception as e:
+                    keepalive_logger.debug(f"[KEEPALIVE] Bridge ping error: {e}")
+
+                try:
+                    await client.get(f"{backend_url}/health")
+                except Exception as e:
+                    keepalive_logger.debug(f"[KEEPALIVE] Backend ping error: {e}")
+        except Exception as e:
+            keepalive_logger.debug(f"[KEEPALIVE] Worker loop exception: {e}")
+
+        await asyncio.sleep(240)
+
+@app.on_event("startup")
+async def start_keepalive_worker():
+    asyncio.create_task(keepalive_cloud_services_loop())

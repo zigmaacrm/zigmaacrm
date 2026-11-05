@@ -1052,7 +1052,7 @@ async def get_whatsapp_qr_status(
 
     for target in targets:
         try:
-            async with httpx.AsyncClient(timeout=15.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
+            async with httpx.AsyncClient(timeout=45.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
                 resp = await client.get(f"{target}/status?sessionId={session_id}")
                 if resp.status_code == 200:
                     data = resp.json()
@@ -1110,7 +1110,7 @@ async def refresh_whatsapp_qr(
     last_err = None
     for target in targets:
         try:
-            async with httpx.AsyncClient(timeout=20.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
+            async with httpx.AsyncClient(timeout=50.0, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
                 resp = await client.post(f"{target}/refresh-qr?sessionId={session_id}", json={"sessionId": session_id})
                 return resp.json()
         except Exception as e:
