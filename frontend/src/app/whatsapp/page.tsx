@@ -1383,9 +1383,18 @@ export default function WhatsAppPage() {
     else setIsRefreshing(true);
 
     try {
+      const liveSession = qrPhoneRef.current || qrPhone;
+      // Guard: If device is not connected, do not load stale conversations; clear state to 0!
+      if (!liveSession && qrStatus !== "CONNECTED") {
+        setConversations([]);
+        setActivePhone("");
+        setMessages([]);
+        if (!isSilent) setIsLoadingConversations(false);
+        else setIsRefreshing(false);
+        return;
+      }
       const activeFilter = repFilter !== undefined ? repFilter : selectedRepFilter;
       const repParam = activeFilter === "ALL" ? undefined : activeFilter;
-      const liveSession = qrPhoneRef.current || qrPhone;
       const cleanSession = liveSession ? liveSession.replace(/[^0-9]/g, "") : undefined;
       const data = await api.getWhatsAppConversations(100, repParam, cleanSession);
       if (data && data.status === "success" && Array.isArray(data.conversations)) {
@@ -2361,8 +2370,11 @@ export default function WhatsAppPage() {
                 isDark ? "bg-[#131B2E]/60 border-[#1E293B]" : "bg-slate-100/90 border-slate-200/80"
               )}>
                 {(["All", "Unread", "Pinned", "Archived"] as const).map((tab) => {
+                  const isDeviceConnected = Boolean(qrPhone || qrStatus === "CONNECTED");
                   const count =
-                    tab === "All"
+                    !isDeviceConnected
+                      ? 0
+                      : tab === "All"
                       ? conversations.filter(c => !c.is_archived).length
                       : tab === "Unread"
                       ? conversations.filter(c => c.unreadCount > 0 && !c.is_archived).length

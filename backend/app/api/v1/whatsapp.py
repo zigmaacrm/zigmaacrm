@@ -565,18 +565,19 @@ async def get_whatsapp_conversations(
 
     effective_limit = int(limit) if isinstance(limit, (int, str)) and str(limit).isdigit() else 25
 
-    # 1. Resolve currently active linked WhatsApp phone strictly without +
+    # 1. Resolve currently active linked WhatsApp phone strictly from live connected session
     clean_param = (active_session_phone or session_id or '').replace('+', '').strip()
-    target_session = clean_param if clean_param else normalize_phone(current_user.whatsapp_phone_number if current_user else None)
+    target_session = clean_param if clean_param else None
+
+    # Check live QR status cache for current user to verify device is actually CONNECTED
     if not target_session and current_user:
         c_entry = _qr_status_cache.get(current_user.id)
         if c_entry and c_entry.get("data") and c_entry["data"].get("status") == "CONNECTED":
             p = c_entry["data"].get("phone")
             if p:
                 target_session = normalize_phone(p)
-                current_user.whatsapp_phone_number = p
-                await db.commit()
 
+    # If device is NOT actively connected and no session specified, return 0 conversations immediately!
     if not target_session:
         return {
             "status": "success",
