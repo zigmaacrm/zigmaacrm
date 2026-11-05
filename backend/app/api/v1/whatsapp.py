@@ -562,15 +562,13 @@ async def get_whatsapp_conversations(
     clean_param = (active_session_phone or session_id or '').replace('+', '').strip()
     target_session = clean_param if clean_param else normalize_phone(current_user.whatsapp_phone_number if current_user else None)
     if not target_session and current_user:
-        for cache_key in [current_user.id, "default"]:
-            c_entry = _qr_status_cache.get(cache_key)
-            if c_entry and c_entry.get("data") and c_entry["data"].get("status") == "CONNECTED":
-                p = c_entry["data"].get("phone")
-                if p:
-                    target_session = normalize_phone(p)
-                    current_user.whatsapp_phone_number = p
-                    await db.commit()
-                    break
+        c_entry = _qr_status_cache.get(current_user.id)
+        if c_entry and c_entry.get("data") and c_entry["data"].get("status") == "CONNECTED":
+            p = c_entry["data"].get("phone")
+            if p:
+                target_session = normalize_phone(p)
+                current_user.whatsapp_phone_number = p
+                await db.commit()
 
     if not target_session:
         return {
@@ -1064,10 +1062,12 @@ async def get_whatsapp_qr_status(
                         if current_user.whatsapp_phone_number != data.get("phone"):
                             current_user.whatsapp_phone_number = data.get("phone")
                             await db.commit()
-                    elif data.get("status") == "DISCONNECTED" and data.get("logged_out") and current_user:
+                    elif data.get("status") != "CONNECTED" and current_user:
+                        # Clean contaminated or disconnected phone from user profile
                         if current_user.whatsapp_phone_number is not None:
                             current_user.whatsapp_phone_number = None
                             await db.commit()
+                        data["phone"] = None
 
                     return data
         except Exception as e:
@@ -1076,15 +1076,11 @@ async def get_whatsapp_qr_status(
     if user_cache["data"] and user_cache["data"].get("gateway_online") and (now - user_cache["ts"] < 15.0):
         return user_cache["data"]
 
-    cached_phone = user_cache.get("data", {}).get("phone") if user_cache.get("data") else None
-    if not cached_phone and current_user and current_user.whatsapp_phone_number:
-        cached_phone = current_user.whatsapp_phone_number
-
     return {
-        "status": "CONNECTING" if cached_phone else "DISCONNECTED",
-        "phone": cached_phone,
-        "name": user_cache.get("data", {}).get("name") if user_cache.get("data") else None,
-        "avatar_url": user_cache.get("data", {}).get("avatar_url") if user_cache.get("data") else None,
+        "status": "DISCONNECTED",
+        "phone": None,
+        "name": None,
+        "avatar_url": None,
         "qr": None,
         "gateway_online": False,
         "session_id": session_id,
@@ -1244,10 +1240,18 @@ async def sync_whatsapp_chat_history(
                 full_name=display_name,
                 phone=f"+{clean_phone}" if not clean_phone.startswith("+") else clean_phone,
                 source="WHATSAPP",
-                lifecycle_stage="LEAD"
+                lifecycle_stage="LEAD",
+                custom_data={"phonebook_name": item.contact_name.strip()} if item.contact_name else {}
             )
             db.add(contact)
             await db.flush()
+        else:
+            if item.contact_name and not is_generic_or_placeholder_name(item.contact_name, clean_phone):
+                contact.full_name = item.contact_name.strip()
+                c_data = dict(contact.custom_data or {})
+                c_data["phonebook_name"] = item.contact_name.strip()
+                c_data["whatsapp_name"] = item.contact_name.strip()
+                contact.custom_data = c_data
 
         if item.media_base64 and item.file_name:
             try:

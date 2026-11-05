@@ -1081,10 +1081,9 @@ export default function WhatsAppPage() {
     const fetchStatus = () => {
       api.getWhatsAppQRStatus().then((data) => {
         setQrStatus(data.status);
-        if (data.phone) {
+        if (data.status === "CONNECTED" && data.phone) {
           setQrPhone(data.phone);
-        }
-        if (data.status === "DISCONNECTED" && !data.phone && (data as any).logged_out) {
+        } else if (data.status === "DISCONNECTED") {
           setQrPhone(null);
           setConversations([]);
           setActivePhone("");
@@ -1095,7 +1094,7 @@ export default function WhatsAppPage() {
         }
         if (data.avatar_url) {
           setLinkedUserAvatar(data.avatar_url);
-        } else if (data.phone) {
+        } else if (data.phone && data.status === "CONNECTED") {
           api.getWhatsAppContactAvatar(data.phone).then((res) => {
             if (res?.avatar_url) setLinkedUserAvatar(res.avatar_url);
           }).catch(() => {});
@@ -2265,7 +2264,7 @@ export default function WhatsAppPage() {
               </div>
 
               {/* Linked Device Status & Logout */}
-              {(qrStatus === "CONNECTED" || Boolean(qrPhone)) && (
+              {qrStatus === "CONNECTED" && Boolean(qrPhone) && (
                 <div className={cn(
                   "w-full flex items-center justify-between px-3 py-2 rounded-xl border text-xs font-semibold transition-all shadow-2xs",
                   isDark

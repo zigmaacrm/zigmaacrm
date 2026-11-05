@@ -517,12 +517,12 @@ class InboundQRMessage(BaseModel):
     quoted_context: Optional[Union[Dict[str, Any], str]] = None
 
 async def resolve_valid_user_id(db: AsyncSession, assigned_user_id: Optional[str], session_id: Optional[str]) -> Optional[str]:
-    if assigned_user_id:
+    if assigned_user_id and assigned_user_id != "default":
         chk = await db.execute(select(User.id).where(User.id == assigned_user_id).limit(1))
         row = chk.scalar_one_or_none()
         if row:
             return row
-    if session_id:
+    if session_id and session_id != "default":
         chk = await db.execute(select(User.id).where(User.id == session_id).limit(1))
         row = chk.scalar_one_or_none()
         if row:
@@ -534,8 +534,7 @@ async def resolve_valid_user_id(db: AsyncSession, assigned_user_id: Optional[str
             row = chk.scalar_one_or_none()
             if row:
                 return row
-    first_u = await db.execute(select(User.id).limit(1))
-    return first_u.scalar_one_or_none()
+    return None
 
 @router.post("/whatsapp/inbound-qr")
 @router.post("/inbound-qr")

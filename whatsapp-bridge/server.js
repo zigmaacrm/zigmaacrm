@@ -25,7 +25,8 @@ const {
   useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
-  downloadMediaMessage
+  downloadMediaMessage,
+  Browsers
 } = require('@whiskeysockets/baileys');
 
 const app = express();
@@ -553,7 +554,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
       logger,
       printQRInTerminal: false,
       auth: state,
-      browser: ['Zigmaa CRM Business', 'Chrome', '124.0.0.0'],
+      browser: Browsers.macOS('Desktop'),
       syncFullHistory: false,
       markOnlineOnConnect: true,
       connectTimeoutMs: 60000,
@@ -627,22 +628,21 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
           } catch (_) {}
           // Do NOT auto-reconnect on explicit logout - wait for user to click Scan QR
         } else if (statusCode === 440) {
-          console.warn(`[WhatsApp Gateway:${session.id}] Status 440 (Conflict). Waiting 5s for clean reconnect...`);
-          session.status = session.phone ? 'CONNECTING' : 'DISCONNECTED';
+          console.warn(`[WhatsApp Gateway:${session.id}] Status 440 (Conflict). Waiting 3s for clean reconnect...`);
           session.isStarting = false;
           if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
           session.reconnectTimer = setTimeout(() => {
             session.reconnectTimer = null;
             initWhatsApp(session.id, false);
-          }, 5000);
+          }, 3000);
         } else {
-          session.status = session.phone ? 'CONNECTING' : 'DISCONNECTED';
+          console.log(`[WhatsApp Gateway:${session.id}] Temporary connection drop (code ${statusCode}). Reconnecting in 1.5s...`);
           session.isStarting = false;
           if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
           session.reconnectTimer = setTimeout(() => {
             session.reconnectTimer = null;
             initWhatsApp(session.id, false);
-          }, 2500);
+          }, 1500);
         }
       } else if (connection === 'open') {
         session.status = 'CONNECTED';
@@ -1105,19 +1105,10 @@ async function disconnectSession(sessionId) {
 
 app.get('/status', (req, res) => {
   const rawId = req.query.sessionId || req.query.session_id || req.query.userId || req.query.user_id;
-  if (!rawId || rawId === 'keepalive' || req.query.ping) {
-    let anyConnected = false;
-    let anyPhone = null;
-    for (const s of sessions.values()) {
-      if (s.status === 'CONNECTED' && s.phone) {
-        anyConnected = true;
-        anyPhone = s.phone;
-        break;
-      }
-    }
+  // Generic keep-alive/health ping - NEVER expose another user's phone or session
+  if (!rawId || rawId === 'keepalive' || rawId === 'default' || req.query.ping) {
     return res.json({
-      status: anyConnected ? 'CONNECTED' : 'ONLINE',
-      phone: anyPhone,
+      status: 'ONLINE',
       gateway_online: true,
       uptime: process.uptime()
     });
@@ -1125,15 +1116,18 @@ app.get('/status', (req, res) => {
 
   const sId = sanitizeSessionId(rawId);
   let session = getSession(sId, false);
-  if (!session) {
+
+  // If not found by session.id, check if sId is a phone number belonging to an active session
+  if (!session && /^\d+$/.test(sId)) {
     for (const s of sessions.values()) {
-      if (s.ownerPhone === sId || (s.status === 'CONNECTED' && s.phone)) {
+      if (s.ownerPhone === sId || (s.phone && s.phone.replace(/[^0-9]/g, '') === sId)) {
         session = s;
         break;
       }
     }
   }
 
+  // If not in memory, restore ONLY this user's session if credentials exist on disk
   if (!session) {
     const authDir = getSessionAuthDir(sId);
     if (fs.existsSync(path.join(authDir, 'creds.json'))) {
@@ -1270,7 +1264,7 @@ function resolveSendingSession(requestedId) {
     const s = getSession(sId, false);
     if (s && s.status === 'CONNECTED' && s.sock) return s;
     const cleanReq = String(requestedId).replace(/[^0-9]/g, '');
-    if (cleanReq) {
+    if (cleanReq && cleanReq.length >= 8) {
       for (const sess of sessions.values()) {
         if (sess.status === 'CONNECTED' && sess.sock) {
           if (sess.ownerPhone === cleanReq || (sess.phone && sess.phone.replace(/[^0-9]/g, '') === cleanReq)) {
@@ -1279,11 +1273,6 @@ function resolveSendingSession(requestedId) {
         }
       }
     }
-  }
-  const def = sessions.get('default');
-  if (def && def.status === 'CONNECTED' && def.sock) return def;
-  for (const sess of sessions.values()) {
-    if (sess.status === 'CONNECTED' && sess.sock) return sess;
   }
   return null;
 }
