@@ -1083,7 +1083,7 @@ export default function WhatsAppPage() {
         setQrStatus(data.status);
         if (data.status === "CONNECTED" && data.phone) {
           setQrPhone(data.phone);
-        } else if (data.status === "DISCONNECTED") {
+        } else if (data.status === "DISCONNECTED" && (data as any).logged_out) {
           setQrPhone(null);
           setConversations([]);
           setActivePhone("");
@@ -1386,7 +1386,7 @@ export default function WhatsAppPage() {
       const cleanSession = qrPhone ? qrPhone.replace(/[^0-9]/g, "") : undefined;
       const data = await api.getWhatsAppConversations(100, repParam, cleanSession);
       if (data && data.status === "success" && Array.isArray(data.conversations)) {
-        if (data.is_connected === false) {
+        if (data.is_connected === false && qrStatus === "DISCONNECTED" && !qrPhone) {
           setConversations([]);
           setActivePhone("");
           setMessages([]);

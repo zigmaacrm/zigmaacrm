@@ -402,11 +402,13 @@ async def send_whatsapp_message(
             else (f"📎 {saved_file_name or 'Document'}" if has_file else "")
         )
 
+    session_val = clean_target_session or payload.session_id or (current_user.whatsapp_phone_number.replace('+', '') if current_user and current_user.whatsapp_phone_number else None) or (current_user.id if current_user else None)
     wa_message = WhatsAppMessage(
         organization_id=org_id,
         contact_id=contact_id,
         assigned_user_id=current_user.id if current_user else None,
-        business_phone_number_id=(current_user.whatsapp_phone_number if current_user and current_user.whatsapp_phone_number else phone_number_id) or None,
+        business_phone_number_id=session_val or phone_number_id or None,
+        session_id=session_val or None,
         phone_number=clean_phone,
         direction="OUTBOUND",
         message_body=body_text,
@@ -590,11 +592,7 @@ async def get_whatsapp_conversations(
             WhatsAppMessage.business_phone_number_id.like(f"%{session_suffix}%")
         )
     )
-    # Strictly exclude active phone's own number from conversation list
-    if session_suffix:
-        stmt = stmt.where(
-            not_(WhatsAppMessage.phone_number.like(f"%{session_suffix}%"))
-        )
+
 
     # Optional Rep Filter
     if isinstance(assigned_user_id, str) and assigned_user_id.upper() != "ALL":
@@ -1062,8 +1060,8 @@ async def get_whatsapp_qr_status(
                         if current_user.whatsapp_phone_number != data.get("phone"):
                             current_user.whatsapp_phone_number = data.get("phone")
                             await db.commit()
-                    elif data.get("status") != "CONNECTED" and current_user:
-                        # Clean contaminated or disconnected phone from user profile
+                    elif data.get("status") == "DISCONNECTED" and data.get("logged_out") and current_user:
+                        # Clean disconnected phone from user profile ONLY on explicit logout
                         if current_user.whatsapp_phone_number is not None:
                             current_user.whatsapp_phone_number = None
                             await db.commit()

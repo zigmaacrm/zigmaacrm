@@ -554,7 +554,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
       logger,
       printQRInTerminal: false,
       auth: state,
-      browser: Browsers.macOS('Desktop'),
+      browser: Browsers.windows('Chrome'),
       syncFullHistory: false,
       markOnlineOnConnect: true,
       connectTimeoutMs: 60000,
@@ -607,11 +607,6 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
           session.ownerPhone = null;
           session.name = null;
           session.avatarUrl = null;
-          if (fs.existsSync(session.authDir)) {
-            try {
-              fs.rmSync(session.authDir, { recursive: true, force: true });
-            } catch (_) {}
-          }
           session.isStarting = false;
           try {
             fetch(FASTAPI_STATUS_UPDATE_URL, {
@@ -698,7 +693,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
       // 1. Populate address-book names for lookup ONLY (Never create conversations from pure address book)
       if (Array.isArray(contacts)) {
         for (const c of contacts) {
-          if (!c.id || (!c.id.endsWith('@s.whatsapp.net') && !c.id.endsWith('@c.us'))) continue;
+          if (!c.id || c.id.endsWith('@g.us') || c.id.endsWith('@broadcast') || c.id.endsWith('@newsletter')) continue;
           const clean = resolvePhoneFromJid(c.id, session);
           if (clean && clean.length >= 8 && clean.length <= 13) {
             if (c.lid) {
@@ -717,6 +712,21 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
               avatar_url: null
             };
             if (session.contactsStore) session.contactsStore.set(clean, item);
+          } else if (c.lid && (c.phoneNumber || c.phone)) {
+            const cleanLid = String(c.lid).split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+            const cleanPn = String(c.phoneNumber || c.phone).replace(/[^0-9]/g, '');
+            if (cleanLid && cleanPn) {
+              session.lidToPhoneMap.set(cleanLid, cleanPn);
+              const bestName = c.name || c.notify || c.verifiedName || null;
+              if (session.contactsStore) session.contactsStore.set(cleanPn, {
+                phone: cleanPn,
+                name: bestName,
+                phonebook_name: c.name || null,
+                push_name: c.notify || c.verifiedName || null,
+                jid: c.id,
+                avatar_url: null
+              });
+            }
           }
         }
       }
@@ -724,16 +734,19 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
       // Also merge names from chats into contactsStore
       if (Array.isArray(chats)) {
         for (const c of chats) {
-          if (!c.id || (!c.id.endsWith('@s.whatsapp.net') && !c.id.endsWith('@c.us'))) continue;
+          if (!c.id || c.id.endsWith('@g.us') || c.id.endsWith('@broadcast') || c.id.endsWith('@newsletter')) continue;
           const clean = resolvePhoneFromJid(c.id, session);
           if (clean && clean.length >= 8 && clean.length <= 13 && c.name) {
-            const existing = session.contactsStore.get(clean);
-            session.contactsStore.set(clean, {
-              ...(existing || {}),
-              phone: clean,
-              name: existing?.name || c.name,
-              jid: c.id
-            });
+            const existing = session.contactsStore ? session.contactsStore.get(clean) : null;
+            if (session.contactsStore) {
+              session.contactsStore.set(clean, {
+                ...(existing || {}),
+                phone: clean,
+                name: existing?.name || c.name,
+                phonebook_name: existing?.phonebook_name || c.name,
+                jid: c.id
+              });
+            }
           }
         }
       }
@@ -745,14 +758,11 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
       if (Array.isArray(messages)) {
         for (const msg of messages) {
           const remoteJid = msg.key?.remoteJid || '';
-          if (!remoteJid || (!remoteJid.endsWith('@s.whatsapp.net') && !remoteJid.endsWith('@c.us'))) {
+          if (!remoteJid || remoteJid.endsWith('@g.us') || remoteJid.endsWith('@broadcast') || remoteJid.endsWith('@newsletter')) {
             continue;
           }
           const cleanPhone = resolvePhoneFromJid(remoteJid, session);
           if (!cleanPhone || cleanPhone.length < 8 || cleanPhone.length > 13) continue;
-
-          // Exclude own connected phone
-          if (session.ownerPhone && cleanPhone === session.ownerPhone) continue;
 
           const ts = typeof msg.messageTimestamp === 'number'
             ? msg.messageTimestamp
@@ -773,14 +783,15 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
       // Also consider direct chats that have conversationTimestamp
       if (Array.isArray(chats)) {
         for (const c of chats) {
-          if (!c.id || (!c.id.endsWith('@s.whatsapp.net') && !c.id.endsWith('@c.us'))) continue;
+          if (!c.id || c.id.endsWith('@g.us') || c.id.endsWith('@broadcast') || c.id.endsWith('@newsletter')) continue;
           const cleanPhone = resolvePhoneFromJid(c.id, session);
           if (!cleanPhone || cleanPhone.length < 8 || cleanPhone.length > 13) continue;
-          if (session.ownerPhone && cleanPhone === session.ownerPhone) continue;
 
           const ts = typeof c.conversationTimestamp === 'number' ? c.conversationTimestamp : (c.conversationTimestamp?.low || 0);
           if (ts > 0 && ts > (latestTsByPhone.get(cleanPhone) || 0)) {
             latestTsByPhone.set(cleanPhone, ts);
+          } else if (!latestTsByPhone.has(cleanPhone)) {
+            latestTsByPhone.set(cleanPhone, 1);
           }
         }
       }
@@ -813,45 +824,67 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
       const validMessages = [];
       for (const phone of top20Phones) {
         const msgs = messagesByPhone.get(phone) || [];
-        for (const msg of msgs) {
-          let mediaPayload = null;
-          try {
-            mediaPayload = await decryptAndSaveMedia(msg);
-          } catch (_) {}
+        const savedContact = session.contactsStore ? session.contactsStore.get(phone) : null;
+        const contactName = savedContact?.phonebook_name || savedContact?.name || null;
+        const chatTs = latestTsByPhone.get(phone) || Math.floor(Date.now() / 1000);
 
-          let body = extractMessageBody(msg.message);
-          if (!body && mediaPayload) {
-            if (mediaPayload.is_voice_note) {
-              const d = mediaPayload.duration || 3;
-              body = `🎤 Voice message (${d}s)`;
-            } else {
-              body = mediaPayload.caption || `[${(mediaPayload.message_type || 'Attachment').toUpperCase()}]`;
-            }
-          }
-          if (!body) continue;
-
-          const fromMe = Boolean(msg.key?.fromMe);
-          const savedContact = session.contactsStore ? session.contactsStore.get(phone) : null;
-          const contactName = savedContact?.phonebook_name || savedContact?.name || msg.pushName || null;
-          const ts = typeof msg.messageTimestamp === 'number'
-            ? msg.messageTimestamp
-            : (msg.messageTimestamp?.low || Math.floor(Date.now() / 1000));
-
+        if (msgs.length === 0) {
+          // Direct chat with recent conversation timestamp from WhatsApp Web
           validMessages.push({
             phone_number: phone,
             contact_name: contactName,
-            message_body: body,
-            meta_message_id: msg.key?.id,
-            timestamp: ts,
-            direction: fromMe ? 'OUTBOUND' : 'INBOUND',
-            message_type: mediaPayload?.message_type || 'text',
-            media_url: mediaPayload?.media_url || null,
-            file_name: mediaPayload?.file_name || null,
-            caption: mediaPayload?.caption || null,
-            is_voice_note: Boolean(mediaPayload?.is_voice_note),
-            media_base64: mediaPayload?.media_base64 || null,
-            quoted_context: extractQuotedContext(msg.message)
+            message_body: 'Active conversation',
+            meta_message_id: `wamid.init_chat_${phone}_${chatTs}`,
+            timestamp: chatTs,
+            direction: 'INBOUND',
+            message_type: 'text',
+            media_url: null,
+            file_name: null,
+            caption: null,
+            is_voice_note: false,
+            media_base64: null,
+            quoted_context: null
           });
+        } else {
+          for (const msg of msgs) {
+            let mediaPayload = null;
+            try {
+              mediaPayload = await decryptAndSaveMedia(msg);
+            } catch (_) {}
+
+            let body = extractMessageBody(msg.message);
+            if (!body && mediaPayload) {
+              if (mediaPayload.is_voice_note) {
+                const d = mediaPayload.duration || 3;
+                body = `🎤 Voice message (${d}s)`;
+              } else {
+                body = mediaPayload.caption || `[${(mediaPayload.message_type || 'Attachment').toUpperCase()}]`;
+              }
+            }
+            if (!body) body = 'Active message';
+
+            const fromMe = Boolean(msg.key?.fromMe);
+            const thisMsgContactName = contactName || msg.pushName || null;
+            const ts = typeof msg.messageTimestamp === 'number'
+              ? msg.messageTimestamp
+              : (msg.messageTimestamp?.low || Math.floor(Date.now() / 1000));
+
+            validMessages.push({
+              phone_number: phone,
+              contact_name: thisMsgContactName,
+              message_body: body,
+              meta_message_id: msg.key?.id,
+              timestamp: ts,
+              direction: fromMe ? 'OUTBOUND' : 'INBOUND',
+              message_type: mediaPayload?.message_type || 'text',
+              media_url: mediaPayload?.media_url || null,
+              file_name: mediaPayload?.file_name || null,
+              caption: mediaPayload?.caption || null,
+              is_voice_note: Boolean(mediaPayload?.is_voice_note),
+              media_base64: mediaPayload?.media_base64 || null,
+              quoted_context: extractQuotedContext(msg.message)
+            });
+          }
         }
       }
 
