@@ -8,9 +8,12 @@ echo Starting Zigmaa CRM Enterprise Stack
 echo ========================================================
 
 echo [0/4] Freeing stale port listeners (3000, 5001, 8000)...
-powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 3000,5001,8000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }" >nul 2>&1
+powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 3000,5001,8000 -ErrorAction SilentlyContinue | ForEach-Object { try { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue } catch {} }; Start-Sleep -Milliseconds 800" >nul 2>&1
 if exist "%~dp0frontend\.next" (
-    powershell -NoProfile -Command "Remove-Item -Path '%~dp0frontend\.next' -Recurse -Force -ErrorAction SilentlyContinue" >nul 2>&1
+    rd /s /q "%~dp0frontend\.next" >nul 2>&1
+    if exist "%~dp0frontend\.next" (
+        powershell -NoProfile -Command "Remove-Item -Path '%~dp0frontend\.next' -Recurse -Force -ErrorAction SilentlyContinue" >nul 2>&1
+    )
 )
 
 set "PYTHON_BIN=python"

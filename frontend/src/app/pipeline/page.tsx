@@ -554,9 +554,8 @@ export default function PipelineDealsPage() {
                     <div className="p-3.5 border-b border-slate-100 flex items-center justify-between select-none shrink-0 bg-white rounded-t-2xl">
                       <div className="flex items-center gap-2">
                         <span className={`w-2.5 h-2.5 rounded-full ${st.dot || "bg-slate-500"} shrink-0`} />
-                        <GripVertical className="w-3.5 h-3.5 text-slate-300" />
                         <div>
-                          <h3 className="text-[13px] font-bold text-slate-800 tracking-tight truncate max-w-[140px]">
+                          <h3 className="text-[13px] font-bold text-slate-800 tracking-tight truncate max-w-[155px]">
                             {st.label}
                           </h3>
                           <p className="text-[10px] text-slate-400 font-medium">{formatCurrency(stageTotalValue)}</p>

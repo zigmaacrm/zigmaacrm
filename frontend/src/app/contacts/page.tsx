@@ -2020,8 +2020,7 @@ export default function ContactsPage() {
                     <div className="p-3.5 border-b border-slate-100 flex items-center justify-between select-none shrink-0 bg-white rounded-t-2xl">
                       <div className="flex items-center gap-2">
                         <span className={`w-2.5 h-2.5 rounded-full ${colorPreset.dot} shrink-0`} />
-                        <GripVertical className="w-3.5 h-3.5 text-slate-300" />
-                        <h3 className="text-[13px] font-bold text-slate-800 tracking-tight truncate max-w-[170px]">
+                        <h3 className="text-[13px] font-bold text-slate-800 tracking-tight truncate max-w-[185px]">
                           {stage.name}
                         </h3>
                       </div>
@@ -2056,31 +2055,25 @@ export default function ContactsPage() {
                               }}
                               className="border border-slate-200/80 rounded-xl shadow-xs hover:shadow-md transition-shadow p-3.5 bg-white cursor-grab active:cursor-grabbing space-y-2.5 group shrink-0 select-none"
                             >
-                              {/* Top Row: Avatar + Name + Source Badge */}
-                              <div className="flex items-start justify-between gap-2">
-                                <div className="flex items-center gap-2 min-w-0 flex-1">
-                                  <div className="w-8 h-8 rounded-full bg-red-50 text-red-600 border border-red-100 font-bold text-xs flex items-center justify-center shrink-0">
-                                    {initials}
-                                  </div>
-                                  <div className="min-w-0 flex-1">
-                                    <h4 className="font-bold text-slate-800 text-sm group-hover:text-red-600 transition-colors truncate leading-tight">
-                                      {displayName}
-                                    </h4>
-                                    {(displayCompany || contact.job_title) && (
-                                      <div className="flex items-center gap-1 text-[11px] text-slate-500 font-medium truncate mt-0.5">
-                                        <Building2 className="w-3 h-3 text-slate-400 shrink-0" />
-                                        <span className="truncate">
-                                          {displayCompany}
-                                          {displayCompany && contact.job_title ? " • " : ""}
-                                          {contact.job_title || ""}
-                                        </span>
-                                      </div>
-                                    )}
-                                  </div>
+                              {/* Top Row: Avatar + Full Contact Name + Company */}
+                              <div className="flex items-start gap-2.5">
+                                <div className="w-8 h-8 rounded-full bg-red-50 text-red-600 border border-red-100 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">
+                                  {initials}
                                 </div>
-
-                                <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
-                                  <SourceBadge source={contact.source || "Manual"} />
+                                <div className="min-w-0 flex-1">
+                                  <h4 className="font-bold text-slate-800 text-[13.5px] group-hover:text-red-600 transition-colors leading-snug break-words">
+                                    {displayName}
+                                  </h4>
+                                  {(displayCompany || contact.job_title) && (
+                                    <div className="flex items-center gap-1 text-[11px] text-slate-500 font-medium truncate mt-0.5">
+                                      <Building2 className="w-3 h-3 text-slate-400 shrink-0" />
+                                      <span className="truncate">
+                                        {displayCompany}
+                                        {displayCompany && contact.job_title ? " • " : ""}
+                                        {contact.job_title || ""}
+                                      </span>
+                                    </div>
+                                  )}
                                 </div>
                               </div>
 
@@ -2119,14 +2112,14 @@ export default function ContactsPage() {
                                 </div>
                               </div>
 
-                              {/* Interactive Action Strip: Call, WhatsApp, Email, and Move Arrows */}
+                              {/* Interactive Action Strip: Call, WhatsApp, Email, Source Badge (Near Email Icon), and Move Arrows */}
                               <div className="flex items-center justify-between pt-1 border-t border-slate-100" onClick={(e) => e.stopPropagation()}>
-                                <div className="flex items-center gap-1">
+                                <div className="flex items-center gap-1 min-w-0">
                                   {/* Call Dialer Button */}
                                   <button
                                     type="button"
                                     onClick={() => setCallModalContact(contact)}
-                                    className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                                    className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer shrink-0"
                                     title="Call Phone"
                                   >
                                     <Phone className="w-3.5 h-3.5" />
@@ -2139,7 +2132,7 @@ export default function ContactsPage() {
                                       const clean = String(contact.phone || "").replace(/[^0-9]/g, "");
                                       window.location.href = `/whatsapp?phone=${clean}&name=${encodeURIComponent(displayName)}`;
                                     }}
-                                    className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                                    className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer shrink-0"
                                     title="Open WhatsApp Chat"
                                   >
                                     <WhatsAppIcon className="w-3.5 h-3.5" />
@@ -2155,15 +2148,20 @@ export default function ContactsPage() {
                                         toast.warning("No Email", "This contact does not have an email address.");
                                       }
                                     }}
-                                    className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                                    className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer shrink-0"
                                     title="Send Email"
                                   >
                                     <Mail className="w-3.5 h-3.5" />
                                   </button>
+
+                                  {/* Source Badge near email icon */}
+                                  <div className="ml-1 shrink-0">
+                                    <SourceBadge source={contact.source || "Manual"} className="text-[10px] px-2 py-0.5 h-6" />
+                                  </div>
                                 </div>
 
                                 {/* Stage Move Arrows */}
-                                <div className="flex items-center gap-0.5">
+                                <div className="flex items-center gap-0.5 shrink-0">
                                   {colIndex > 0 && (
                                     <button
                                       type="button"
