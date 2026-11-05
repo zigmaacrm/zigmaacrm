@@ -43,10 +43,10 @@ export default function WhatsAppQRModal({
   const isCheckingRef = useRef(false);
 
   useEffect(() => {
-    if (initialQR && !qrCode) {
+    if (initialQR) {
       setQrCode(initialQR);
     }
-  }, [initialQR]);
+  }, [initialQR, isOpen]);
 
   const checkStatus = async () => {
     if (isCheckingRef.current) return;
@@ -79,39 +79,42 @@ export default function WhatsAppQRModal({
       return;
     }
 
-    const autoConnect = async () => {
-      checkStatus();
+    let isMounted = true;
+
+    const initQR = async () => {
       try {
-        const res = await api.refreshWhatsAppQR();
-        if (res?.qr) {
-          setQrCode(res.qr);
-          setGatewayOnline(true);
-          setStatus(res.status || "SCAN_QR");
+        const data = await api.getWhatsAppQRStatus();
+        if (!isMounted) return;
+        setStatus(data.status);
+        setPhone(data.phone);
+        setName(data.name);
+        setGatewayOnline(data.gateway_online);
+        if (data.qr) {
+          setQrCode(data.qr);
         }
-      } catch (err) {
-        console.warn("Auto-connect refresh error", err);
+        if (onStatusChange) {
+          onStatusChange(data.status, data.phone);
+        }
+        // If not connected and still no QR, request refresh immediately
+        if (data.status !== "CONNECTED" && !data.qr) {
+          const res = await api.refreshWhatsAppQR().catch(() => null);
+          if (!isMounted) return;
+          if (res?.qr) {
+            setQrCode(res.qr);
+            setGatewayOnline(true);
+            setStatus(res.status || "SCAN_QR");
+          }
+        }
+      } catch (e) {
+        console.warn("Init QR error", e);
       }
-      checkStatus();
     };
-    autoConnect();
+
+    initQR();
     pollIntervalRef.current = setInterval(checkStatus, 2000);
 
-    // Auto-retry once after 5s if QR code is still missing
-    const retryTimer = setTimeout(async () => {
-      if (!qrCode && status !== "CONNECTED") {
-        try {
-          const retryRes = await api.refreshWhatsAppQR();
-          if (retryRes?.qr) {
-            setQrCode(retryRes.qr);
-            setGatewayOnline(true);
-            setStatus(retryRes.status || "SCAN_QR");
-          }
-        } catch (_) {}
-      }
-    }, 5000);
-
     return () => {
-      clearTimeout(retryTimer);
+      isMounted = false;
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
@@ -128,7 +131,7 @@ export default function WhatsAppQRModal({
         setGatewayOnline(true);
         setStatus(res.status || "SCAN_QR");
       }
-      toast.success("QR Code Refreshed", "Generating fresh pairing session...");
+      toast.success("QR Code Refreshed", "Ready for pairing");
       await checkStatus();
     } catch (err: any) {
       toast.error("Error", err.message || "Failed to refresh QR code");

@@ -10,6 +10,7 @@ echo ========================================================
 echo [0/4] Freeing stale port listeners (3000, 5001, 8000)...
 powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 3000,5001,8000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 500" >nul 2>&1
 if exist "%~dp0frontend\.next\trace" del /f /q "%~dp0frontend\.next\trace" >nul 2>&1
+if exist "%~dp0frontend\.next\cache\webpack" rd /s /q "%~dp0frontend\.next\cache\webpack" >nul 2>&1
 
 set "PYTHON_BIN=python"
 if exist "%~dp0.venv\Scripts\python.exe" (

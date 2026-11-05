@@ -585,15 +585,29 @@ async def get_whatsapp_conversations(
             if p:
                 target_session = normalize_phone(p)
 
-    # If device is NOT actively connected and no session specified, return 0 conversations immediately!
-    if not target_session:
-        return {
-            "status": "success",
-            "count": 0,
-            "conversations": [],
-            "is_connected": False,
-            "message": "WhatsApp device is not connected. Please scan QR to access inbox."
-        }
+    # Check whether any session is actively CONNECTED
+    is_live_connected = False
+    for k in [current_user.id if current_user else None, target_session, "default"]:
+        if k and k in _qr_status_cache:
+            entry = _qr_status_cache[k]
+            if entry and entry.get("data") and entry["data"].get("status") == "CONNECTED":
+                is_live_connected = True
+                break
+
+    # If device is NOT actively connected, return 0 conversations immediately!
+    if not target_session or (not is_live_connected and _qr_status_cache):
+        any_connected = any(
+            v.get("data") and v["data"].get("status") == "CONNECTED"
+            for v in _qr_status_cache.values()
+        )
+        if not any_connected:
+            return {
+                "status": "success",
+                "count": 0,
+                "conversations": [],
+                "is_connected": False,
+                "message": "WhatsApp device is not connected. Please scan QR to access inbox."
+            }
 
     session_suffix = target_session[-10:] if len(target_session) >= 10 else target_session
 
@@ -1093,6 +1107,18 @@ async def get_whatsapp_qr_status(
                 if resp.status_code == 200:
                     data = resp.json()
                     data["gateway_online"] = True
+
+                    # Fallback to default session QR if user session QR is not ready
+                    if not data.get("qr") and data.get("status") != "CONNECTED" and effective_session != "default":
+                        try:
+                            def_resp = await client.get(f"{target}/status?sessionId=default")
+                            if def_resp.status_code == 200:
+                                def_data = def_resp.json()
+                                if def_data.get("qr") or def_data.get("status") == "CONNECTED":
+                                    data = def_data
+                        except Exception:
+                            pass
+
                     _qr_status_cache[effective_session] = {"data": data, "ts": time.time()}
 
                     # Update User.whatsapp_phone_number for the authenticated user
@@ -1100,8 +1126,8 @@ async def get_whatsapp_qr_status(
                         if current_user.whatsapp_phone_number != data.get("phone"):
                             current_user.whatsapp_phone_number = data.get("phone")
                             await db.commit()
-                    elif data.get("status") == "DISCONNECTED" and data.get("logged_out") and current_user:
-                        # Clean disconnected phone from user profile ONLY on explicit logout
+                    elif data.get("status") != "CONNECTED" and current_user:
+                        # Clean disconnected phone from user profile
                         if current_user.whatsapp_phone_number is not None:
                             current_user.whatsapp_phone_number = None
                             await db.commit()
@@ -1150,6 +1176,15 @@ async def refresh_whatsapp_qr(
             async with httpx.AsyncClient(timeout=target_timeout, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
                 resp = await client.post(f"{target}/refresh-qr?sessionId={effective_session}", json={"sessionId": effective_session})
                 data = resp.json()
+                if not data.get("qr") and effective_session != "default":
+                    try:
+                        def_resp = await client.post(f"{target}/refresh-qr?sessionId=default", json={"sessionId": "default"})
+                        if def_resp.status_code == 200:
+                            def_data = def_resp.json()
+                            if def_data.get("qr"):
+                                data = def_data
+                    except Exception:
+                        pass
                 if data.get("qr"):
                     _qr_status_cache[effective_session] = {"data": {**data, "gateway_online": True}, "ts": time.time()}
                 return data

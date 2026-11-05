@@ -1310,6 +1310,10 @@ async function disconnectSession(sessionId) {
     } catch (_) {}
   }
   sessions.delete(session.id);
+  // Auto pre-warm fresh default QR code session so next pairing is immediate
+  setTimeout(() => {
+    initWhatsApp('default', false);
+  }, 1000);
 }
 
 // ==========================================
@@ -1340,6 +1344,14 @@ app.get('/status', async (req, res) => {
     }
   }
 
+  // Fallback: If sId has no session, check if 'default' or another session is already active or in SCAN_QR
+  if (!session && sId !== 'default') {
+    const defaultSess = getSession('default', false);
+    if (defaultSess && (defaultSess.status === 'CONNECTED' || (defaultSess.status === 'SCAN_QR' && defaultSess.qr))) {
+      session = defaultSess;
+    }
+  }
+
   // If not in memory, retrieve/create and auto-initialize so QR generation begins immediately
   if (!session) {
     session = getSession(sId, true);
@@ -1347,7 +1359,13 @@ app.get('/status', async (req, res) => {
       initWhatsApp(sId, false);
     }
   } else if (!session.qr && session.status !== 'CONNECTED' && !session.isStarting) {
-    initWhatsApp(sId, false);
+    // If this session has no QR yet, check if default session has one ready to show immediately
+    const defaultSess = getSession('default', false);
+    if (defaultSess && defaultSess.status === 'SCAN_QR' && defaultSess.qr) {
+      session = defaultSess;
+    } else {
+      initWhatsApp(sId, false);
+    }
   }
 
   // If QR code is being generated, briefly wait up to 3.5s so the client gets it on the very first request
@@ -1356,6 +1374,14 @@ app.get('/status', async (req, res) => {
     while (!session.qr && session.status !== 'CONNECTED' && waited < 3500) {
       await new Promise(r => setTimeout(r, 200));
       waited += 200;
+    }
+  }
+
+  // If still no QR, check default session as ultimate fallback
+  if (!session.qr && session.status !== 'CONNECTED') {
+    const defaultSess = getSession('default', false);
+    if (defaultSess && defaultSess.status === 'SCAN_QR' && defaultSess.qr) {
+      session = defaultSess;
     }
   }
 
@@ -1415,34 +1441,52 @@ app.get('/avatar/:phone', async (req, res) => {
 app.post('/refresh-qr', async (req, res) => {
   try {
     const sId = sanitizeSessionId(req.query.sessionId || req.query.session_id || req.body?.sessionId || req.body?.session_id);
-    const session = getSession(sId, true);
+    let session = getSession(sId, false);
     
+    // Check if 'default' has an active QR or is connected
+    if (!session && sId !== 'default') {
+      const def = getSession('default', false);
+      if (def && (def.status === 'CONNECTED' || (def.status === 'SCAN_QR' && def.qr))) {
+        session = def;
+      }
+    }
+    if (!session) {
+      session = getSession(sId, true);
+    }
+
     // If QR code is already ready and active, return immediately!
     if (session.status === 'SCAN_QR' && session.qr) {
-      return res.json({ success: true, qr: session.qr, status: 'SCAN_QR', session_id: sId });
+      return res.json({ success: true, qr: session.qr, status: 'SCAN_QR', session_id: session.id });
     }
 
     if (session.status === 'CONNECTED' && session.phone) {
-      return res.json({ success: true, status: 'CONNECTED', phone: session.phone, session_id: sId });
+      return res.json({ success: true, status: 'CONNECTED', phone: session.phone, session_id: session.id });
+    }
+
+    const defSess = getSession('default', false);
+    if (defSess && defSess.status === 'SCAN_QR' && defSess.qr) {
+      return res.json({ success: true, qr: defSess.qr, status: 'SCAN_QR', session_id: defSess.id });
     }
 
     if (!session.isStarting) {
-      initWhatsApp(sId, false);
+      initWhatsApp(session.id, false);
     }
 
-    // Wait up to 5s for QR code to be generated so the frontend modal gets it instantly
+    // Wait up to 4s for QR code to be generated so the frontend modal gets it instantly
     let waited = 0;
-    while (!session.qr && session.status !== 'CONNECTED' && waited < 12000) {
-      await new Promise(r => setTimeout(r, 250));
-      waited += 250;
+    while (!session.qr && session.status !== 'CONNECTED' && waited < 4000) {
+      await new Promise(r => setTimeout(r, 200));
+      waited += 200;
     }
+
+    const finalQr = session.qr || (defSess && defSess.status === 'SCAN_QR' ? defSess.qr : null);
 
     res.json({
       success: true,
-      qr: session.qr || null,
+      qr: finalQr,
       status: session.status || 'SCAN_QR',
-      session_id: sId,
-      message: session.qr ? 'QR ready' : 'Generating QR code...'
+      session_id: session.id,
+      message: finalQr ? 'QR ready' : 'Generating QR code...'
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -1865,10 +1909,8 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Bulk sync destination: ${FASTAPI_BULK_SYNC_URL}`);
   console.log(`========================================================`);
 
-  // 1. Initialize default session only if legacy credentials exist
-  if (fs.existsSync(path.join(AUTH_DIR, 'creds.json'))) {
-    initWhatsApp('default', false);
-  }
+  // 1. ALWAYS initialize the default WhatsApp session on startup so a fresh QR code is immediately ready 24/7 in memory
+  initWhatsApp('default', false);
 
   // 2. Automatically restore all saved user sessions
   try {

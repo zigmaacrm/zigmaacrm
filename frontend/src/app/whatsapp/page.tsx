@@ -1101,21 +1101,27 @@ export default function WhatsAppPage() {
         setQrStatus(data.status);
         if (data.status === "CONNECTED" && data.phone) {
           setQrPhone(data.phone);
-        } else if (data.status === "DISCONNECTED" && (data as any).logged_out) {
+          qrPhoneRef.current = data.phone;
+        } else {
+          // Device is NOT connected / logged out: completely reset conversation & phone state
           setQrPhone(null);
+          qrPhoneRef.current = null;
           setConversations([]);
           setActivePhone("");
           setMessages([]);
+          setLinkedUserAvatar(null);
         }
         if (data.qr) {
           setCachedQR(data.qr);
         }
-        if (data.avatar_url) {
+        if (data.avatar_url && data.status === "CONNECTED") {
           setLinkedUserAvatar(data.avatar_url);
         } else if (data.phone && data.status === "CONNECTED") {
           api.getWhatsAppContactAvatar(data.phone).then((res) => {
             if (res?.avatar_url) setLinkedUserAvatar(res.avatar_url);
           }).catch(() => {});
+        } else if (data.status !== "CONNECTED") {
+          setLinkedUserAvatar(null);
         }
       }).catch(() => {});
     };
@@ -1400,8 +1406,8 @@ export default function WhatsAppPage() {
 
     try {
       const liveSession = qrPhoneRef.current || qrPhone;
-      // Guard: If device is not connected, do not load stale conversations; clear state to 0!
-      if (!liveSession && qrStatus !== "CONNECTED") {
+      // Guard: If device is not connected, do NOT load stale conversations; clear state to 0!
+      if (!liveSession || qrStatus !== "CONNECTED") {
         setConversations([]);
         setActivePhone("");
         setMessages([]);
@@ -1411,10 +1417,10 @@ export default function WhatsAppPage() {
       }
       const activeFilter = repFilter !== undefined ? repFilter : selectedRepFilter;
       const repParam = activeFilter === "ALL" ? undefined : activeFilter;
-      const cleanSession = liveSession ? liveSession.replace(/[^0-9]/g, "") : undefined;
+      const cleanSession = liveSession.replace(/[^0-9]/g, "");
       const data = await api.getWhatsAppConversations(100, repParam, cleanSession);
       if (data && data.status === "success" && Array.isArray(data.conversations)) {
-        if (data.is_connected === false && qrStatus === "DISCONNECTED" && !qrPhone) {
+        if (data.is_connected === false || qrStatus !== "CONNECTED" || !qrPhone) {
           setConversations([]);
           setActivePhone("");
           setMessages([]);
@@ -1751,10 +1757,13 @@ export default function WhatsAppPage() {
       await api.disconnectWhatsAppQR();
       setQrStatus("DISCONNECTED");
       setQrPhone(null);
+      qrPhoneRef.current = null;
+      setCachedQR(null);
       setConversations([]);
       setMessages([]);
       setActivePhone("");
       setShowRightDrawer(false);
+      setShowQRModal(false);
       toast.success("Logged Out", "WhatsApp session unlinked successfully.");
     } catch (err: any) {
       toast.error("Logout Error", err.message || "Failed to disconnect WhatsApp session.");
@@ -2394,7 +2403,7 @@ export default function WhatsAppPage() {
                 isDark ? "bg-[#131B2E]/60 border-[#1E293B]" : "bg-slate-100/90 border-slate-200/80"
               )}>
                 {(["All", "Unread", "Pinned", "Archived"] as const).map((tab) => {
-                  const isDeviceConnected = Boolean(qrPhone || qrStatus === "CONNECTED");
+                  const isDeviceConnected = Boolean(qrPhone && qrStatus === "CONNECTED");
                   const count =
                     !isDeviceConnected
                       ? 0
@@ -2457,7 +2466,7 @@ export default function WhatsAppPage() {
                     </div>
                   ))}
                 </div>
-              ) : (!qrPhone && qrStatus !== "CONNECTED") ? (
+              ) : (!qrPhone || qrStatus !== "CONNECTED") ? (
                 <div className="p-8 text-center flex flex-col items-center justify-center my-auto space-y-3">
                   <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-inner">
                     <QrCode className="w-7 h-7" />
@@ -4380,7 +4389,10 @@ export default function WhatsAppPage() {
         onStatusChange={(status, phone) => {
           setQrStatus(status);
           setQrPhone(phone);
-          if (status !== "CONNECTED") {
+          qrPhoneRef.current = phone;
+          if (status !== "CONNECTED" || !phone) {
+            setQrPhone(null);
+            qrPhoneRef.current = null;
             setConversations([]);
             setMessages([]);
             setActivePhone("");
