@@ -647,12 +647,20 @@ async def receive_whatsapp_qr_inbound(
     )
     existing_record = existing_chk.scalar_one_or_none()
     if existing_record:
+        updated = False
         if payload.message_body and payload.message_body not in ["[Attachment Received]", "[Empty Message]"]:
             if existing_record.message_body in ["[Attachment Received]", "[Empty Message]"] or not existing_record.message_body:
                 existing_record.message_body = payload.message_body
-                if payload.media_url:
-                    existing_record.media_url = payload.media_url
-                await db.commit()
+                updated = True
+        if payload.media_url and not existing_record.media_url:
+            existing_record.media_url = payload.media_url
+            if payload.message_type:
+                existing_record.message_type = payload.message_type
+            if payload.file_name:
+                existing_record.file_name = payload.file_name
+            updated = True
+        if updated:
+            await db.commit()
         return {"status": "success", "skipped": "duplicate"}
 
     msg_direction = (payload.direction or "INBOUND").upper()

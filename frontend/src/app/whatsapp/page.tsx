@@ -56,7 +56,8 @@ import {
   Archive,
   CheckSquare,
   Square,
-  LogOut
+  LogOut,
+  Film
 } from "lucide-react";
 import Sidebar from "@/components/layout/Sidebar";
 import Header from "@/components/layout/Header";
@@ -88,7 +89,7 @@ export interface WhatsAppMessage {
   metaMessageId?: string | null;
   quotedContext?: { sender: string; text: string } | null;
   attachment?: {
-    type: "pdf" | "image" | "audio" | "document" | "video" | "sticker";
+    type: "pdf" | "image" | "audio" | "document" | "video" | "sticker" | "gif";
     name: string;
     size?: string;
     url?: string;
@@ -173,6 +174,17 @@ function cleanDisplayCaption(text?: string | null, fileName?: string | null): st
   if (!text) return "";
   const t = text.trim();
   const lower = t.toLowerCase();
+
+  // Strip all bracketed system markers like [video], [VIDEO], [sticker], [photo], [gif], [attachment], etc.
+  if (/^\[(video|photo|image|attachment|media|sticker|voice note|document|audio|gif|contact card|location|empty message)\]$/i.test(t)) return "";
+  if (/^(video|photo|image|attachment|media|sticker|gif)$/i.test(lower)) return "";
+  if (lower.startsWith("📎 ") && (lower.includes("attachment") || lower.includes("document"))) return "";
+  if (fileName && (t === fileName.trim() || t === `📎 ${fileName.trim()}` || lower === fileName.trim().toLowerCase())) return "";
+  if (/^🎤\s*Voice message/i.test(t)) return "";
+  if (/^📷\s*Photo/i.test(t)) return "";
+  if (/^🎥\s*Video/i.test(t)) return "";
+  if (/^📄\s*.+$/i.test(t) && fileName && t.includes(fileName)) return "";
+
   const dummyPlaceholders = [
     "[image attachment]",
     "[voice note]",
@@ -181,6 +193,13 @@ function cleanDisplayCaption(text?: string | null, fileName?: string | null): st
     "[contact card]",
     "[location]",
     "[attachment received]",
+    "[video]",
+    "[photo]",
+    "[gif]",
+    "[image]",
+    "[attachment]",
+    "[media]",
+    "[empty message]",
     "📷 photo",
     "🎥 video",
     "🎤 voice message",
@@ -188,15 +207,12 @@ function cleanDisplayCaption(text?: string | null, fileName?: string | null): st
     "document",
     "image attachment",
     "voice note",
-    "sticker"
+    "sticker",
+    "video",
+    "gif",
+    "photo"
   ];
   if (dummyPlaceholders.includes(lower)) return "";
-  if (lower.startsWith("📎 ") && lower.includes("attachment")) return "";
-  if (fileName && (t === fileName.trim() || t === `📎 ${fileName.trim()}`)) return "";
-  if (/^🎤\s*Voice message/i.test(t)) return "";
-  if (/^📷\s*Photo/i.test(t)) return "";
-  if (/^🎥\s*Video/i.test(t)) return "";
-  if (/^📄\s*.+$/i.test(t) && fileName && t.includes(fileName)) return "";
   return t;
 }
 
@@ -675,7 +691,7 @@ function MessageBubbleContainer({
 
   if (msg.isDeleted) {
     return (
-      <div className={cn("flex w-full my-0.5 sm:my-1", isOutbound ? "justify-end" : "justify-start")}>
+      <div className={cn("flex w-full my-0", isOutbound ? "justify-end" : "justify-start")}>
         <div
           className={cn(
             "rounded-2xl px-3.5 py-2 text-xs transition-all shadow-2xs border flex items-center gap-2 italic select-none",
@@ -693,7 +709,7 @@ function MessageBubbleContainer({
   }
 
   return (
-    <div className={cn("flex w-full my-0.5 sm:my-1", isOutbound ? "justify-end" : "justify-start")}>
+    <div className={cn("flex w-full my-0", isOutbound ? "justify-end" : "justify-start")}>
       <div className="relative group max-w-[85%] sm:max-w-[70%] w-fit">
         {/* Floating Quick Reaction Bar (WhatsApp style: appears above or below bubble on trigger) */}
         {showReaction && (
@@ -1496,16 +1512,24 @@ export default function WhatsAppPage() {
           let attachment: WhatsAppMessage["attachment"] = undefined;
           const mType = (m.message_type || "").toLowerCase();
           const lowerUrl = (mediaFullUrl || "").toLowerCase();
+          const lowerFileName = (m.file_name || "").toLowerCase();
           const isVoice = m.is_voice_note || mType === "ptt" || mType === "audio" || lowerUrl.includes(".ogg") || lowerUrl.includes(".opus") || lowerUrl.includes(".mp3");
           const isImg = mType === "image" || lowerUrl.includes(".jpg") || lowerUrl.includes(".jpeg") || lowerUrl.includes(".png");
-          const isVideo = mType === "video" || lowerUrl.includes(".mp4") || lowerUrl.includes(".mov") || lowerUrl.includes(".webm");
-          const isSticker = mType === "sticker" || lowerUrl.includes(".webp");
-          const isDoc = mType === "document" || (!isImg && !isVideo && !isVoice && !isSticker && !!mediaFullUrl);
+          const isGif = mType === "gif" || lowerFileName.startsWith("gif_") || lowerUrl.includes("gif_") || lowerUrl.endsWith(".gif") || (m.message_body || "").toLowerCase() === "[gif]";
+          const isVideo = !isGif && (mType === "video" || lowerUrl.includes(".mp4") || lowerUrl.includes(".mov") || lowerUrl.includes(".webm"));
+          const isSticker = mType === "sticker" || lowerUrl.includes(".webp") || lowerFileName.startsWith("sticker_") || ((m.message_body || "").toLowerCase() === "[sticker]" && !!mediaFullUrl);
+          const isDoc = mType === "document" || (!isImg && !isVideo && !isGif && !isVoice && !isSticker && !!mediaFullUrl);
 
           if (isImg) {
             attachment = {
               type: "image",
               name: m.file_name || "Photo",
+              url: mediaFullUrl
+            };
+          } else if (isGif) {
+            attachment = {
+              type: "gif",
+              name: m.file_name || "GIF",
               url: mediaFullUrl
             };
           } else if (isVideo) {
@@ -2906,7 +2930,7 @@ export default function WhatsAppPage() {
                     isUserScrolledUpRef.current = isUp;
                   }}
                   className={cn(
-                    "flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 scrollbar-thin",
+                    "flex-1 overflow-y-auto px-3 py-3 sm:px-5 sm:py-4 scrollbar-thin",
                     isDark ? "scrollbar-thumb-slate-800" : "scrollbar-thumb-slate-300"
                   )}
                 >
@@ -2958,16 +2982,19 @@ export default function WhatsAppPage() {
                     ).map((msg, idx) => {
                       const isNearBottom = idx >= Math.max(0, messages.length - 6);
                       const isOutbound = msg.sender === "outbound";
+                      const isSameSenderAsPrev = idx > 0 && messages[idx - 1]?.sender === msg.sender;
+                      const spacingClass = isSameSenderAsPrev ? "mt-0.5 sm:mt-1" : (idx === 0 ? "mt-0" : "mt-2.5 sm:mt-3");
                       const cleanText = cleanDisplayCaption(msg.text, msg.fileName);
-                      const isSticker = msg.attachment?.type === "sticker";
+                      const isSticker = msg.attachment?.type === "sticker" || msg.messageType === "sticker" || (!cleanText && (msg.text || "").toLowerCase() === "[sticker]");
+                      const isGif = msg.attachment?.type === "gif" || msg.messageType === "gif" || (msg.attachment?.name || "").toLowerCase().startsWith("gif_") || (msg.attachment?.url || "").toLowerCase().includes("gif_");
                       const isPureImage = msg.attachment?.type === "image" && !cleanText;
-                      const isPureVideo = msg.attachment?.type === "video" && !cleanText;
+                      const isPureVideo = (msg.attachment?.type === "video" || isGif || msg.messageType === "video" || msg.messageType === "gif") && !cleanText;
                       const isDoc = msg.attachment?.type === "pdf" || msg.attachment?.type === "document";
                       const isVoice = msg.isVoiceNote || msg.messageType === "ptt" || msg.attachment?.type === "audio";
                       const isContactCard = msg.messageType === "contact" || msg.text === "[Contact Card]" || (typeof msg.text === "string" && (msg.text.startsWith('{"type":"contact"') || msg.text.includes("BEGIN:VCARD")));
 
                       return (
-                        <div key={msg.id} className="flex items-center gap-2">
+                        <div key={msg.id} className={cn("flex items-center gap-2", spacingClass)}>
                           {isSelectMode && (
                             <button
                               type="button"
@@ -3006,14 +3033,12 @@ export default function WhatsAppPage() {
                           onDelete={() => setDeleteConfirmMessage(msg)}
                           onInfo={() => setInfoModalMessage(msg)}
                         >
-                          {/* 1. Sticker message with border & time within that (Photo 2) */}
+                          {/* 1. Sticker message with transparent background matching WhatsApp Web */}
                           {isSticker && msg.attachment?.url ? (
                             <div
                               className={cn(
-                                "rounded-2xl p-2 select-none transition-all shadow-xs w-fit border",
-                                isOutbound
-                                  ? (isDark ? "bg-[#005c4b]/30 border-emerald-600/30 text-white rounded-tr-xs" : "bg-[#D9FDD3]/60 border-[#C2EBC0] text-slate-900 rounded-tr-xs shadow-2xs")
-                                  : (isDark ? "bg-[#202c33]/40 border-white/10 text-white rounded-tl-xs" : "bg-white border-slate-200 text-slate-900 rounded-tl-xs shadow-2xs")
+                                "select-none transition-all w-fit relative bg-transparent border-0 shadow-none p-0 group",
+                                isOutbound ? "ml-auto" : "mr-auto"
                               )}
                             >
                               {(() => {
@@ -3047,7 +3072,7 @@ export default function WhatsAppPage() {
                                       <img
                                         src={msg.attachment.url}
                                         alt="WhatsApp Sticker"
-                                        className="w-36 h-36 max-w-[160px] max-h-[160px] object-contain drop-shadow-sm transition-transform hover:scale-105 block"
+                                        className="w-36 h-36 max-w-[150px] max-h-[150px] object-contain drop-shadow-sm transition-transform hover:scale-105 block select-none pointer-events-auto"
                                         onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}
                                         onError={(e) => {
                                           const img = e.currentTarget;
@@ -3064,9 +3089,9 @@ export default function WhatsAppPage() {
                                       />
                                     </div>
 
-                                    {/* Time within the border */}
+                                    {/* Time discreetly beside / beneath sticker */}
                                     <div className={cn(
-                                      "flex items-center justify-end gap-1 text-[11px] font-sans whitespace-nowrap mt-1 px-1",
+                                      "flex items-center justify-end gap-1 text-[11px] font-sans whitespace-nowrap mt-0.5 px-1 select-none",
                                       isDark ? "text-slate-400" : "text-slate-500"
                                     )}>
                                       <span>{msg.timeLabel}</span>
@@ -3077,6 +3102,22 @@ export default function WhatsAppPage() {
                                   </>
                                 );
                               })()}
+                            </div>
+                          ) : isSticker && !msg.attachment?.url ? (
+                            <div
+                              className={cn(
+                                "rounded-2xl px-3 py-2 text-xs select-none transition-all shadow-xs w-fit flex items-center gap-2",
+                                isOutbound
+                                  ? (isDark ? "bg-[#005c4b] text-white rounded-tr-xs ml-auto" : "bg-[#D9FDD3] text-slate-800 rounded-tr-xs shadow-2xs border border-[#C2EBC0]")
+                                  : (isDark ? "bg-[#202c33] text-white rounded-tl-xs" : "bg-white text-slate-800 rounded-tl-xs shadow-2xs border border-slate-200/90")
+                              )}
+                            >
+                              <Smile className="w-4 h-4 text-amber-500 shrink-0" />
+                              <span className="font-medium">Sticker</span>
+                              <span className="text-[10px] opacity-75 ml-1">{msg.timeLabel}</span>
+                              {isOutbound && (
+                                <CheckCheck className={cn("w-3.5 h-3.5 shrink-0", msg.status === "READ" ? "text-[#53bdeb]" : "text-slate-400")} />
+                              )}
                             </div>
                           ) : isPureImage ? (
                             /* 2. Pure Image (Preview if URL available, compact fallback card if missing) */
@@ -3138,22 +3179,38 @@ export default function WhatsAppPage() {
                               </div>
                             )
                           ) : isPureVideo && msg.attachment?.url ? (
-                            /* 3. Pure Video */
+                            /* 3. Pure Video / Animated GIF */
                             <div
                               className={cn(
-                                "rounded-xl p-[3px] shadow-xs select-none transition-all relative overflow-hidden",
+                                "rounded-2xl p-1 select-none transition-all relative overflow-hidden shadow-xs",
                                 isOutbound
                                   ? (isDark ? "bg-[#005c4b] rounded-tr-xs ml-auto" : "bg-[#D9FDD3] rounded-tr-xs ml-auto shadow-2xs border border-[#C2EBC0]")
-                                  : (isDark ? "bg-[#202c33] rounded-tl-xs" : "bg-white rounded-tl-xs shadow-2xs border border-slate-200/90")
+                                  : (isDark ? "bg-[#202c33] rounded-tl-xs" : "bg-[#f0f2f5] rounded-tl-xs shadow-2xs border border-slate-200/60")
                               )}
                             >
-                              <div className="relative rounded-lg overflow-hidden max-w-[280px] sm:max-w-[340px] bg-black">
-                                <video
-                                  src={msg.attachment.url}
-                                  controls
-                                  preload="metadata"
-                                  className="w-full max-h-[360px] rounded-lg object-contain block"
-                                />
+                              <div className="relative rounded-xl overflow-hidden max-w-[290px] sm:max-w-[340px] bg-black">
+                                {isGif ? (
+                                  <div className="relative group cursor-pointer" onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}>
+                                    <video
+                                      src={msg.attachment.url}
+                                      autoPlay
+                                      loop
+                                      muted
+                                      playsInline
+                                      className="w-full max-h-[340px] rounded-xl object-contain block"
+                                    />
+                                    <div className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/60 backdrop-blur-xs text-white text-[10px] font-bold tracking-wider uppercase pointer-events-none">
+                                      GIF
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <video
+                                    src={msg.attachment.url}
+                                    controls
+                                    preload="metadata"
+                                    className="w-full max-h-[340px] rounded-xl object-contain block"
+                                  />
+                                )}
                                 <div className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded-md bg-black/60 backdrop-blur-xs text-white text-[10px] font-medium flex items-center gap-1 shadow-sm pointer-events-none">
                                   <span>{msg.timeLabel}</span>
                                   {isOutbound && (
@@ -3166,6 +3223,22 @@ export default function WhatsAppPage() {
                                   )}
                                 </div>
                               </div>
+                            </div>
+                          ) : isPureVideo && !msg.attachment?.url ? (
+                            <div
+                              className={cn(
+                                "rounded-2xl px-3 py-2 text-xs select-none transition-all shadow-xs w-fit flex items-center gap-2",
+                                isOutbound
+                                  ? (isDark ? "bg-[#005c4b] text-white rounded-tr-xs ml-auto" : "bg-[#D9FDD3] text-slate-800 rounded-tr-xs shadow-2xs border border-[#C2EBC0]")
+                                  : (isDark ? "bg-[#202c33] text-white rounded-tl-xs" : "bg-white text-slate-800 rounded-tl-xs shadow-2xs border border-slate-200/90")
+                              )}
+                            >
+                              <Film className="w-4 h-4 text-blue-500 shrink-0" />
+                              <span className="font-medium">{isGif ? "GIF" : "Video"}</span>
+                              <span className="text-[10px] opacity-75 ml-1">{msg.timeLabel}</span>
+                              {isOutbound && (
+                                <CheckCheck className={cn("w-3.5 h-3.5 shrink-0", msg.status === "READ" ? "text-[#53bdeb]" : "text-slate-400")} />
+                              )}
                             </div>
                           ) : isContactCard ? (
                             /* 4. Contact Card */
@@ -3353,14 +3426,30 @@ export default function WhatsAppPage() {
                                     </div>
                                   )}
 
-                                  {msg.attachment?.type === "video" && msg.attachment.url && (
-                                    <div className="mb-2 rounded-xl overflow-hidden shadow-sm bg-black">
-                                      <video
-                                        src={msg.attachment.url}
-                                        controls
-                                        preload="metadata"
-                                        className="w-full max-h-72 rounded-xl object-contain"
-                                      />
+                                  {(msg.attachment?.type === "video" || isGif || msg.messageType === "video" || msg.messageType === "gif") && msg.attachment?.url && (
+                                    <div className="mb-2 rounded-xl overflow-hidden shadow-sm bg-black relative max-w-[290px] sm:max-w-[340px]">
+                                      {isGif ? (
+                                        <>
+                                          <video
+                                            src={msg.attachment.url}
+                                            autoPlay
+                                            loop
+                                            muted
+                                            playsInline
+                                            className="w-full max-h-72 rounded-xl object-contain block"
+                                          />
+                                          <div className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/60 backdrop-blur-xs text-white text-[10px] font-bold tracking-wider uppercase pointer-events-none">
+                                            GIF
+                                          </div>
+                                        </>
+                                      ) : (
+                                        <video
+                                          src={msg.attachment.url}
+                                          controls
+                                          preload="metadata"
+                                          className="w-full max-h-72 rounded-xl object-contain block"
+                                        />
+                                      )}
                                     </div>
                                   )}
 
@@ -3393,9 +3482,15 @@ export default function WhatsAppPage() {
                                   )}
 
                                     <div className="flex flex-wrap items-baseline justify-end gap-x-2.5 gap-y-0.5 min-w-0">
-                                      {parsed.body ? (
+                                      {cleanDisplayCaption(parsed.body, msg.fileName) ? (
                                         <span className="whitespace-pre-wrap select-text break-words text-sm mr-auto">
-                                          {parsed.body}
+                                          {cleanDisplayCaption(parsed.body, msg.fileName)}
+                                        </span>
+                                      ) : !msg.attachment?.url && !isVoice && !isDoc && !isContactCard ? (
+                                        <span className="italic text-xs text-slate-400 mr-auto">
+                                          {msg.text && !["[Empty Message]", "[Attachment Received]"].includes(msg.text)
+                                            ? cleanDisplayCaption(msg.text, msg.fileName) || "Active message"
+                                            : "Active message"}
                                         </span>
                                       ) : null}
 

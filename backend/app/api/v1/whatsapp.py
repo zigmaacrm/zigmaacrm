@@ -783,6 +783,10 @@ async def get_whatsapp_conversations(
                     last_msg_snippet = f"📄 {m.file_name or 'Document'}"
                 elif m_type == "video":
                     last_msg_snippet = f"🎥 {m.caption or 'Video'}"
+                elif m_type == "gif":
+                    last_msg_snippet = f"GIF {m.caption or ''}".strip()
+                elif m_type == "sticker" or (m.message_body and m.message_body.lower() == "[sticker]"):
+                    last_msg_snippet = "Sticker"
                 else:
                     last_msg_snippet = m.message_body or ""
 
@@ -1237,9 +1241,17 @@ async def sync_whatsapp_chat_history(
 
         msg_id = item.meta_message_id or f"wamid.hist_{uuid.uuid4().hex[:16]}"
         chk = await db.execute(
-            select(WhatsAppMessage.id).where(WhatsAppMessage.meta_message_id == msg_id).limit(1)
+            select(WhatsAppMessage).where(WhatsAppMessage.meta_message_id == msg_id).limit(1)
         )
-        if chk.scalar_one_or_none():
+        existing_msg = chk.scalar_one_or_none()
+        if existing_msg:
+            if item.media_url and not existing_msg.media_url:
+                existing_msg.media_url = item.media_url
+                if item.message_type:
+                    existing_msg.message_type = item.message_type
+                if item.file_name:
+                    existing_msg.file_name = item.file_name
+                await db.commit()
             continue
 
         search_suffix = clean_phone[-10:] if len(clean_phone) >= 10 else clean_phone

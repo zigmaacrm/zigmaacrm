@@ -26,6 +26,7 @@ const {
   DisconnectReason,
   fetchLatestBaileysVersion,
   downloadMediaMessage,
+  downloadContentFromMessage,
   Browsers
 } = require('@whiskeysockets/baileys');
 
@@ -412,14 +413,20 @@ async function decryptAndSaveMedia(msgObj) {
     let caption = null;
     let isVoiceNote = false;
     let durationSecs = 0;
+    let targetProto = null;
+    let baileyType = null;
 
     if (rawM.imageMessage) {
+      targetProto = rawM.imageMessage;
+      baileyType = 'image';
       mediaType = 'image';
       mimeType = rawM.imageMessage.mimetype || 'image/jpeg';
       extension = mimeType.includes('png') ? 'png' : 'jpg';
       fileName = `img_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${extension}`;
       caption = rawM.imageMessage.caption || '';
     } else if (rawM.audioMessage) {
+      targetProto = rawM.audioMessage;
+      baileyType = 'audio';
       isVoiceNote = !!rawM.audioMessage.ptt;
       mediaType = isVoiceNote ? 'ptt' : 'audio';
       mimeType = rawM.audioMessage.mimetype || 'audio/ogg';
@@ -428,12 +435,17 @@ async function decryptAndSaveMedia(msgObj) {
       const durTag = durationSecs > 0 ? `_${durationSecs}s` : '';
       fileName = `voice${durTag}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${extension}`;
     } else if (rawM.videoMessage) {
-      mediaType = 'video';
+      targetProto = rawM.videoMessage;
+      baileyType = 'video';
+      const isGif = !!rawM.videoMessage.gifPlayback;
+      mediaType = isGif ? 'gif' : 'video';
       mimeType = rawM.videoMessage.mimetype || 'video/mp4';
       extension = 'mp4';
-      fileName = `vid_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${extension}`;
+      fileName = `${isGif ? 'gif' : 'vid'}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${extension}`;
       caption = rawM.videoMessage.caption || '';
     } else if (rawM.documentMessage) {
+      targetProto = rawM.documentMessage;
+      baileyType = 'document';
       mediaType = 'document';
       mimeType = rawM.documentMessage.mimetype || 'application/pdf';
       const origName = rawM.documentMessage.fileName || 'file.pdf';
@@ -441,6 +453,8 @@ async function decryptAndSaveMedia(msgObj) {
       fileName = `doc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${origExt}`;
       caption = rawM.documentMessage.caption || origName;
     } else if (rawM.stickerMessage) {
+      targetProto = rawM.stickerMessage;
+      baileyType = 'sticker';
       mediaType = 'sticker';
       mimeType = rawM.stickerMessage.mimetype || 'image/webp';
       extension = 'webp';
@@ -449,16 +463,36 @@ async function decryptAndSaveMedia(msgObj) {
       return null;
     }
 
-    const downloadPromise = downloadMediaMessage(
-      msgObj,
-      'buffer',
-      {},
-      { logger, reuploadRequest: () => Promise.resolve() }
-    );
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Media download timeout (10s)')), 10000)
-    );
-    const buffer = await Promise.race([downloadPromise, timeoutPromise]);
+    let buffer = null;
+
+    // Strategy 1: downloadMediaMessage with unwrapped message object
+    try {
+      const unwrappedMsgObj = { key: msgObj.key, message: rawM };
+      const downloadPromise = downloadMediaMessage(
+        unwrappedMsgObj,
+        'buffer',
+        {},
+        { logger, reuploadRequest: () => Promise.resolve() }
+      );
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Media download timeout (10s)')), 10000)
+      );
+      buffer = await Promise.race([downloadPromise, timeoutPromise]);
+    } catch (err1) {
+      // Strategy 2: Direct stream extraction using downloadContentFromMessage on target proto
+      if (targetProto && baileyType && typeof downloadContentFromMessage === 'function') {
+        try {
+          const stream = await downloadContentFromMessage(targetProto, baileyType);
+          const chunks = [];
+          for await (const chunk of stream) {
+            chunks.push(chunk);
+          }
+          buffer = Buffer.concat(chunks);
+        } catch (err2) {
+          console.warn('[WhatsApp Media Fallback Decrypt Error]:', err2.message);
+        }
+      }
+    }
 
     if (!buffer || buffer.length === 0) return null;
 
@@ -946,8 +980,16 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
               if (mediaPayload.is_voice_note) {
                 const d = mediaPayload.duration || 3;
                 body = `🎤 Voice message (${d}s)`;
+              } else if (mediaPayload.message_type === 'sticker') {
+                body = '[Sticker]';
+              } else if (mediaPayload.message_type === 'gif') {
+                body = mediaPayload.caption || '[GIF]';
+              } else if (mediaPayload.message_type === 'video') {
+                body = mediaPayload.caption || '[Video]';
+              } else if (mediaPayload.message_type === 'image') {
+                body = mediaPayload.caption || '[Photo]';
               } else {
-                body = mediaPayload.caption || `[${(mediaPayload.message_type || 'Attachment').toUpperCase()}]`;
+                body = mediaPayload.caption || `[${mediaPayload.message_type || 'Attachment'}]`;
               }
             }
             if (!body) body = 'Active message';
@@ -1188,8 +1230,16 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
             if (mediaPayload.is_voice_note) {
               const d = mediaPayload.duration || 3;
               body = `🎤 Voice message (${d}s)`;
+            } else if (mediaPayload.message_type === 'sticker') {
+              body = '[Sticker]';
+            } else if (mediaPayload.message_type === 'gif') {
+              body = mediaPayload.caption || '[GIF]';
+            } else if (mediaPayload.message_type === 'video') {
+              body = mediaPayload.caption || '[Video]';
+            } else if (mediaPayload.message_type === 'image') {
+              body = mediaPayload.caption || '[Photo]';
             } else {
-              body = mediaPayload.caption || `[${(mediaPayload.message_type || 'Attachment').toUpperCase()}]`;
+              body = mediaPayload.caption || `[${mediaPayload.message_type || 'Attachment'}]`;
             }
           }
           if (!body) continue;
