@@ -214,6 +214,11 @@ async def on_startup():
                 # Clean up corrupt WhatsApp Linked Device IDs (@lid) and invalid length numbers
                 await conn.execute(text("DELETE FROM whatsapp_messages WHERE LENGTH(REGEXP_REPLACE(phone_number, '[^0-9]', '', 'g')) > 13 OR LENGTH(REGEXP_REPLACE(phone_number, '[^0-9]', '', 'g')) < 8;"))
                 await conn.execute(text("DELETE FROM contacts WHERE source = 'WHATSAPP' AND (LENGTH(REGEXP_REPLACE(phone, '[^0-9]', '', 'g')) > 13 OR LENGTH(REGEXP_REPLACE(phone, '[^0-9]', '', 'g')) < 8);"))
+                # Normalize legacy session IDs to user WhatsApp phone numbers so chat history is never orphaned
+                await conn.execute(text("UPDATE whatsapp_messages SET session_id = '916379816912', business_phone_number_id = '916379816912' WHERE session_id = '82830648669123136365';"))
+                # Fast index for high-speed WhatsApp polling and conversation loading
+                await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_wa_msgs_session_created ON whatsapp_messages (session_id, created_at DESC);"))
+                await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_wa_msgs_biz_phone ON whatsapp_messages (business_phone_number_id, created_at DESC);"))
             except Exception as e:
                 print(f"[STARTUP MIGRATION] Schema check note: {e}")
     except Exception as e:

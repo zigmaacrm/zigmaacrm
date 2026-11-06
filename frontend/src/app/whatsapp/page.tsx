@@ -216,6 +216,20 @@ function cleanDisplayCaption(text?: string | null, fileName?: string | null): st
   return t;
 }
 
+function getSmartMediaFallback(url?: string | null, step: number = 1): string | null {
+  if (!url) return null;
+  const fn = url.split("/").pop();
+  if (!fn) return null;
+  const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
+  if (isHttps) {
+    if (step === 1) return `https://zigmaa-whatsapp-bridge.onrender.com/media/whatsapp/${fn}`;
+    return null;
+  }
+  if (step === 1) return `http://localhost:5001/media/whatsapp/${fn}`;
+  if (step === 2) return `https://zigmaa-whatsapp-bridge.onrender.com/media/whatsapp/${fn}`;
+  return null;
+}
+
 const WAVEFORM_BARS = [
   4, 4, 6, 8, 12, 18, 22, 18, 14, 10, 8, 10, 14, 16, 14, 12, 10, 8, 10, 12, 14, 12, 10, 8, 8, 6, 6, 4, 4, 4, 4, 4
 ];
@@ -350,16 +364,21 @@ function VoiceNotePlayer({
         onError={(e) => {
           setIsPlaying(false);
           const audio = e.currentTarget;
-          const fn = audioUrl?.split("/").pop();
-          if (fn && !audio.dataset.step) {
+          if (!audio.dataset.step) {
             audio.dataset.step = "1";
-            audio.src = `http://localhost:5001/media/whatsapp/${fn}`;
-            return;
+            const fallback = getSmartMediaFallback(audioUrl, 1);
+            if (fallback) {
+              audio.src = fallback;
+              return;
+            }
           }
-          if (fn && audio.dataset.step === "1") {
+          if (audio.dataset.step === "1") {
             audio.dataset.step = "2";
-            audio.src = `https://zigmaa-whatsapp-bridge.onrender.com/media/whatsapp/${fn}`;
-            return;
+            const fallback = getSmartMediaFallback(audioUrl, 2);
+            if (fallback) {
+              audio.src = fallback;
+              return;
+            }
           }
         }}
         preload="metadata"
@@ -1134,8 +1153,8 @@ export default function WhatsAppPage() {
             localStorage.setItem("zigmaa_whatsapp_phone", data.phone);
           } catch (_) {}
           loadConversations(true);
-        } else {
-          // Clean state whenever session is disconnected or unlinked
+        } else if ((data as any)?.logged_out === true) {
+          // Explicit logout from device
           setQrStatus(data.status === "SCAN_QR" ? "SCAN_QR" : "DISCONNECTED");
           setQrPhone(null);
           qrPhoneRef.current = null;
@@ -1147,6 +1166,11 @@ export default function WhatsAppPage() {
           setActivePhone("");
           setMessages([]);
           setLinkedUserAvatar(null);
+        } else {
+          // Transient status (e.g. gateway check or reconnecting): Keep existing session intact!
+          if (data.status) {
+            setQrStatus(data.status);
+          }
         }
         if (data.qr) {
           setCachedQR(data.qr);
@@ -1157,7 +1181,7 @@ export default function WhatsAppPage() {
           api.getWhatsAppContactAvatar(data.phone).then((res) => {
             if (res?.avatar_url) setLinkedUserAvatar(res.avatar_url);
           }).catch(() => {});
-        } else if (data.status !== "CONNECTED") {
+        } else if ((data as any)?.logged_out === true) {
           setLinkedUserAvatar(null);
         }
       }).catch(() => {});
@@ -1195,6 +1219,10 @@ export default function WhatsAppPage() {
   const isPollingRef = useRef(false);
   const activePhoneRef = useRef<string>("");
   const chatMessagesCacheRef = useRef<Record<string, WhatsAppMessage[]>>({});
+  const conversationsRef = useRef<WhatsAppConversation[]>(conversations);
+  useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
 
   // Media Lightbox & Voice Note State
   const [selectedImagePreview, setSelectedImagePreview] = useState<string | null>(null);
@@ -1447,18 +1475,21 @@ export default function WhatsAppPage() {
 
   // Load conversations from backend
   const loadConversations = useCallback(async (isSilent = false, repFilter?: string) => {
-    if (!isSilent) setIsLoadingConversations(true);
-    else setIsRefreshing(true);
+    // Only show grey skeletons on the very first mount when NO conversations exist yet
+    if (!isSilent && conversationsRef.current.length === 0) {
+      setIsLoadingConversations(true);
+    } else if (!isSilent) {
+      setIsRefreshing(true);
+    }
 
     try {
       const liveSession = qrPhoneRef.current || qrPhone;
-      // Guard: If device is not connected, do NOT load stale conversations; clear state to 0!
+      // Guard: If device is not connected, exit gracefully without blanking loaded contacts
       if (!liveSession) {
-        setConversations([]);
-        setActivePhone("");
-        setMessages([]);
-        if (!isSilent) setIsLoadingConversations(false);
-        else setIsRefreshing(false);
+        if (!isSilent && conversationsRef.current.length === 0) {
+          setIsLoadingConversations(false);
+        }
+        setIsRefreshing(false);
         return;
       }
       const activeFilter = repFilter !== undefined ? repFilter : selectedRepFilter;
@@ -1468,13 +1499,55 @@ export default function WhatsAppPage() {
       const data = await api.getWhatsAppConversations(100, repParam, cleanSession, sId);
       if (data && data.status === "success" && Array.isArray(data.conversations)) {
         if (data.is_connected === false) {
-          setConversations([]);
-          setActivePhone("");
-          setMessages([]);
+          // If user already has conversations on screen, do not wipe them on a transient query miss
+          if (conversationsRef.current.length === 0) {
+            setConversations([]);
+            setActivePhone("");
+            setMessages([]);
+          }
           return;
         }
         const mapped = data.conversations.map(mapBackendConv);
-        setConversations(mapped);
+
+        // Zero-flicker state update: Check if conversation list really changed before triggering React render
+        setConversations((prev) => {
+          if (!prev || prev.length === 0) return mapped;
+          if (prev.length === mapped.length) {
+            let hasChanged = false;
+            for (let i = 0; i < mapped.length; i++) {
+              const m = mapped[i];
+              const p = prev[i];
+              if (
+                !p ||
+                p.phone !== m.phone ||
+                p.lastMessage !== m.lastMessage ||
+                p.lastMessageTime !== m.lastMessageTime ||
+                p.unreadCount !== m.unreadCount ||
+                p.is_pinned !== m.is_pinned ||
+                p.is_archived !== m.is_archived ||
+                p.contactName !== m.contactName
+              ) {
+                hasChanged = true;
+                break;
+              }
+            }
+            if (!hasChanged) return prev; // Exact same reference: zero re-render, zero flicker!
+          }
+          // Merge to preserve client-side avatars and active notes
+          const prevMap = new Map(prev.map((c: WhatsAppConversation) => [c.phone.replace(/[^0-9]/g, ""), c]));
+          return mapped.map((newConv: WhatsAppConversation) => {
+            const clean = newConv.phone.replace(/[^0-9]/g, "");
+            const existing = prevMap.get(clean);
+            if (existing) {
+              return {
+                ...newConv,
+                avatar_url: newConv.avatar_url || existing.avatar_url,
+                notes: existing.notes?.length ? existing.notes : newConv.notes
+              };
+            }
+            return newConv;
+          });
+        });
 
         // Check if a specific contact/phone was requested via URL query params
         const urlParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
@@ -1659,17 +1732,28 @@ export default function WhatsAppPage() {
         chatMessagesCacheRef.current[clean] = finalMsgs;
 
         if (activePhoneRef.current === clean) {
-          setMessages(finalMsgs);
+          setMessages((prev) => {
+            if (prev.length === finalMsgs.length) {
+              const lastPrev = prev[prev.length - 1];
+              const lastNext = finalMsgs[finalMsgs.length - 1];
+              if (lastPrev?.id === lastNext?.id && lastPrev?.status === lastNext?.status && lastPrev?.text === lastNext?.text) {
+                return prev;
+              }
+            }
+            return finalMsgs;
+          });
           setIsLoadingMessages(false);
         }
 
-        // Mark unread messages as read in backend and update conversation list badge
+        // Mark unread messages as read in backend and update conversation list badge only if unread
         api.markWhatsAppConversationRead(clean).catch(() => {});
-        setConversations((prev) =>
-          prev.map((c) =>
+        setConversations((prev) => {
+          const match = prev.find(c => c.phone.replace(/[^0-9]/g, "") === clean);
+          if (!match || match.unreadCount === 0) return prev;
+          return prev.map((c) =>
             c.phone.replace(/[^0-9]/g, "") === clean ? { ...c, unreadCount: 0 } : c
-          )
-        );
+          );
+        });
       }
     } catch (e: any) {
       console.warn("Could not fetch messages for", phone, e);
@@ -1683,7 +1767,7 @@ export default function WhatsAppPage() {
   // Initial load and auto-reload on session change
   useEffect(() => {
     if (qrPhone || qrPhoneRef.current) {
-      loadConversations();
+      loadConversations(true);
     }
   }, [loadConversations, qrPhone, qrStatus]);
 
@@ -1754,17 +1838,18 @@ export default function WhatsAppPage() {
     };
   }, [showEmojiPicker]);
 
-  // Polling: throttled refresh (8s) with document visibility guard & overlap prevention
+  // Polling: high-performance concurrent refresh (2.5s) with document visibility guard & overlap prevention
   useEffect(() => {
     const poll = async () => {
       if (typeof document !== "undefined" && document.hidden) return;
       if (isPollingRef.current) return;
       isPollingRef.current = true;
       try {
-        await loadConversations(true);
+        const tasks: Promise<any>[] = [loadConversations(true)];
         if (activePhone && !isSending) {
-          await loadMessages(activePhone, true);
+          tasks.push(loadMessages(activePhone, true));
         }
+        await Promise.all(tasks);
       } catch (err) {
         console.warn("WhatsApp background sync error:", err);
       } finally {
@@ -1772,7 +1857,7 @@ export default function WhatsAppPage() {
       }
     };
 
-    const interval = setInterval(poll, 4000);
+    const interval = setInterval(poll, 2500);
 
     const handleVisibility = () => {
       if (typeof document !== "undefined" && !document.hidden) {
@@ -1789,7 +1874,7 @@ export default function WhatsAppPage() {
         document.removeEventListener("visibilitychange", handleVisibility);
       }
     };
-  }, [activePhone, loadConversations, loadMessages]);
+  }, [activePhone, loadConversations, loadMessages, isSending]);
 
   // Auto-scroll when messages update (only if user hasn't scrolled up to view older messages)
   useEffect(() => {
@@ -3184,16 +3269,21 @@ export default function WhatsAppPage() {
                                         onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}
                                         onError={(e) => {
                                           const img = e.currentTarget;
-                                          const fn = msg.attachment?.url?.split("/").pop();
-                                          if (fn && !img.dataset.step) {
+                                          if (!img.dataset.step) {
                                             img.dataset.step = "1";
-                                            img.src = `http://localhost:5001/media/whatsapp/${fn}`;
-                                            return;
+                                            const fallback = getSmartMediaFallback(msg.attachment?.url, 1);
+                                            if (fallback) {
+                                              img.src = fallback;
+                                              return;
+                                            }
                                           }
-                                          if (fn && img.dataset.step === "1") {
+                                          if (img.dataset.step === "1") {
                                             img.dataset.step = "2";
-                                            img.src = `https://zigmaa-whatsapp-bridge.onrender.com/media/whatsapp/${fn}`;
-                                            return;
+                                            const fallback = getSmartMediaFallback(msg.attachment?.url, 2);
+                                            if (fallback) {
+                                              img.src = fallback;
+                                              return;
+                                            }
                                           }
                                           img.style.display = "none";
                                         }}
@@ -3249,16 +3339,21 @@ export default function WhatsAppPage() {
                                     onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}
                                     onError={(e) => {
                                       const img = e.currentTarget;
-                                      const fn = msg.attachment?.url?.split("/").pop();
-                                      if (fn && !img.dataset.step) {
+                                      if (!img.dataset.step) {
                                         img.dataset.step = "1";
-                                        img.src = `http://localhost:5001/media/whatsapp/${fn}`;
-                                        return;
+                                        const fallback = getSmartMediaFallback(msg.attachment?.url, 1);
+                                        if (fallback) {
+                                          img.src = fallback;
+                                          return;
+                                        }
                                       }
-                                      if (fn && img.dataset.step === "1") {
+                                      if (img.dataset.step === "1") {
                                         img.dataset.step = "2";
-                                        img.src = `https://zigmaa-whatsapp-bridge.onrender.com/media/whatsapp/${fn}`;
-                                        return;
+                                        const fallback = getSmartMediaFallback(msg.attachment?.url, 2);
+                                        if (fallback) {
+                                          img.src = fallback;
+                                          return;
+                                        }
                                       }
                                       img.style.display = "none";
                                       const fallback = img.nextElementSibling;
@@ -3544,16 +3639,21 @@ export default function WhatsAppPage() {
                                         onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}
                                         onError={(e) => {
                                           const img = e.currentTarget;
-                                          const fn = msg.attachment?.url?.split("/").pop();
-                                          if (fn && !img.dataset.step) {
+                                          if (!img.dataset.step) {
                                             img.dataset.step = "1";
-                                            img.src = `http://localhost:5001/media/whatsapp/${fn}`;
-                                            return;
+                                            const fallback = getSmartMediaFallback(msg.attachment?.url, 1);
+                                            if (fallback) {
+                                              img.src = fallback;
+                                              return;
+                                            }
                                           }
-                                          if (fn && img.dataset.step === "1") {
+                                          if (img.dataset.step === "1") {
                                             img.dataset.step = "2";
-                                            img.src = `https://zigmaa-whatsapp-bridge.onrender.com/media/whatsapp/${fn}`;
-                                            return;
+                                            const fallback = getSmartMediaFallback(msg.attachment?.url, 2);
+                                            if (fallback) {
+                                              img.src = fallback;
+                                              return;
+                                            }
                                           }
                                           img.style.display = "none";
                                         }}
