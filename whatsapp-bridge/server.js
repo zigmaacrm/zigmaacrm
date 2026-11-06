@@ -683,8 +683,9 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
       logger,
       printQRInTerminal: false,
       auth: state,
-      browser: Browsers.ubuntu('Chrome'),
-      syncFullHistory: false,
+      browser: Browsers.windows('Desktop'),
+      syncFullHistory: true,
+      shouldSyncHistoryMessage: () => true,
       markOnlineOnConnect: true,
       qrTimeout: 60000,
       connectTimeoutMs: 60000,
@@ -1118,26 +1119,50 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
       })().catch(() => {});
     });
 
-    // Chats upsert (Update contactStore names only; do not dump arbitrary non-message chats into CRM)
+    // Initial chats sync (from history or catch-up)
+    session.sock.ev.on('chats.set', async ({ chats: setChats }) => {
+      if (!Array.isArray(setChats) || setChats.length === 0) return;
+      console.log(`[WhatsApp Gateway:${session.id}] Received ${setChats.length} chats from initial chat sync.`);
+      for (const chat of setChats) {
+        if (!chat.id || (!chat.id.endsWith('@s.whatsapp.net') && !chat.id.endsWith('@c.us'))) continue;
+        const cleanPhone = resolvePhoneFromJid(chat.id, session);
+        if (!cleanPhone || cleanPhone.length < 8 || cleanPhone.length > 13) continue;
+        const existing = session.contactsStore ? session.contactsStore.get(cleanPhone) : null;
+        const bestName = chat.name || existing?.name || existing?.phonebook_name || null;
+        const item = {
+          phone: cleanPhone,
+          name: bestName,
+          phonebook_name: chat.name || existing?.phonebook_name || null,
+          push_name: existing?.push_name || null,
+          jid: chat.id,
+          avatar_url: existing?.avatar_url || null
+        };
+        if (session.contactsStore) session.contactsStore.set(cleanPhone, item);
+        session.pendingContacts.set(cleanPhone, item);
+      }
+      if (session.pendingContacts.size > 0) scheduleContactSync(session);
+    });
+
+    // Chats upsert (Update contactStore names and sync chatting contacts)
     session.sock.ev.on('chats.upsert', async (newChats) => {
       if (!Array.isArray(newChats) || newChats.length === 0) return;
       for (const chat of newChats) {
         if (!chat.id || (!chat.id.endsWith('@s.whatsapp.net') && !chat.id.endsWith('@c.us'))) continue;
         const cleanPhone = resolvePhoneFromJid(chat.id, session);
         if (!cleanPhone || cleanPhone.length < 8 || cleanPhone.length > 13) continue;
-        if (chat.name && session.contactsStore) {
-          const existing = session.contactsStore.get(cleanPhone);
-          const item = {
-            ...(existing || {}),
-            phone: cleanPhone,
-            name: chat.name || existing?.name,
-            phonebook_name: chat.name || existing?.phonebook_name,
-            jid: chat.id
-          };
-          session.contactsStore.set(cleanPhone, item);
-          session.pendingContacts.set(cleanPhone, item);
-          scheduleContactSync(session);
-        }
+        const existing = session.contactsStore ? session.contactsStore.get(cleanPhone) : null;
+        const bestName = chat.name || existing?.name || existing?.phonebook_name || null;
+        const item = {
+          phone: cleanPhone,
+          name: bestName,
+          phonebook_name: chat.name || existing?.phonebook_name || null,
+          push_name: existing?.push_name || null,
+          jid: chat.id,
+          avatar_url: existing?.avatar_url || null
+        };
+        if (session.contactsStore) session.contactsStore.set(cleanPhone, item);
+        session.pendingContacts.set(cleanPhone, item);
+        scheduleContactSync(session);
       }
     });
 

@@ -848,7 +848,8 @@ async def get_whatsapp_conversations(
 
     return {
         "status": "success",
-        "conversations": active_conversations[:effective_limit]
+        "conversations": active_conversations[:effective_limit],
+        "is_connected": True
     }
 
 @router.patch("/conversations/{phone_number}/assign")

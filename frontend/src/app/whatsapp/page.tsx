@@ -1088,8 +1088,24 @@ export default function WhatsAppPage() {
   // QR WhatsApp State
   const [showQRModal, setShowQRModal] = useState(false);
   const [showNewChatModal, setShowNewChatModal] = useState(false);
-  const [qrStatus, setQrStatus] = useState<"DISCONNECTED" | "SCAN_QR" | "CONNECTED">("DISCONNECTED");
-  const [qrPhone, setQrPhone] = useState<string | null>(null);
+  const [qrStatus, setQrStatus] = useState<"DISCONNECTED" | "SCAN_QR" | "CONNECTED">(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const s = localStorage.getItem("zigmaa_whatsapp_status");
+        if (s === "CONNECTED") return "CONNECTED";
+      } catch (_) {}
+    }
+    return "DISCONNECTED";
+  });
+  const [qrPhone, setQrPhone] = useState<string | null>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const p = localStorage.getItem("zigmaa_whatsapp_phone");
+        if (p) return p;
+      } catch (_) {}
+    }
+    return null;
+  });
   const qrPhoneRef = useRef<string | null>(null);
   qrPhoneRef.current = qrPhone;
   const [linkedUserAvatar, setLinkedUserAvatar] = useState<string | null>(null);
@@ -1113,10 +1129,19 @@ export default function WhatsAppPage() {
         if (data.status === "CONNECTED" && data.phone) {
           setQrPhone(data.phone);
           qrPhoneRef.current = data.phone;
+          try {
+            localStorage.setItem("zigmaa_whatsapp_status", "CONNECTED");
+            localStorage.setItem("zigmaa_whatsapp_phone", data.phone);
+          } catch (_) {}
+          loadConversations(true);
         } else {
           // Device is NOT connected / logged out: completely reset conversation & phone state
           setQrPhone(null);
           qrPhoneRef.current = null;
+          try {
+            localStorage.removeItem("zigmaa_whatsapp_status");
+            localStorage.removeItem("zigmaa_whatsapp_phone");
+          } catch (_) {}
           setConversations([]);
           setActivePhone("");
           setMessages([]);
@@ -1417,7 +1442,7 @@ export default function WhatsAppPage() {
     try {
       const liveSession = qrPhoneRef.current || qrPhone;
       // Guard: If device is not connected, do NOT load stale conversations; clear state to 0!
-      if (!liveSession || qrStatus !== "CONNECTED") {
+      if (!liveSession) {
         setConversations([]);
         setActivePhone("");
         setMessages([]);
@@ -1431,7 +1456,7 @@ export default function WhatsAppPage() {
       const sId = currentUser?.id || api.getCurrentUser()?.id || undefined;
       const data = await api.getWhatsAppConversations(100, repParam, cleanSession, sId);
       if (data && data.status === "success" && Array.isArray(data.conversations)) {
-        if (data.is_connected === false || qrStatus !== "CONNECTED" || !qrPhone) {
+        if (data.is_connected === false) {
           setConversations([]);
           setActivePhone("");
           setMessages([]);
@@ -1625,10 +1650,12 @@ export default function WhatsAppPage() {
     }
   }, []);
 
-  // Initial load
+  // Initial load and auto-reload on session change
   useEffect(() => {
-    loadConversations();
-  }, [loadConversations]);
+    if (qrPhone || qrPhoneRef.current) {
+      loadConversations();
+    }
+  }, [loadConversations, qrPhone, qrStatus]);
 
   // Load messages whenever activePhone changes
   useEffect(() => {
@@ -1769,6 +1796,10 @@ export default function WhatsAppPage() {
       setQrStatus("DISCONNECTED");
       setQrPhone(null);
       qrPhoneRef.current = null;
+      try {
+        localStorage.removeItem("zigmaa_whatsapp_status");
+        localStorage.removeItem("zigmaa_whatsapp_phone");
+      } catch (_) {}
       setCachedQR(null);
       setConversations([]);
       setMessages([]);
