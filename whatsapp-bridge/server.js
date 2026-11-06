@@ -62,7 +62,7 @@ async function dispatchToBackend(apiPath, body, headers = {}) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...headers },
         body: jsonBody,
-        signal: AbortSignal.timeout(8000)
+        signal: AbortSignal.timeout(25000)
       }).catch(() => {})
     )
   );
@@ -700,7 +700,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
       logger,
       printQRInTerminal: false,
       auth: state,
-      browser: Browsers.windows('Chrome'),
+      browser: ['Zigmaa CRM', 'Desktop', '10.0'],
       syncFullHistory: true,
       shouldSyncHistoryMessage: () => true,
       markOnlineOnConnect: true,
@@ -1012,50 +1012,41 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
         const msgs = messagesByPhone.get(phone) || [];
         const savedContact = session.contactsStore ? session.contactsStore.get(phone) : null;
         const contactName = savedContact?.phonebook_name || savedContact?.name || null;
-        const chatTs = latestTsByPhone.get(phone) || Math.floor(Date.now() / 1000);
 
-        if (msgs.length === 0) {
-          // Direct chat with recent conversation timestamp from WhatsApp Web
-          validMessages.push({
-            phone_number: phone,
-            contact_name: contactName,
-            message_body: 'Active conversation',
-            meta_message_id: `wamid.init_chat_${phone}_${chatTs}`,
-            timestamp: chatTs,
-            direction: 'INBOUND',
-            message_type: 'text',
-            media_url: null,
-            file_name: null,
-            caption: null,
-            is_voice_note: false,
-            media_base64: null,
-            quoted_context: null
-          });
-        } else {
-          for (const msg of msgs) {
-            let mediaPayload = null;
-            try {
-              mediaPayload = await decryptAndSaveMedia(msg);
-            } catch (_) {}
+        if (!msgs || msgs.length === 0) {
+          // No messages in this history batch. The contact is already registered in session.pendingContacts!
+          continue;
+        }
 
-            let body = extractMessageBody(msg.message);
-            if (!body && mediaPayload) {
-              if (mediaPayload.is_voice_note) {
-                const d = mediaPayload.duration || 3;
-                body = `🎤 Voice message (${d}s)`;
-              } else if (mediaPayload.message_type === 'sticker') {
-                body = '[Sticker]';
-              } else if (mediaPayload.message_type === 'gif') {
-                body = mediaPayload.caption || '[GIF]';
-              } else if (mediaPayload.message_type === 'video') {
-                body = mediaPayload.caption || '[Video]';
-              } else if (mediaPayload.message_type === 'image') {
-                body = mediaPayload.caption || '[Photo]';
-              } else {
-                body = mediaPayload.caption || `[${mediaPayload.message_type || 'Attachment'}]`;
-              }
+        for (const msg of msgs) {
+          let mediaPayload = null;
+          try {
+            mediaPayload = await decryptAndSaveMedia(msg);
+          } catch (_) {}
+
+          let body = extractMessageBody(msg.message);
+          if (!body && mediaPayload) {
+            if (mediaPayload.is_voice_note) {
+              const d = mediaPayload.duration || 3;
+              body = `🎤 Voice message (${d}s)`;
+            } else if (mediaPayload.message_type === 'sticker') {
+              body = '[Sticker]';
+            } else if (mediaPayload.message_type === 'gif') {
+              body = mediaPayload.caption || '[GIF]';
+            } else if (mediaPayload.message_type === 'video') {
+              body = mediaPayload.caption || '[Video]';
+            } else if (mediaPayload.message_type === 'image') {
+              body = mediaPayload.caption || '[Photo]';
+            } else {
+              body = mediaPayload.caption || `[${mediaPayload.message_type || 'Attachment'}]`;
             }
-            if (!body) body = 'Active message';
+          }
+
+          // Skip protocol, receipt, and empty stub packets that have no visible user content
+          if (!body && !mediaPayload) {
+            continue;
+          }
+          if (!body) body = '[Attachment]';
 
             const fromMe = Boolean(msg.key?.fromMe);
             const thisMsgContactName = contactName || msg.pushName || null;
@@ -1080,7 +1071,6 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
             });
           }
         }
-      }
 
       if (validMessages.length > 0) {
         console.log(`[WhatsApp Gateway:${session.id}] Dispatching ${validMessages.length} direct messages to CRM sync-history...`);
@@ -1130,7 +1120,6 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
     session.sock.ev.on('chats.set', async ({ chats: setChats }) => {
       if (!Array.isArray(setChats) || setChats.length === 0) return;
       console.log(`[WhatsApp Gateway:${session.id}] Received ${setChats.length} chats from initial chat sync.`);
-      const initialMessages = [];
       for (const chat of setChats) {
         if (!chat.id || (!chat.id.endsWith('@s.whatsapp.net') && !chat.id.endsWith('@c.us'))) continue;
         const cleanPhone = resolvePhoneFromJid(chat.id, session);
@@ -1147,43 +1136,8 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
         };
         if (session.contactsStore) session.contactsStore.set(cleanPhone, item);
         session.pendingContacts.set(cleanPhone, item);
-
-        const chatTs = typeof chat.conversationTimestamp === 'number'
-          ? chat.conversationTimestamp
-          : (chat.conversationTimestamp?.low || Math.floor(Date.now() / 1000));
-        initialMessages.push({
-          phone_number: cleanPhone,
-          contact_name: bestName,
-          message_body: 'Active conversation',
-          meta_message_id: `wamid.init_chat_${cleanPhone}_${chatTs}`,
-          timestamp: chatTs,
-          direction: 'INBOUND',
-          message_type: 'text',
-          media_url: null,
-          file_name: null,
-          caption: null,
-          is_voice_note: false,
-          media_base64: null,
-          quoted_context: null
-        });
       }
       if (session.pendingContacts.size > 0) scheduleContactSync(session);
-
-      if (initialMessages.length > 0) {
-        console.log(`[WhatsApp Gateway:${session.id}] Dispatching ${initialMessages.length} initial direct chats to CRM sync-history...`);
-        for (let i = 0; i < initialMessages.length; i += 40) {
-          const batch = initialMessages.slice(i, i + 40);
-          try {
-            await dispatchToBackend('/api/v1/whatsapp/chats/sync-history', {
-              messages: batch,
-              assigned_user_id: session.id !== 'default' ? session.id : null,
-              session_id: session.ownerPhone || session.id
-            });
-          } catch (err) {
-            console.error(`[WhatsApp Gateway:${session.id}] Initial chats sync batch failed:`, err.message);
-          }
-        }
-      }
     });
 
     // Chats upsert (Update contactStore names and sync chatting contacts)

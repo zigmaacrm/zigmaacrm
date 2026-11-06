@@ -516,6 +516,8 @@ export interface WhatsAppConversation {
   }>;
   lastMessage?: string;
   lastMessageTime?: string;
+  last_direction?: string;
+  last_status?: string;
   is_pinned?: boolean;
   is_archived?: boolean;
   is_blocked?: boolean;
@@ -1429,6 +1431,8 @@ export default function WhatsAppPage() {
       isAssignedToMe: isMine,
       lastMessage: formatLastMessagePreview(raw.last_message),
       lastMessageTime: raw.last_message_time,
+      last_direction: raw.last_direction,
+      last_status: raw.last_status,
       is_pinned: Boolean(raw.is_pinned),
       is_archived: Boolean(raw.is_archived),
       is_blocked: Boolean(raw.is_blocked),
@@ -2613,11 +2617,6 @@ export default function WhatsAppPage() {
                           </span>
                         </div>
 
-                        {conv.companyName && conv.companyName !== "Direct Prospect" && (
-                          <div className={cn("text-[11px] font-medium truncate mb-0.5 text-emerald-600 dark:text-emerald-400")}>
-                            {conv.companyName}
-                          </div>
-                        )}
 
                         {/* Last message preview + unread pill */}
                         <div className="flex items-center justify-between gap-1">
@@ -2627,6 +2626,12 @@ export default function WhatsAppPage() {
                               ? isDark ? "text-slate-200 font-semibold" : "text-slate-900 font-semibold"
                               : isDark ? "text-slate-400" : "text-slate-500"
                           )}>
+                            {conv.last_direction === "OUTBOUND" && (
+                              <CheckCheck className={cn(
+                                "w-3.5 h-3.5 shrink-0 inline mr-0.5",
+                                conv.last_status === "READ" ? "text-[#53bdeb]" : "text-slate-400"
+                              )} />
+                            )}
                             <span className="truncate">
                               {formatLastMessagePreview(conv.lastMessage) || "Click to open conversation"}
                             </span>

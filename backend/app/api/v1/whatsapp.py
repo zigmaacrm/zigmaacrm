@@ -662,6 +662,10 @@ async def get_whatsapp_conversations(
     if conv_conditions:
         stmt = stmt.where(or_(*conv_conditions))
 
+    # Exclude dummy and stub messages
+    stmt = stmt.where(
+        WhatsAppMessage.message_body.notin_(["Active message", "Active conversation", "Direct contact ready to chat"])
+    )
 
     # Optional Rep Filter
     if isinstance(assigned_user_id, str) and assigned_user_id.upper() != "ALL":
@@ -764,7 +768,11 @@ async def get_whatsapp_conversations(
                 continue
             if not is_valid_mobile_phone(m.phone_number):
                 continue
+            if m.message_body in ("Active message", "Active conversation", "Direct contact ready to chat"):
+                continue
             if m.message_body and m.message_body.startswith("💬 Active chat with"):
+                continue
+            if not m.message_body and not m.media_url and not m.caption:
                 continue
 
             if m.phone_number not in conv_map:
@@ -798,7 +806,9 @@ async def get_whatsapp_conversations(
 
                 # Strictly prioritize saved phonebook address-book names (e.g. Riyaz_sathik)
                 # over push names (e.g. Arabic or custom strings set by the other person)
-                if phonebook_name and not is_generic_or_placeholder_name(str(phonebook_name), m.phone_number):
+                if target_session and (clean_m == target_session or (len(clean_m) >= 10 and clean_m[-10:] == target_session[-10:])):
+                    contact_name = "You (Message Yourself)"
+                elif phonebook_name and not is_generic_or_placeholder_name(str(phonebook_name), m.phone_number):
                     contact_name = str(phonebook_name).strip()
                 elif contact and contact.full_name and not is_generic_or_placeholder_name(contact.full_name, m.phone_number):
                     contact_name = contact.full_name.strip()
@@ -882,75 +892,7 @@ async def get_whatsapp_conversations(
                     "unread_count": unread_cnt
                 }
 
-    # 2. Enrich conversation list with synced WhatsApp contacts for this user/session without messages yet
-    synced_contacts_stmt = select(Contact).where(Contact.source == "WHATSAPP")
-    if user_session_id and user_session_id != "default":
-        synced_contacts_stmt = synced_contacts_stmt.where(
-            or_(
-                Contact.assigned_user_id == user_session_id,
-                Contact.owner_id == user_session_id,
-                Contact.assigned_user_id.is_(None)
-            )
-        )
-    synced_c_res = await db.execute(synced_contacts_stmt.limit(100))
-    for c in synced_c_res.scalars().all():
-        if not c.phone:
-            continue
-        clean_cp = normalize_phone(c.phone)
-        if not clean_cp or not is_valid_mobile_phone(clean_cp):
-            continue
-        if clean_cp not in conv_map and f"+{clean_cp}" not in conv_map:
-            c_data = dict(c.custom_data or {}) if isinstance(c.custom_data, dict) else {}
-            contact_session = c_data.get("session_id")
-            if contact_session and target_session and contact_session != target_session:
-                continue
-            phonebook_name = c_data.get("phonebook_name")
-            wa_name = c_data.get("whatsapp_name")
-            if phonebook_name and not is_generic_or_placeholder_name(str(phonebook_name), clean_cp):
-                c_name = str(phonebook_name).strip()
-            elif c.full_name and not is_generic_or_placeholder_name(c.full_name, clean_cp):
-                c_name = c.full_name.strip()
-            elif wa_name and not is_generic_or_placeholder_name(str(wa_name), clean_cp):
-                c_name = str(wa_name).strip()
-            else:
-                c_name = format_display_phone(clean_cp)
-
-            parts = c_name.strip().split()
-            initials = (parts[0][0] + (parts[1][0] if len(parts) > 1 else ""))[:2].upper() if parts else "WA"
-
-            conv_map[clean_cp] = {
-                "id": f"conv-{clean_cp}",
-                "phone_number": clean_cp,
-                "contact_id": c.id,
-                "assigned_user_id": c.assigned_user_id or user_session_id,
-                "business_phone_number_id": target_session,
-                "contact_name": c_name,
-                "company_name": c.company_name or "Direct Contact",
-                "email": c.email or "",
-                "avatar_url": c_data.get("avatar_url"),
-                "avatar_initials": initials,
-                "deal_stage": c.lifecycle_stage or "Lead",
-                "deal_value": 0,
-                "assigned_rep": {
-                    "id": c.assigned_user_id or user_session_id,
-                    "name": getattr(c, "assigned_user_name", None) or "Assigned Rep",
-                    "avatar": "SR",
-                    "role": "Sales Representative"
-                },
-                "last_message": "Direct contact ready to chat",
-                "last_message_type": "text",
-                "media_url": None,
-                "is_voice_note": False,
-                "is_pinned": bool(c_data.get("is_pinned", False)),
-                "is_archived": bool(c_data.get("is_archived", False)),
-                "is_blocked": bool(c_data.get("is_blocked", False)),
-                "last_message_time": c.updated_at.isoformat() if getattr(c, "updated_at", None) else (c.created_at.isoformat() if getattr(c, "created_at", None) else datetime.datetime.utcnow().isoformat()),
-                "last_direction": "INBOUND",
-                "last_status": "READ",
-                "unread_count": 0
-            }
-
-    # Sort pinned to the top, then by last message time
+    # Sort strictly by pinned first, then by latest real message timestamp descending (Exact WhatsApp Web order)
     active_conversations = list(conv_map.values())
     active_conversations.sort(
         key=lambda c: (1 if c.get("is_pinned") else 0, c.get("last_message_time") or ""),
@@ -1383,6 +1325,10 @@ async def sync_whatsapp_chat_history(
     for item in payload.messages:
         clean_phone = normalize_phone(item.phone_number)
         if not is_valid_mobile_phone(clean_phone):
+            continue
+        if not item.message_body and not item.media_url and not item.caption and not item.media_base64:
+            continue
+        if item.message_body in ("Active message", "Active conversation", "Direct contact ready to chat"):
             continue
         if item.message_body and item.message_body.startswith("💬 Active chat with"):
             continue
