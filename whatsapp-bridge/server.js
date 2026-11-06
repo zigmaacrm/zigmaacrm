@@ -199,20 +199,37 @@ function getSessionAuthDir(sId) {
 }
 
 function loadLidMappingsForSession(session) {
-  if (!session || !fs.existsSync(session.authDir)) return;
-  try {
-    const files = fs.readdirSync(session.authDir);
-    for (const f of files) {
-      if (f.startsWith('lid-mapping-') && !f.includes('_reverse') && f.endsWith('.json')) {
-        const phone = f.replace('lid-mapping-', '').replace('.json', '');
-        try {
-          const lid = JSON.parse(fs.readFileSync(path.join(session.authDir, f), 'utf8'));
-          if (lid) session.lidToPhoneMap.set(String(lid).trim(), String(phone).trim());
-        } catch (_) {}
+  if (!session) return;
+  const dirsToCheck = [session.authDir, AUTH_DIR].filter(Boolean);
+  for (const d of dirsToCheck) {
+    if (!fs.existsSync(d)) continue;
+    try {
+      const files = fs.readdirSync(d);
+      for (const f of files) {
+        if (!f.startsWith('lid-mapping-') || !f.endsWith('.json')) continue;
+        if (f.includes('_reverse')) {
+          const cleanLid = f.replace('lid-mapping-', '').replace('_reverse.json', '').trim();
+          try {
+            const rawPhone = JSON.parse(fs.readFileSync(path.join(d, f), 'utf8'));
+            const cleanPhone = String(rawPhone || '').replace(/[^0-9]/g, '').trim();
+            if (cleanLid && isValidMobileNumber(cleanPhone)) {
+              session.lidToPhoneMap.set(cleanLid, cleanPhone);
+            }
+          } catch (_) {}
+        } else {
+          const cleanPhone = f.replace('lid-mapping-', '').replace('.json', '').replace(/[^0-9]/g, '').trim();
+          try {
+            const rawLid = JSON.parse(fs.readFileSync(path.join(d, f), 'utf8'));
+            const cleanLid = String(rawLid || '').replace(/[^0-9]/g, '').trim();
+            if (cleanLid && isValidMobileNumber(cleanPhone)) {
+              session.lidToPhoneMap.set(cleanLid, cleanPhone);
+            }
+          } catch (_) {}
+        }
       }
+    } catch (err) {
+      console.error(`[WhatsApp Gateway] Failed to index LID mappings for ${session.id}:`, err.message);
     }
-  } catch (err) {
-    console.error(`[WhatsApp Gateway] Failed to index LID mappings for ${session.id}:`, err.message);
   }
 }
 
@@ -273,23 +290,49 @@ function resolvePhoneFromJid(jid, session) {
   }
   if (str.endsWith('@lid')) {
     const cleanLid = str.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+    if (!cleanLid) return null;
     if (session && session.lidToPhoneMap.has(cleanLid)) {
       const mapped = session.lidToPhoneMap.get(cleanLid);
-      return isValidMobileNumber(mapped) ? mapped : null;
+      if (isValidMobileNumber(mapped)) return mapped;
     }
-    if (session && fs.existsSync(session.authDir)) {
-      const revFile = path.join(session.authDir, `lid-mapping-${cleanLid}_reverse.json`);
-      if (fs.existsSync(revFile)) {
-        try {
-          const pn = JSON.parse(fs.readFileSync(revFile, 'utf8'));
-          if (pn) {
-            const cleanPn = String(pn).replace(/[^0-9]/g, '');
-            if (isValidMobileNumber(cleanPn)) {
-              if (session) session.lidToPhoneMap.set(cleanLid, cleanPn);
-              return cleanPn;
+    // Check across any other active session
+    for (const otherSess of sessions.values()) {
+      if (otherSess.lidToPhoneMap && otherSess.lidToPhoneMap.has(cleanLid)) {
+        const mapped = otherSess.lidToPhoneMap.get(cleanLid);
+        if (isValidMobileNumber(mapped)) {
+          if (session) session.lidToPhoneMap.set(cleanLid, mapped);
+          return mapped;
+        }
+      }
+    }
+    // Check disk reverse files
+    const dirsToCheck = [session?.authDir, AUTH_DIR].filter(Boolean);
+    for (const d of dirsToCheck) {
+      if (fs.existsSync(d)) {
+        const revFile = path.join(d, `lid-mapping-${cleanLid}_reverse.json`);
+        if (fs.existsSync(revFile)) {
+          try {
+            const pn = JSON.parse(fs.readFileSync(revFile, 'utf8'));
+            if (pn) {
+              const cleanPn = String(pn).replace(/[^0-9]/g, '');
+              if (isValidMobileNumber(cleanPn)) {
+                if (session) session.lidToPhoneMap.set(cleanLid, cleanPn);
+                return cleanPn;
+              }
             }
+          } catch (_) {}
+        }
+      }
+    }
+    // Check contacts store
+    if (session && session.contactsStore) {
+      for (const [phone, contact] of session.contactsStore.entries()) {
+        if (contact.lid && String(contact.lid).includes(cleanLid)) {
+          if (isValidMobileNumber(phone)) {
+            session.lidToPhoneMap.set(cleanLid, phone);
+            return phone;
           }
-        } catch (_) {}
+        }
       }
     }
     return null;
@@ -500,19 +543,25 @@ async function decryptAndSaveMedia(msgObj) {
         { logger, reuploadRequest: () => Promise.resolve() }
       );
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Media download timeout (10s)')), 10000)
+        setTimeout(() => reject(new Error('Media download timeout (35s)')), 35000)
       );
       buffer = await Promise.race([downloadPromise, timeoutPromise]);
     } catch (err1) {
       // Strategy 2: Direct stream extraction using downloadContentFromMessage on target proto
       if (targetProto && baileyType && typeof downloadContentFromMessage === 'function') {
         try {
-          const stream = await downloadContentFromMessage(targetProto, baileyType);
-          const chunks = [];
-          for await (const chunk of stream) {
-            chunks.push(chunk);
-          }
-          buffer = Buffer.concat(chunks);
+          const streamPromise = (async () => {
+            const stream = await downloadContentFromMessage(targetProto, baileyType);
+            const chunks = [];
+            for await (const chunk of stream) {
+              chunks.push(chunk);
+            }
+            return Buffer.concat(chunks);
+          })();
+          const streamTimeout = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Fallback download timeout (35s)')), 35000)
+          );
+          buffer = await Promise.race([streamPromise, streamTimeout]);
         } catch (err2) {
           console.warn('[WhatsApp Media Fallback Decrypt Error]:', err2.message);
         }
@@ -538,7 +587,7 @@ async function decryptAndSaveMedia(msgObj) {
       is_voice_note: isVoiceNote,
       duration: durationSecs,
       file_size: buffer.length,
-      media_base64: buffer.length <= 4 * 1024 * 1024 ? buffer.toString('base64') : null
+      media_base64: buffer.length <= 10 * 1024 * 1024 ? buffer.toString('base64') : null
     };
   } catch (err) {
     console.error('[WhatsApp Media Decrypt Error]:', err.message);
@@ -564,14 +613,10 @@ async function backupSessionToDatabase(session) {
       }
     }
 
-    await fetch(FASTAPI_SESSION_BACKUP_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        session_id: session.id,
-        owner_phone: session.ownerPhone || null,
-        auth_data: JSON.stringify(bundle)
-      })
+    await dispatchToBackend('/api/v1/whatsapp/session-backup', {
+      session_id: session.id,
+      owner_phone: session.ownerPhone || null,
+      auth_data: JSON.stringify(bundle)
     });
   } catch (err) {
     console.debug(`[WhatsApp Gateway:${session.id}] Session backup note:`, err.message);
@@ -581,37 +626,41 @@ async function backupSessionToDatabase(session) {
 async function deleteSessionBackupFromDatabase(sessionId) {
   if (!sessionId) return;
   try {
-    await fetch(`${FASTAPI_SESSION_BACKUP_URL}/${sessionId}`, {
-      method: 'DELETE'
-    });
+    const targets = getBackendUrls(`/api/v1/whatsapp/session-backup/${sessionId}`);
+    await Promise.allSettled(targets.map(url => fetch(url, { method: 'DELETE', signal: AbortSignal.timeout(10000) }).catch(() => {})));
   } catch (_) {}
 }
 
 async function restoreSessionFromDatabase(session) {
   if (!session) return false;
   try {
-    const res = await fetch(`${FASTAPI_SESSION_RESTORE_URL}/${session.id}`);
-    if (res.status === 200) {
-      const data = await res.json();
-      if (data && data.auth_data) {
-        const bundle = typeof data.auth_data === 'string' ? JSON.parse(data.auth_data) : data.auth_data;
-        if (bundle && bundle['creds.json']) {
-          try {
-            const parsedCreds = typeof bundle['creds.json'] === 'string' ? JSON.parse(bundle['creds.json']) : bundle['creds.json'];
-            if (parsedCreds.registered === false) {
-              console.warn(`[WhatsApp Gateway:${session.id}] Ignoring dead/deregistered backup from database.`);
-              deleteSessionBackupFromDatabase(session.id);
-              return false;
+    const targets = getBackendUrls(`/api/v1/whatsapp/session-restore/${session.id}`);
+    for (const url of targets) {
+      try {
+        const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+        if (res.status === 200) {
+          const data = await res.json();
+          if (data && data.auth_data) {
+            const bundle = typeof data.auth_data === 'string' ? JSON.parse(data.auth_data) : data.auth_data;
+            if (bundle && bundle['creds.json']) {
+              try {
+                const parsedCreds = typeof bundle['creds.json'] === 'string' ? JSON.parse(bundle['creds.json']) : bundle['creds.json'];
+                if (parsedCreds.registered === false) {
+                  console.warn(`[WhatsApp Gateway:${session.id}] Ignoring dead/deregistered backup from database.`);
+                  deleteSessionBackupFromDatabase(session.id);
+                  return false;
+                }
+              } catch (_) {}
             }
-          } catch (_) {}
+            if (!fs.existsSync(session.authDir)) fs.mkdirSync(session.authDir, { recursive: true });
+            for (const [fname, content] of Object.entries(bundle)) {
+              fs.writeFileSync(path.join(session.authDir, fname), typeof content === 'string' ? content : JSON.stringify(content));
+            }
+            console.log(`[WhatsApp Gateway:${session.id}] Restored session auth credentials bundle from database!`);
+            return true;
+          }
         }
-        if (!fs.existsSync(session.authDir)) fs.mkdirSync(session.authDir, { recursive: true });
-        for (const [fname, content] of Object.entries(bundle)) {
-          fs.writeFileSync(path.join(session.authDir, fname), typeof content === 'string' ? content : JSON.stringify(content));
-        }
-        console.log(`[WhatsApp Gateway:${session.id}] Restored session auth credentials bundle from database!`);
-        return true;
-      }
+      } catch (_) {}
     }
   } catch (err) {
     console.debug(`[WhatsApp Gateway:${session.id}] Session restore check note:`, err.message);
@@ -1288,6 +1337,19 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
           if (!senderPhone && remoteJid.endsWith('@lid')) {
             const partJid = msg.key?.participant || msg.participant || '';
             if (partJid) senderPhone = resolvePhoneFromJid(partJid, session);
+            if (!senderPhone && session.sock?.signalRepository?.lidMapping?.getPNForLID) {
+              try {
+                const resolvedPn = await session.sock.signalRepository.lidMapping.getPNForLID(remoteJid);
+                if (resolvedPn) {
+                  const cleanPn = String(resolvedPn).split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+                  if (isValidMobileNumber(cleanPn)) {
+                    senderPhone = cleanPn;
+                    const cleanLid = remoteJid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+                    session.lidToPhoneMap.set(cleanLid, cleanPn);
+                  }
+                }
+              } catch (_) {}
+            }
           }
           if (!senderPhone || senderPhone.length < 7) {
             continue;
@@ -1315,7 +1377,8 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
               body = mediaPayload.caption || `[${mediaPayload.message_type || 'Attachment'}]`;
             }
           }
-          if (!body) continue;
+          if (!body && !mediaPayload) continue;
+          if (!body && mediaPayload) body = mediaPayload.caption || '[Attachment]';
 
           const savedContact = session.contactsStore ? session.contactsStore.get(senderPhone) : null;
           const contactName = savedContact?.phonebook_name || savedContact?.name || msg.pushName || null;
@@ -1324,7 +1387,17 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
             : (msg.messageTimestamp?.low || Math.floor(Date.now() / 1000));
 
           const quotedCtx = extractQuotedContext(msg.message);
-          const effectiveSession = session.ownerPhone || session.id;
+          let effectiveSession = session.ownerPhone;
+          if (!effectiveSession && session.sock?.user?.id) {
+            effectiveSession = session.sock.user.id.split(':')[0].replace(/[^0-9]/g, '');
+            session.ownerPhone = effectiveSession;
+          }
+          if (!effectiveSession && session.phone) {
+            effectiveSession = session.phone.replace(/[^0-9]/g, '');
+          }
+          if (!effectiveSession) {
+            effectiveSession = session.id;
+          }
           const payload = {
             phone_number: senderPhone,
             contact_name: contactName,

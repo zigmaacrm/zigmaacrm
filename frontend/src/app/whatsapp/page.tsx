@@ -87,6 +87,7 @@ export interface WhatsAppMessage {
   isDeleted?: boolean;
   isEdited?: boolean;
   metaMessageId?: string | null;
+  mediaBase64?: string | null;
   quotedContext?: { sender: string; text: string } | null;
   attachment?: {
     type: "pdf" | "image" | "audio" | "document" | "video" | "sticker" | "gif";
@@ -1644,6 +1645,7 @@ export default function WhatsAppPage() {
         const mappedMsgs: WhatsAppMessage[] = data.messages.map((m: any) => {
           const rawMedia = m.media_url || (m.file_name ? `/media/whatsapp/${m.file_name}` : null);
           const mediaFullUrl = api.getMediaUrl(rawMedia);
+          const rawB64 = m.media_base64 || null;
 
           let attachment: WhatsAppMessage["attachment"] = undefined;
           const mType = (m.message_type || "").toLowerCase();
@@ -1656,42 +1658,47 @@ export default function WhatsAppPage() {
           const isSticker = mType === "sticker" || lowerUrl.includes(".webp") || lowerFileName.startsWith("sticker_") || lowerFileName.endsWith(".webp") || ((m.message_body || "").toLowerCase() === "[sticker]");
           const isDoc = mType === "document" || (!isImg && !isVideo && !isGif && !isVoice && !isSticker && !!mediaFullUrl);
 
+          const base64DataUrl = rawB64
+            ? (rawB64.startsWith("data:") ? rawB64 : `data:${isSticker ? "image/webp" : (isImg ? "image/jpeg" : (isVoice ? "audio/ogg" : "application/octet-stream"))};base64,${rawB64}`)
+            : null;
+          const effectiveUrl = mediaFullUrl || base64DataUrl || undefined;
+
           if (isImg) {
             attachment = {
               type: "image",
               name: m.file_name || "Photo",
-              url: mediaFullUrl
+              url: effectiveUrl
             };
           } else if (isGif) {
             attachment = {
               type: "gif",
               name: m.file_name || "GIF",
-              url: mediaFullUrl
+              url: effectiveUrl
             };
           } else if (isVideo) {
             attachment = {
               type: "video",
               name: m.file_name || "Video",
-              url: mediaFullUrl
+              url: effectiveUrl
             };
           } else if (isSticker) {
             attachment = {
               type: "sticker",
               name: m.file_name || "Sticker",
-              url: mediaFullUrl
+              url: effectiveUrl
             };
           } else if (isVoice) {
             attachment = {
               type: "audio",
               name: m.file_name || "Voice note",
-              url: mediaFullUrl
+              url: effectiveUrl
             };
           } else if (isDoc) {
             attachment = {
               type: "pdf",
               name: m.file_name || "Document",
               size: "Document",
-              url: mediaFullUrl
+              url: effectiveUrl
             };
           }
 
@@ -1704,7 +1711,8 @@ export default function WhatsAppPage() {
             dateGroup: "Today",
             status: m.status || "DELIVERED",
             messageType: m.message_type || "text",
-            mediaUrl: mediaFullUrl,
+            mediaUrl: effectiveUrl || null,
+            mediaBase64: rawB64,
             fileName: m.file_name,
             caption: m.caption,
             isVoiceNote: isVoice,
@@ -3305,21 +3313,48 @@ export default function WhatsAppPage() {
                               })()}
                             </div>
                           ) : isSticker && !msg.attachment?.url ? (
-                            <div
-                              className={cn(
-                                "rounded-2xl px-3 py-2 text-xs select-none transition-all shadow-xs w-fit flex items-center gap-2",
-                                isOutbound
-                                  ? (isDark ? "bg-[#005c4b] text-white rounded-tr-xs ml-auto" : "bg-[#D9FDD3] text-slate-800 rounded-tr-xs shadow-2xs border border-[#C2EBC0]")
-                                  : (isDark ? "bg-[#202c33] text-white rounded-tl-xs" : "bg-white text-slate-800 rounded-tl-xs shadow-2xs border border-slate-200/90")
-                              )}
-                            >
-                              <Smile className="w-4 h-4 text-amber-500 shrink-0" />
-                              <span className="font-medium">Sticker</span>
-                              <span className="text-[10px] opacity-75 ml-1">{msg.timeLabel}</span>
-                              {isOutbound && (
-                                <CheckCheck className={cn("w-3.5 h-3.5 shrink-0", msg.status === "READ" ? "text-[#53bdeb]" : "text-slate-400")} />
-                              )}
-                            </div>
+                            msg.mediaBase64 ? (
+                              <div
+                                className={cn(
+                                  "select-none transition-all w-fit relative bg-transparent border-0 shadow-none p-0 group",
+                                  isOutbound ? "ml-auto" : "mr-auto"
+                                )}
+                              >
+                                <div className="relative rounded-xl overflow-hidden cursor-pointer">
+                                  <img
+                                    src={`data:image/webp;base64,${msg.mediaBase64}`}
+                                    alt="WhatsApp Sticker"
+                                    className="w-36 h-36 max-w-[150px] max-h-[150px] object-contain drop-shadow-sm transition-transform hover:scale-105 block select-none pointer-events-auto"
+                                    onClick={() => setSelectedImagePreview(`data:image/webp;base64,${msg.mediaBase64}`)}
+                                  />
+                                </div>
+                                <div className={cn(
+                                  "flex items-center justify-end gap-1 text-[11px] font-sans whitespace-nowrap mt-0.5 px-1 select-none",
+                                  isDark ? "text-slate-400" : "text-slate-500"
+                                )}>
+                                  <span>{msg.timeLabel}</span>
+                                  {isOutbound && (
+                                    <CheckCheck className={cn("w-3.5 h-3.5 shrink-0", msg.status === "READ" ? "text-[#53bdeb]" : "text-slate-400")} />
+                                  )}
+                                </div>
+                              </div>
+                            ) : (
+                              <div
+                                className={cn(
+                                  "rounded-2xl px-3 py-2 text-xs select-none transition-all shadow-xs w-fit flex items-center gap-2",
+                                  isOutbound
+                                    ? (isDark ? "bg-[#005c4b] text-white rounded-tr-xs ml-auto" : "bg-[#D9FDD3] text-slate-800 rounded-tr-xs shadow-2xs border border-[#C2EBC0]")
+                                    : (isDark ? "bg-[#202c33] text-white rounded-tl-xs" : "bg-white text-slate-800 rounded-tl-xs shadow-2xs border border-slate-200/90")
+                                )}
+                              >
+                                <Smile className="w-4 h-4 text-amber-500 shrink-0" />
+                                <span className="font-medium">Sticker</span>
+                                <span className="text-[10px] opacity-75 ml-1">{msg.timeLabel}</span>
+                                {isOutbound && (
+                                  <CheckCheck className={cn("w-3.5 h-3.5 shrink-0", msg.status === "READ" ? "text-[#53bdeb]" : "text-slate-400")} />
+                                )}
+                              </div>
+                            )
                           ) : isPureImage ? (
                             /* 2. Pure Image (Preview if URL available, compact fallback card if missing) */
                             msg.attachment?.url ? (
@@ -3339,6 +3374,11 @@ export default function WhatsAppPage() {
                                     onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}
                                     onError={(e) => {
                                       const img = e.currentTarget;
+                                      if (msg.mediaBase64 && !img.dataset.b64Tried) {
+                                        img.dataset.b64Tried = "1";
+                                        img.src = `data:image/jpeg;base64,${msg.mediaBase64}`;
+                                        return;
+                                      }
                                       if (!img.dataset.step) {
                                         img.dataset.step = "1";
                                         const fallback = getSmartMediaFallback(msg.attachment?.url, 1);

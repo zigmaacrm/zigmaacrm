@@ -83,7 +83,35 @@ async def serve_whatsapp_media(filename: str):
                         mime_type = "audio/ogg"
             return FileResponse(candidate, media_type=mime_type, headers={"Access-Control-Allow-Origin": "*"})
 
-    # 2. Cross-container cloud proxy: If Render backend doesn't have the file locally, proxy from WhatsApp bridge gateway
+    # 2. Check Database persistent base64 store (Survives container restarts & redeployments)
+    try:
+        from app.core.database import AsyncSessionLocal
+        from sqlalchemy import text
+        import base64
+        async with AsyncSessionLocal() as db_sess:
+            q_res = await db_sess.execute(
+                text("SELECT media_base64, message_type FROM whatsapp_messages WHERE file_name = :fn OR media_url LIKE :pat LIMIT 1"),
+                {"fn": filename, "pat": f"%{filename}%"}
+            )
+            row = q_res.fetchone()
+            if row and row[0]:
+                raw_b64 = str(row[0])
+                if "," in raw_b64:
+                    raw_b64 = raw_b64.split(",")[1]
+                file_bytes = base64.b64decode(raw_b64)
+                dest = os.path.join(wa_uploads_dir, filename)
+                try:
+                    with open(dest, "wb") as out_f:
+                        out_f.write(file_bytes)
+                except Exception:
+                    pass
+                fn_lower = filename.lower()
+                mime_type = "image/webp" if fn_lower.endswith(".webp") else ("image/jpeg" if fn_lower.endswith((".jpg", ".jpeg")) else ("image/png" if fn_lower.endswith(".png") else ("application/pdf" if fn_lower.endswith(".pdf") else ("video/mp4" if fn_lower.endswith((".mp4", ".mov")) else ("audio/ogg" if fn_lower.endswith((".ogg", ".opus")) else "application/octet-stream")))))
+                return Response(content=file_bytes, media_type=mime_type, headers={"Access-Control-Allow-Origin": "*"})
+    except Exception as db_err:
+        logger.warning(f"Failed to fetch media from DB: {db_err}")
+
+    # 3. Cross-container cloud proxy: If Render backend doesn't have the file locally, proxy from WhatsApp bridge gateway
     gateway_url = (os.getenv("WHATSAPP_GATEWAY_URL") or "https://zigmaa-whatsapp-bridge.onrender.com").rstrip("/")
     target_urls = [
         f"{gateway_url}/media/whatsapp/{filename}",
@@ -191,6 +219,7 @@ async def on_startup():
                 await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS business_phone_number_id VARCHAR(100);"))
                 # WhatsApp Media & Reactions & Metadata Support
                 await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS media_url VARCHAR(500);"))
+                await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS media_base64 TEXT;"))
                 await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS file_name VARCHAR(255);"))
                 await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS caption TEXT;"))
                 await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS is_voice_note BOOLEAN DEFAULT FALSE;"))
@@ -284,6 +313,7 @@ async def migrate_db():
         "ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS assigned_user_id VARCHAR(36);",
         "ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS business_phone_number_id VARCHAR(100);",
         "ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS media_url VARCHAR(500);",
+        "ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS media_base64 TEXT;",
         "ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS file_name VARCHAR(255);",
         "ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS caption TEXT;",
         "ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS is_voice_note BOOLEAN DEFAULT FALSE;",

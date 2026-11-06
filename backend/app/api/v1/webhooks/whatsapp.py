@@ -658,6 +658,11 @@ async def receive_whatsapp_qr_inbound(
                 existing_record.message_type = payload.message_type
             if payload.file_name:
                 existing_record.file_name = payload.file_name
+            if payload.media_base64:
+                existing_record.media_base64 = payload.media_base64
+            updated = True
+        elif payload.media_base64 and not getattr(existing_record, "media_base64", None):
+            existing_record.media_base64 = payload.media_base64
             updated = True
         if updated:
             await db.commit()
@@ -686,11 +691,17 @@ async def receive_whatsapp_qr_inbound(
             quoted_str = str(payload.quoted_context)
 
     clean_session_val = normalize_phone(payload.session_id) if payload.session_id else None
-    if effective_user_id and (not clean_session_val or len(clean_session_val) < 8):
-        owner_u_res = await db.execute(select(User).where(User.id == effective_user_id).limit(1))
-        owner_u = owner_u_res.scalar_one_or_none()
-        if owner_u and owner_u.whatsapp_phone_number:
-            clean_session_val = normalize_phone(owner_u.whatsapp_phone_number)
+    if not clean_session_val or len(clean_session_val) < 8:
+        if effective_user_id:
+            owner_u_res = await db.execute(select(User).where(User.id == effective_user_id).limit(1))
+            owner_u = owner_u_res.scalar_one_or_none()
+            if owner_u and owner_u.whatsapp_phone_number:
+                clean_session_val = normalize_phone(owner_u.whatsapp_phone_number)
+        if not clean_session_val or len(clean_session_val) < 8:
+            cached_def = _qr_status_cache.get("default", {})
+            if cached_def.get("phone"):
+                clean_session_val = normalize_phone(cached_def["phone"])
+
     wa_msg = WhatsAppMessage(
         organization_id=default_org_id,
         contact_id=contact.id if contact else None,
@@ -703,6 +714,7 @@ async def receive_whatsapp_qr_inbound(
         message_body=payload.message_body or "[Empty Message]",
         message_type=payload.message_type or "text",
         media_url=payload.media_url,
+        media_base64=payload.media_base64,
         file_name=payload.file_name,
         caption=payload.caption,
         is_voice_note=bool(payload.is_voice_note),

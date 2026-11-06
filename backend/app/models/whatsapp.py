@@ -27,6 +27,7 @@ class WhatsAppMessage(TimeStampedBase):
     message_body = Column(Text, nullable=False)
     message_type = Column(String(50), default="text")  # text, template, image, document, audio, ptt, video
     media_url = Column(String(500), nullable=True)
+    media_base64 = Column(Text, nullable=True)
     file_name = Column(String(255), nullable=True)
     caption = Column(Text, nullable=True)
     is_voice_note = Column(Boolean, default=False, nullable=True)
