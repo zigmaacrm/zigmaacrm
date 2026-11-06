@@ -1094,12 +1094,21 @@ export default function WhatsAppPage() {
   qrPhoneRef.current = qrPhone;
   const [linkedUserAvatar, setLinkedUserAvatar] = useState<string | null>(null);
   const [cachedQR, setCachedQR] = useState<string | null>(null);
+  const [currentUser, setCurrentUser] = useState<any>(null);
 
   useEffect(() => {
     const fetchStatus = () => {
-      const u = api.getCurrentUser();
-      const sId = u?.id || undefined;
-      api.getWhatsAppQRStatus(sId).then((data) => {
+      let sId = currentUser?.id || api.getCurrentUser()?.id;
+      if (!sId && typeof window !== "undefined") {
+        try {
+          const uStr = localStorage.getItem("zigmaa_user") || localStorage.getItem("zigmaa_current_user");
+          if (uStr) {
+            const p = JSON.parse(uStr);
+            sId = p?.id || p?.userId || p?._id;
+          }
+        } catch (_) {}
+      }
+      api.getWhatsAppQRStatus(sId || undefined).then((data) => {
         setQrStatus(data.status);
         if (data.status === "CONNECTED" && data.phone) {
           setQrPhone(data.phone);
@@ -1131,9 +1140,8 @@ export default function WhatsAppPage() {
     // Warm keep-alive ping every 45s so cloud bridge never enters sleep/cold-start while tab is open
     const keepAlive = setInterval(fetchStatus, 45 * 1000);
     return () => clearInterval(keepAlive);
-  }, []);
+  }, [currentUser]);
 
-  const [currentUser, setCurrentUser] = useState<any>(null);
   const [teamMembers, setTeamMembers] = useState<any[]>([]);
   const [selectedRepFilter, setSelectedRepFilter] = useState<string>("ALL");
   const [isReassigning, setIsReassigning] = useState(false);
@@ -1420,7 +1428,8 @@ export default function WhatsAppPage() {
       const activeFilter = repFilter !== undefined ? repFilter : selectedRepFilter;
       const repParam = activeFilter === "ALL" ? undefined : activeFilter;
       const cleanSession = liveSession.replace(/[^0-9]/g, "");
-      const data = await api.getWhatsAppConversations(100, repParam, cleanSession);
+      const sId = currentUser?.id || api.getCurrentUser()?.id || undefined;
+      const data = await api.getWhatsAppConversations(100, repParam, cleanSession, sId);
       if (data && data.status === "success" && Array.isArray(data.conversations)) {
         if (data.is_connected === false || qrStatus !== "CONNECTED" || !qrPhone) {
           setConversations([]);
@@ -2320,20 +2329,36 @@ export default function WhatsAppPage() {
                   </h2>
                 </div>
 
-                <button
-                  onClick={() => loadConversations(false)}
-                  className={cn(
-                    "p-1.5 rounded-lg border transition-all cursor-pointer hover:scale-105 active:scale-95",
-                    isDark ? "text-slate-400 hover:text-white border-white/5 hover:bg-white/5" : "text-slate-500 hover:text-slate-900 border-slate-200/80 hover:bg-slate-100"
-                  )}
-                  title="Refresh conversations"
-                >
-                  <RefreshCw className={cn("w-3.5 h-3.5", isRefreshing && "animate-spin text-emerald-500")} />
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setShowQRModal(true)}
+                    className={cn(
+                      "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-all cursor-pointer hover:scale-105 active:scale-95 shadow-2xs",
+                      qrStatus === "CONNECTED"
+                        ? isDark ? "text-slate-300 border-white/10 hover:bg-white/5" : "text-slate-600 border-slate-200 hover:bg-slate-100"
+                        : "text-emerald-600 dark:text-emerald-400 border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20"
+                    )}
+                    title="Scan QR Code / Link Device"
+                  >
+                    <QrCode className="w-3.5 h-3.5" />
+                    <span>{qrStatus === "CONNECTED" ? "Linked" : "Scan QR"}</span>
+                  </button>
+
+                  <button
+                    onClick={() => loadConversations(false)}
+                    className={cn(
+                      "p-1.5 rounded-lg border transition-all cursor-pointer hover:scale-105 active:scale-95",
+                      isDark ? "text-slate-400 hover:text-white border-white/5 hover:bg-white/5" : "text-slate-500 hover:text-slate-900 border-slate-200/80 hover:bg-slate-100"
+                    )}
+                    title="Refresh conversations"
+                  >
+                    <RefreshCw className={cn("w-3.5 h-3.5", isRefreshing && "animate-spin text-emerald-500")} />
+                  </button>
+                </div>
               </div>
 
-              {/* Linked Device Status & Logout */}
-              {qrStatus === "CONNECTED" && Boolean(qrPhone) && (
+              {/* Linked Device Status & Logout OR Not Linked Banner */}
+              {qrStatus === "CONNECTED" && Boolean(qrPhone) ? (
                 <div className={cn(
                   "w-full flex items-center justify-between px-3 py-2 rounded-xl border text-xs font-semibold transition-all shadow-2xs",
                   isDark
@@ -2359,6 +2384,29 @@ export default function WhatsAppPage() {
                       <LogOut className="w-3 h-3" />
                     )}
                     <span>Logout</span>
+                  </button>
+                </div>
+              ) : (
+                <div className={cn(
+                  "w-full flex items-center justify-between px-3 py-2 rounded-xl border text-xs font-semibold transition-all shadow-2xs",
+                  isDark
+                    ? "bg-amber-950/20 border-amber-800/40 text-amber-300"
+                    : "bg-amber-50/80 border-amber-200 text-amber-900"
+                )}>
+                  <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
+                    <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+                    <span className="font-semibold truncate">
+                      WhatsApp Not Linked
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowQRModal(true)}
+                    className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-all cursor-pointer shrink-0 shadow-xs"
+                    title="Scan QR Code to Link WhatsApp"
+                  >
+                    <QrCode className="w-3 h-3" />
+                    <span>Link Phone</span>
                   </button>
                 </div>
               )}

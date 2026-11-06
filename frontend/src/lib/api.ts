@@ -3239,14 +3239,24 @@ export const zigmaaApi = {
     return null;
   },
 
-  async getWhatsAppConversations(limit = 100, assigned_user_id?: string, active_session_phone?: string | null): Promise<any> {
+  async getWhatsAppConversations(limit = 100, assigned_user_id?: string, active_session_phone?: string | null, sessionId?: string): Promise<any> {
     try {
+      let sid = sessionId;
+      if (!sid && typeof window !== "undefined") {
+        try {
+          const u = this.getCurrentUser();
+          if (u?.id) sid = u.id;
+        } catch (_) {}
+      }
       let url = `${API_BASE}/whatsapp/conversations?limit=${limit}`;
       if (assigned_user_id && assigned_user_id.toLowerCase() !== "all") {
         url += `&assigned_user_id=${encodeURIComponent(assigned_user_id)}`;
       }
       if (active_session_phone) {
         url += `&active_session_phone=${encodeURIComponent(active_session_phone.replace(/[^0-9]/g, ''))}`;
+      }
+      if (sid) {
+        url += `&session_id=${encodeURIComponent(sid)}`;
       }
       const res = await fetch(url, {
         headers: {

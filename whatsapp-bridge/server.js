@@ -644,7 +644,24 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
     loadLidMappingsForSession(session);
 
     const { state, saveCreds } = await useMultiFileAuthState(session.authDir);
-    if (state?.creds?.me?.id) {
+
+    // If credentials exist but marked as deregistered or not registered, purge dead keys for clean QR pairing
+    if (state?.creds && state.creds.registered === false && state.creds.me) {
+      console.warn(`[WhatsApp Gateway:${session.id}] Stale/deregistered credentials detected for ${session.id}. Purging auth dir for clean QR pairing.`);
+      try {
+        if (fs.existsSync(session.authDir)) {
+          fs.rmSync(session.authDir, { recursive: true, force: true });
+        }
+      } catch (_) {}
+      session.phone = null;
+      session.ownerPhone = null;
+      session.qr = null;
+      session.status = 'SCAN_QR';
+      session.isStarting = false;
+      return initWhatsApp(sessionId, true);
+    }
+
+    if (state?.creds?.me?.id && state?.creds?.registered !== false) {
       const mePhone = state.creds.me.id.split(':')[0].replace(/[^0-9]/g, '');
       if (mePhone) {
         session.ownerPhone = mePhone;
@@ -708,7 +725,8 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
           session.sock = null;
         }
 
-        if (statusCode === DisconnectReason.loggedOut) {
+        if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 403) {
+          console.warn(`[WhatsApp Gateway:${session.id}] Logged out / 401 / 403. Purging dead credentials...`);
           session.status = 'DISCONNECTED';
           session.qr = null;
           session.phone = null;
@@ -716,6 +734,11 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
           session.name = null;
           session.avatarUrl = null;
           session.isStarting = false;
+          try {
+            if (fs.existsSync(session.authDir)) {
+              fs.rmSync(session.authDir, { recursive: true, force: true });
+            }
+          } catch (_) {}
           try {
             fetch(FASTAPI_STATUS_UPDATE_URL, {
               method: 'POST',
@@ -1352,10 +1375,10 @@ app.get('/status', async (req, res) => {
     initWhatsApp(sId, false);
   }
 
-  // If QR code is being generated, briefly wait up to 3.5s so the client gets it on the very first request
-  if (!session.qr && session.status !== 'CONNECTED' && session.isStarting) {
+  // If QR code is being generated, briefly wait up to 4s so the client gets it on the very first request
+  if (!session.qr && session.status !== 'CONNECTED') {
     let waited = 0;
-    while (!session.qr && session.status !== 'CONNECTED' && waited < 3500) {
+    while (!session.qr && session.status !== 'CONNECTED' && waited < 4000) {
       await new Promise(r => setTimeout(r, 200));
       waited += 200;
     }
@@ -1381,8 +1404,8 @@ app.get('/status', async (req, res) => {
 
   res.json({
     status: session.status,
-    phone: session.phone,
-    name: session.name,
+    phone: session.status === 'CONNECTED' ? session.phone : null,
+    name: session.status === 'CONNECTED' ? session.name : null,
     avatar_url: session.avatarUrl,
     qr: session.qr,
     session_id: session.id
@@ -1428,15 +1451,17 @@ app.post('/refresh-qr', async (req, res) => {
       return res.json({ success: true, status: 'CONNECTED', phone: session.phone, session_id: session.id });
     }
 
-    // A refresh request indicates the old QR may be expired or user needs a fresh QR pairing
+    // A refresh request indicates user wants a clean, fresh QR pairing
     session.qr = null;
     session.status = 'SCAN_QR';
     session.isStarting = false;
-    initWhatsApp(session.id, false);
+    session.phone = null;
+    session.ownerPhone = null;
+    await initWhatsApp(session.id, true);
 
-    // Wait up to 4.5s for QR code to be generated so the frontend modal gets it instantly
+    // Wait up to 5s for QR code to be generated so the frontend modal gets it instantly
     let waited = 0;
-    while (!session.qr && session.status !== 'CONNECTED' && waited < 4500) {
+    while (!session.qr && session.status !== 'CONNECTED' && waited < 5000) {
       await new Promise(r => setTimeout(r, 200));
       waited += 200;
     }

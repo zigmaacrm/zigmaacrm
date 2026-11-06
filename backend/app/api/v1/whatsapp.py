@@ -493,9 +493,9 @@ async def get_whatsapp_messages(
         stmt = stmt.where(WhatsAppMessage.phone_number.like(f"%{search_suffix}%"))
 
     # Strict active session scoping: Only messages belonging to the currently connected device
-    target_session = normalize_phone(active_session_phone or session_id or (current_user.whatsapp_phone_number if current_user else None))
+    target_session = normalize_phone(session_id or (current_user.whatsapp_phone_number if current_user else None) or active_session_phone)
     if not target_session and current_user:
-        for cache_key in [current_user.id, "default"]:
+        for cache_key in [current_user.id]:
             c_entry = _qr_status_cache.get(cache_key)
             if c_entry and c_entry.get("data") and c_entry["data"].get("status") == "CONNECTED":
                 p = c_entry["data"].get("phone")
@@ -1080,15 +1080,7 @@ async def get_whatsapp_qr_status(
     specifically scoped to the current user's isolated session.
     """
     global _qr_status_cache
-    effective_session = sessionId or session_id or (current_user.id if current_user else None)
-    if not effective_session:
-        # Fallback to active admin or primary user so local dev tabs or unauthenticated initial page renders always obtain a valid pairing QR
-        admin_res = await db.execute(select(User.id).where(User.role.ilike("%admin%")).limit(1))
-        fallback_id = admin_res.scalar_one_or_none()
-        if not fallback_id:
-            any_u = await db.execute(select(User.id).limit(1))
-            fallback_id = any_u.scalar_one_or_none()
-        effective_session = str(fallback_id) if fallback_id else "default"
+    effective_session = sessionId or session_id or (current_user.id if current_user else "default")
 
     now = time.time()
     user_cache = _qr_status_cache.get(effective_session, {"data": None, "ts": 0})
@@ -1154,14 +1146,7 @@ async def refresh_whatsapp_qr(
     Requests a fresh QR code from the Baileys gateway for the current user's session.
     """
     global _qr_status_cache
-    effective_session = sessionId or session_id or (current_user.id if current_user else None)
-    if not effective_session:
-        admin_res = await db.execute(select(User.id).where(User.role.ilike("%admin%")).limit(1))
-        fallback_id = admin_res.scalar_one_or_none()
-        if not fallback_id:
-            any_u = await db.execute(select(User.id).limit(1))
-            fallback_id = any_u.scalar_one_or_none()
-        effective_session = str(fallback_id) if fallback_id else "default"
+    effective_session = sessionId or session_id or (current_user.id if current_user else "default")
     _qr_status_cache[effective_session] = {"data": None, "ts": 0}
 
     gateway_url = get_gateway_url()
@@ -1195,11 +1180,7 @@ async def disconnect_whatsapp_qr(
     Disconnects and logs out the Baileys QR session for the current user.
     """
     global _qr_status_cache
-    effective_session = sessionId or session_id or (current_user.id if current_user else None)
-    if not effective_session:
-        admin_res = await db.execute(select(User.id).where(User.role.ilike("%admin%")).limit(1))
-        fallback_id = admin_res.scalar_one_or_none()
-        effective_session = str(fallback_id) if fallback_id else "default"
+    effective_session = sessionId or session_id or (current_user.id if current_user else "default")
     _qr_status_cache[effective_session] = {"data": None, "ts": 0}
 
     if current_user and effective_session == current_user.id:
