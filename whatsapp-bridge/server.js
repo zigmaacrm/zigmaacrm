@@ -35,13 +35,38 @@ app.use(cors());
 app.use(express.json({ limit: '25mb' }));
 
 const PORT = process.env.PORT || 5001;
-const BACKEND_BASE = (process.env.FASTAPI_BASE_URL || 'https://zigmaacrm-backend.onrender.com').trim().replace(/\/+$/, '');
+const BACKEND_BASE = (process.env.FASTAPI_BASE_URL || 'http://localhost:8000').trim().replace(/\/+$/, '');
 const FASTAPI_WEBHOOK_URL = process.env.FASTAPI_WEBHOOK_URL || `${BACKEND_BASE}/api/v1/webhooks/whatsapp/inbound-qr`;
 const FASTAPI_BULK_SYNC_URL = process.env.FASTAPI_BULK_SYNC_URL || `${BACKEND_BASE}/api/v1/whatsapp/contacts/bulk-sync`;
 const FASTAPI_SYNC_HISTORY_URL = process.env.FASTAPI_SYNC_HISTORY_URL || `${BACKEND_BASE}/api/v1/whatsapp/chats/sync-history`;
 const FASTAPI_STATUS_UPDATE_URL = process.env.FASTAPI_STATUS_UPDATE_URL || `${BACKEND_BASE}/api/v1/webhooks/whatsapp/status-update`;
 const FASTAPI_SESSION_BACKUP_URL = process.env.FASTAPI_SESSION_BACKUP_URL || `${BACKEND_BASE}/api/v1/whatsapp/session-backup`;
 const FASTAPI_SESSION_RESTORE_URL = process.env.FASTAPI_SESSION_RESTORE_URL || `${BACKEND_BASE}/api/v1/whatsapp/session-restore`;
+
+function getBackendUrls(apiPath) {
+  const urls = new Set();
+  if (process.env.FASTAPI_BASE_URL) {
+    urls.add(`${process.env.FASTAPI_BASE_URL.trim().replace(/\/+$/, '')}${apiPath}`);
+  }
+  urls.add(`http://localhost:8000${apiPath}`);
+  urls.add(`https://zigmaacrm-backend.onrender.com${apiPath}`);
+  return Array.from(urls);
+}
+
+async function dispatchToBackend(apiPath, body, headers = {}) {
+  const targets = getBackendUrls(apiPath);
+  const jsonBody = typeof body === 'string' ? body : JSON.stringify(body);
+  await Promise.allSettled(
+    targets.map(url =>
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: jsonBody,
+        signal: AbortSignal.timeout(8000)
+      }).catch(() => {})
+    )
+  );
+}
 
 // Legacy single-session auth directory
 const AUTH_DIR = path.join(__dirname, 'auth_info_baileys');
@@ -608,14 +633,10 @@ function scheduleContactSync(session) {
     for (let i = 0; i < list.length; i += 50) {
       const batch = list.slice(i, i + 50);
       try {
-        await fetch(FASTAPI_BULK_SYNC_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contacts: batch,
-            assigned_user_id: session.id !== 'default' ? session.id : null,
-            session_id: session.ownerPhone || session.id
-          })
+        await dispatchToBackend('/api/v1/whatsapp/contacts/bulk-sync', {
+          contacts: batch,
+          assigned_user_id: session.id !== 'default' ? session.id : null,
+          session_id: session.ownerPhone || session.id
         });
       } catch (err) {
         console.error(`[WhatsApp Gateway:${session.id}] Bulk-sync dispatch failed:`, err.message);
@@ -664,11 +685,12 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
 
     const { state, saveCreds } = await useMultiFileAuthState(session.authDir);
 
-    if (state?.creds?.me?.id && state?.creds?.registered !== false) {
+    if (state?.creds?.me?.id) {
       const mePhone = state.creds.me.id.split(':')[0].replace(/[^0-9]/g, '');
       if (mePhone) {
         session.ownerPhone = mePhone;
         session.phone = `+${mePhone}`;
+        session.status = 'CONNECTED';
       }
     }
     const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1043857760], isLatest: true }));
@@ -694,7 +716,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
     session.sock = thisSock;
     session.sock.ev.on('creds.update', async () => {
       await saveCreds();
-      if (state?.creds?.registered) {
+      if (state?.creds?.me?.id) {
         backupSessionToDatabase(session);
       }
     });
@@ -725,7 +747,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
         console.log(`[WhatsApp Gateway:${session.id}] Connection closed. Status code: ${statusCode}. Reconnecting: ${shouldReconnect}`);
 
         try {
-          if (state?.creds?.registered) {
+          if (state?.creds?.me?.id) {
             await saveCreds();
           }
         } catch (_) {}
@@ -741,7 +763,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
           session.sock = null;
         }
 
-        if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 403 || (statusCode === 428 && !state?.creds?.registered)) {
+        if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 403 || (statusCode === 428 && !state?.creds?.me?.id)) {
           console.warn(`[WhatsApp Gateway:${session.id}] Logged out / 401 / 403 / unauthenticated 428. Purging dead credentials...`);
           session.status = 'DISCONNECTED';
           session.qr = null;
@@ -757,17 +779,13 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
           } catch (_) {}
           deleteSessionBackupFromDatabase(session.id);
           try {
-            fetch(FASTAPI_STATUS_UPDATE_URL, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                session_id: session.id,
-                assigned_user_id: session.id !== 'default' ? session.id : null,
-                phone: null,
-                status: 'DISCONNECTED',
-                logged_out: true
-              })
-            }).catch(() => {});
+            dispatchToBackend('/api/v1/webhooks/whatsapp/status-update', {
+              session_id: session.id,
+              assigned_user_id: session.id !== 'default' ? session.id : null,
+              phone: null,
+              status: 'DISCONNECTED',
+              logged_out: true
+            });
           } catch (_) {}
           // Do NOT auto-reconnect on explicit logout - wait for user to click Scan QR
         } else if (statusCode === DisconnectReason.restartRequired || statusCode === 515) {
@@ -821,17 +839,13 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
 
         // Notify FastAPI about session connection and phone mapping
         try {
-          fetch(FASTAPI_STATUS_UPDATE_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              session_id: session.id,
-              assigned_user_id: session.id !== 'default' ? session.id : null,
-              phone: session.phone,
-              name: session.name,
-              status: 'CONNECTED'
-            })
-          }).catch(() => {});
+          dispatchToBackend('/api/v1/webhooks/whatsapp/status-update', {
+            session_id: session.id,
+            assigned_user_id: session.id !== 'default' ? session.id : null,
+            phone: session.phone,
+            name: session.name,
+            status: 'CONNECTED'
+          });
         } catch (_) {}
 
         try {
@@ -1073,14 +1087,10 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
         for (let i = 0; i < validMessages.length; i += 40) {
           const batch = validMessages.slice(i, i + 40);
           try {
-            await fetch(FASTAPI_SYNC_HISTORY_URL, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                messages: batch,
-                assigned_user_id: session.id !== 'default' ? session.id : null,
-                session_id: session.ownerPhone || session.id
-              })
+            await dispatchToBackend('/api/v1/whatsapp/chats/sync-history', {
+              messages: batch,
+              assigned_user_id: session.id !== 'default' ? session.id : null,
+              session_id: session.ownerPhone || session.id
             });
           } catch (err) {
             console.error(`[WhatsApp Gateway:${session.id}] Sync history batch failed:`, err.message);
@@ -1164,14 +1174,10 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
         for (let i = 0; i < initialMessages.length; i += 40) {
           const batch = initialMessages.slice(i, i + 40);
           try {
-            await fetch(FASTAPI_SYNC_HISTORY_URL, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                messages: batch,
-                assigned_user_id: session.id !== 'default' ? session.id : null,
-                session_id: session.ownerPhone || session.id
-              })
+            await dispatchToBackend('/api/v1/whatsapp/chats/sync-history', {
+              messages: batch,
+              assigned_user_id: session.id !== 'default' ? session.id : null,
+              session_id: session.ownerPhone || session.id
             });
           } catch (err) {
             console.error(`[WhatsApp Gateway:${session.id}] Initial chats sync batch failed:`, err.message);
@@ -1383,13 +1389,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
             session_id: effectiveSession
           };
 
-          fetch(FASTAPI_WEBHOOK_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-          }).catch((err) => {
-            console.error(`[WhatsApp Gateway:${session.id}] Webhook dispatch error:`, err.message);
-          });
+          dispatchToBackend('/api/v1/webhooks/whatsapp/inbound-qr', payload);
         } catch (msgErr) {
           console.error(`[WhatsApp Gateway:${session.id}] Message processing error:`, msgErr.message);
         }
@@ -1577,16 +1577,13 @@ app.post('/disconnect', async (req, res) => {
     const sId = sanitizeSessionId(rawId);
     await disconnectSession(sId);
     try {
-      fetch(FASTAPI_STATUS_UPDATE_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: sId,
-          assigned_user_id: sId !== 'default' ? sId : null,
-          phone: null,
-          status: 'DISCONNECTED'
-        })
-      }).catch(() => {});
+      dispatchToBackend('/api/v1/webhooks/whatsapp/status-update', {
+        session_id: sId,
+        assigned_user_id: sId !== 'default' ? sId : null,
+        phone: null,
+        status: 'DISCONNECTED',
+        logged_out: true
+      });
     } catch (_) {}
     res.json({ success: true, session_id: sId, message: `WhatsApp session ${sId} disconnected and logged out successfully.` });
   } catch (err) {
@@ -2000,8 +1997,8 @@ const server = app.listen(PORT, '0.0.0.0', () => {
           if (sId && fs.existsSync(credsPath)) {
             try {
               const credsData = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
-              if (credsData && credsData.registered !== false && credsData.me) {
-                console.log(`[WhatsApp Gateway] Restoring authenticated user session: ${sId}`);
+              if (credsData && credsData.me && credsData.me.id) {
+                console.log(`[WhatsApp Gateway] Restoring authenticated user session: ${sId} (${credsData.me.id})`);
                 initWhatsApp(sId, false);
               } else {
                 console.log(`[WhatsApp Gateway] Purging unauthenticated session folder: ${sId}`);
