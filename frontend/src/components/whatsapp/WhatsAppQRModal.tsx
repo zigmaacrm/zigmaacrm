@@ -97,7 +97,11 @@ export default function WhatsAppQRModal({
     }
 
     let isMounted = true;
-    setQrCode(null);
+    if (initialQR) {
+      setQrCode(initialQR);
+    } else {
+      setQrCode(null);
+    }
 
     const initQR = async () => {
       try {
@@ -114,15 +118,19 @@ export default function WhatsAppQRModal({
           return;
         }
 
-        // If not connected, always request a brand-new live QR code to ensure it's not expired
-        const res = await api.refreshWhatsAppQR(sId).catch(() => null);
-        if (!isMounted) return;
-        if (res?.qr) {
-          setQrCode(res.qr);
-          setGatewayOnline(true);
-          setStatus(res.status || "SCAN_QR");
-        } else if (data.qr) {
+        // If a live QR already exists from status, show it instantly (zero delay)
+        if (data.qr) {
           setQrCode(data.qr);
+          setStatus(data.status || "SCAN_QR");
+        } else {
+          // Only request a fresh QR generation if none exists yet
+          const res = await api.refreshWhatsAppQR(sId).catch(() => null);
+          if (!isMounted) return;
+          if (res?.qr) {
+            setQrCode(res.qr);
+            setGatewayOnline(true);
+            setStatus(res.status || "SCAN_QR");
+          }
         }
         if (onStatusChange) {
           onStatusChange(data.status, data.phone);

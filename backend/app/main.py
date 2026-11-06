@@ -42,6 +42,8 @@ os.makedirs(wa_uploads_dir, exist_ok=True)
 @app.get("/uploads/whatsapp/{filename:path}")
 async def serve_whatsapp_media(filename: str):
     search_dirs = [
+        os.path.join(repo_root, "whatsapp-bridge", "uploads"),
+        os.path.join(repo_root, "whatsapp-bridge", "uploads", "whatsapp"),
         os.path.join(repo_root, "uploads", "whatsapp"),
         os.path.join(backend_dir, "uploads", "whatsapp"),
         os.path.join(os.getcwd(), "uploads", "whatsapp"),
@@ -85,6 +87,7 @@ async def serve_whatsapp_media(filename: str):
     gateway_url = (os.getenv("WHATSAPP_GATEWAY_URL") or "https://zigmaa-whatsapp-bridge.onrender.com").rstrip("/")
     target_urls = [
         f"{gateway_url}/media/whatsapp/{filename}",
+        f"http://localhost:5001/media/whatsapp/{filename}",
         f"https://zigmaa-whatsapp-bridge.onrender.com/media/whatsapp/{filename}"
     ]
     for target in target_urls:

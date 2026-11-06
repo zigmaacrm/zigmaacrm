@@ -347,7 +347,21 @@ function VoiceNotePlayer({
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={handleLoadedMetadata}
         onEnded={handleEnded}
-        onError={() => setIsPlaying(false)}
+        onError={(e) => {
+          setIsPlaying(false);
+          const audio = e.currentTarget;
+          const fn = audioUrl?.split("/").pop();
+          if (fn && !audio.dataset.step) {
+            audio.dataset.step = "1";
+            audio.src = `http://localhost:5001/media/whatsapp/${fn}`;
+            return;
+          }
+          if (fn && audio.dataset.step === "1") {
+            audio.dataset.step = "2";
+            audio.src = `https://zigmaa-whatsapp-bridge.onrender.com/media/whatsapp/${fn}`;
+            return;
+          }
+        }}
         preload="metadata"
       />
 
@@ -1204,6 +1218,8 @@ export default function WhatsAppPage() {
   const isUserScrolledUpRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isPollingRef = useRef(false);
+  const activePhoneRef = useRef<string>("");
+  const chatMessagesCacheRef = useRef<Record<string, WhatsAppMessage[]>>({});
 
   // Media Lightbox & Voice Note State
   const [selectedImagePreview, setSelectedImagePreview] = useState<string | null>(null);
@@ -1285,7 +1301,10 @@ export default function WhatsAppPage() {
             url: URL.createObjectURL(audioBlob)
           }
         };
-        setMessages((prev) => [...prev, optimisticMsg]);
+        const cleanSession = qrPhone ? qrPhone.replace(/[^0-9]/g, "") : (qrPhoneRef.current ? qrPhoneRef.current.replace(/[^0-9]/g, "") : undefined);
+        const nextList = [...(chatMessagesCacheRef.current[cleanPhone] || messages), optimisticMsg];
+        chatMessagesCacheRef.current[cleanPhone] = nextList;
+        setMessages(nextList);
         setIsSending(true);
 
         try {
@@ -1294,31 +1313,34 @@ export default function WhatsAppPage() {
             audio_base64: base64Audio,
             mimetype: mimeType,
             contact_id: activeChat.contact_id,
-            duration_seconds: duration
+            duration_seconds: duration,
+            session_id: cleanSession
           });
           if (res && res.status === "success") {
             const savedData = res.data;
             const fullMediaUrl = api.getMediaUrl(savedData?.media_url) || undefined;
 
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === tempVoiceId
-                  ? {
-                      ...m,
-                      id: savedData?.id || m.id,
-                      status: "DELIVERED",
-                      text: savedData?.message_body || m.text,
-                      fileName: savedData?.file_name || m.fileName,
-                      mediaUrl: fullMediaUrl || m.mediaUrl,
-                      attachment: {
-                        ...m.attachment!,
-                        name: savedData?.file_name || m.attachment!.name,
-                        url: fullMediaUrl || m.attachment!.url
-                      }
+            const updatedList = (chatMessagesCacheRef.current[cleanPhone] || messages).map((m) =>
+              m.id === tempVoiceId
+                ? {
+                    ...m,
+                    id: savedData?.id || m.id,
+                    status: "DELIVERED" as any,
+                    text: savedData?.message_body || m.text,
+                    fileName: savedData?.file_name || m.fileName,
+                    mediaUrl: fullMediaUrl || m.mediaUrl,
+                    attachment: {
+                      ...m.attachment!,
+                      name: savedData?.file_name || m.attachment!.name,
+                      url: fullMediaUrl || m.attachment!.url
                     }
-                  : m
-              )
+                  }
+                : m
             );
+            chatMessagesCacheRef.current[cleanPhone] = updatedList;
+            if (activePhoneRef.current === cleanPhone) {
+              setMessages(updatedList);
+            }
             loadConversations(true);
             toast.success("Voice Note Sent", `Voice note delivered to ${activeChat.contactName}`);
           } else {
@@ -1554,26 +1576,36 @@ export default function WhatsAppPage() {
   // Load message stream for active phone
   const loadMessages = useCallback(async (phone: string, isSilent = false) => {
     if (!phone) return;
-    if (!isSilent) setIsLoadingMessages(true);
+    const clean = phone.replace(/[^0-9]/g, "");
+
+    // Only show loading spinner if we don't already have cached messages
+    if (!isSilent && (!chatMessagesCacheRef.current[clean] || chatMessagesCacheRef.current[clean].length === 0)) {
+      setIsLoadingMessages(true);
+    }
 
     try {
-      const clean = phone.replace(/[^0-9]/g, "");
       const liveSession = qrPhoneRef.current || qrPhone;
       const data = await api.getWhatsAppMessages({ phone_number: clean, active_session_phone: liveSession });
 
+      // Guard: Ignore response if user switched to another contact in the meantime
+      if (activePhoneRef.current && activePhoneRef.current !== clean) {
+        return;
+      }
+
       if (data && data.status === "success" && Array.isArray(data.messages)) {
         const mappedMsgs: WhatsAppMessage[] = data.messages.map((m: any) => {
-          const mediaFullUrl = api.getMediaUrl(m.media_url);
+          const rawMedia = m.media_url || (m.file_name ? `/media/whatsapp/${m.file_name}` : null);
+          const mediaFullUrl = api.getMediaUrl(rawMedia);
 
           let attachment: WhatsAppMessage["attachment"] = undefined;
           const mType = (m.message_type || "").toLowerCase();
           const lowerUrl = (mediaFullUrl || "").toLowerCase();
           const lowerFileName = (m.file_name || "").toLowerCase();
-          const isVoice = m.is_voice_note || mType === "ptt" || mType === "audio" || lowerUrl.includes(".ogg") || lowerUrl.includes(".opus") || lowerUrl.includes(".mp3");
-          const isImg = mType === "image" || lowerUrl.includes(".jpg") || lowerUrl.includes(".jpeg") || lowerUrl.includes(".png");
+          const isVoice = m.is_voice_note || mType === "ptt" || mType === "audio" || lowerUrl.includes(".ogg") || lowerUrl.includes(".opus") || lowerUrl.includes(".mp3") || lowerFileName.includes(".ogg") || lowerFileName.includes(".opus");
+          const isImg = mType === "image" || lowerUrl.includes(".jpg") || lowerUrl.includes(".jpeg") || lowerUrl.includes(".png") || lowerFileName.includes(".jpg") || lowerFileName.includes(".jpeg") || lowerFileName.includes(".png");
           const isGif = mType === "gif" || lowerFileName.startsWith("gif_") || lowerUrl.includes("gif_") || lowerUrl.endsWith(".gif") || (m.message_body || "").toLowerCase() === "[gif]";
-          const isVideo = !isGif && (mType === "video" || lowerUrl.includes(".mp4") || lowerUrl.includes(".mov") || lowerUrl.includes(".webm"));
-          const isSticker = mType === "sticker" || lowerUrl.includes(".webp") || lowerFileName.startsWith("sticker_") || ((m.message_body || "").toLowerCase() === "[sticker]" && !!mediaFullUrl);
+          const isVideo = !isGif && (mType === "video" || lowerUrl.includes(".mp4") || lowerUrl.includes(".mov") || lowerUrl.includes(".webm") || lowerFileName.includes(".mp4") || lowerFileName.includes(".mov"));
+          const isSticker = mType === "sticker" || lowerUrl.includes(".webp") || lowerFileName.startsWith("sticker_") || lowerFileName.endsWith(".webp") || ((m.message_body || "").toLowerCase() === "[sticker]");
           const isDoc = mType === "document" || (!isImg && !isVideo && !isGif && !isVoice && !isSticker && !!mediaFullUrl);
 
           if (isImg) {
@@ -1636,18 +1668,25 @@ export default function WhatsAppPage() {
           };
         });
 
-        setMessages((prev) => {
-          // Preserve any in-flight optimistic messages so messages NEVER disappear/stutter
-          const pendingOptimistic = prev.filter((m) =>
-            (m.id.startsWith("temp-") || m.id.startsWith("voice-")) &&
-            !mappedMsgs.some((serverM) =>
-              serverM.id === m.id ||
-              (serverM.sender === "outbound" &&
-               (serverM.text === m.text || (m.isVoiceNote && serverM.isVoiceNote)))
-            )
-          );
-          return [...mappedMsgs, ...pendingOptimistic];
-        });
+        // Compute combined messages with any in-flight optimistic messages
+        const prevCached = chatMessagesCacheRef.current[clean] || [];
+        const pendingOptimistic = prevCached.filter((m) =>
+          (m.id.startsWith("temp-") || m.id.startsWith("voice-")) &&
+          !mappedMsgs.some((serverM) =>
+            serverM.id === m.id ||
+            (serverM.sender === "outbound" &&
+             (serverM.text === m.text || (m.isVoiceNote && serverM.isVoiceNote)))
+          )
+        );
+        const finalMsgs = [...mappedMsgs, ...pendingOptimistic];
+
+        // Store into in-memory cache for 0ms instant retrieval on chat switch
+        chatMessagesCacheRef.current[clean] = finalMsgs;
+
+        if (activePhoneRef.current === clean) {
+          setMessages(finalMsgs);
+          setIsLoadingMessages(false);
+        }
 
         // Mark unread messages as read in backend and update conversation list badge
         api.markWhatsAppConversationRead(clean).catch(() => {});
@@ -1660,7 +1699,9 @@ export default function WhatsAppPage() {
     } catch (e: any) {
       console.warn("Could not fetch messages for", phone, e);
     } finally {
-      setIsLoadingMessages(false);
+      if (activePhoneRef.current === clean) {
+        setIsLoadingMessages(false);
+      }
     }
   }, []);
 
@@ -1674,9 +1715,12 @@ export default function WhatsAppPage() {
   // Load messages whenever activePhone changes
   useEffect(() => {
     if (activePhone) {
-      loadMessages(activePhone);
+      const clean = activePhone.replace(/[^0-9]/g, "");
+      activePhoneRef.current = clean;
+      const hasCache = Boolean(chatMessagesCacheRef.current[clean]?.length);
+      loadMessages(activePhone, hasCache);
       // Mark read in backend
-      api.markWhatsAppConversationRead(activePhone).catch(() => {});
+      api.markWhatsAppConversationRead(clean).catch(() => {});
     }
   }, [activePhone, loadMessages]);
 
@@ -1939,16 +1983,29 @@ export default function WhatsAppPage() {
   // Select conversation
   const handleSelectChat = async (phone: string) => {
     isUserScrolledUpRef.current = false;
+    const cleanPhone = phone.replace(/[^0-9]/g, "");
+    activePhoneRef.current = cleanPhone;
     setActivePhone(phone);
+
+    // Instant switch from in-memory cache
+    if (chatMessagesCacheRef.current[cleanPhone]) {
+      setMessages(chatMessagesCacheRef.current[cleanPhone]);
+      setIsLoadingMessages(false);
+    } else {
+      // Clear previous chat messages immediately so they NEVER linger on screen
+      setMessages([]);
+      setIsLoadingMessages(true);
+    }
+
     setConversations((prev) =>
       prev.map((c) =>
-        c.phone.replace(/[^0-9]/g, "") === phone.replace(/[^0-9]/g, "")
+        c.phone.replace(/[^0-9]/g, "") === cleanPhone
           ? { ...c, unreadCount: 0 }
           : c
       )
     );
     try {
-      await api.markWhatsAppConversationRead(phone.replace(/[^0-9]/g, ""));
+      await api.markWhatsAppConversationRead(cleanPhone);
     } catch (_) {}
   };
 
@@ -1988,13 +2045,15 @@ export default function WhatsAppPage() {
       status: "SENT"
     };
 
-    setMessages((prev) => [...prev, optimisticMsg]);
+    const nextList = [...(chatMessagesCacheRef.current[cleanPhone] || messages), optimisticMsg];
+    chatMessagesCacheRef.current[cleanPhone] = nextList;
+    setMessages(nextList);
     setMessageInput("");
     setShowTemplateSelector(false);
     setIsSending(true);
 
     try {
-      const cleanSession = qrPhone ? qrPhone.replace(/[^0-9]/g, "") : undefined;
+      const cleanSession = qrPhone ? qrPhone.replace(/[^0-9]/g, "") : (qrPhoneRef.current ? qrPhoneRef.current.replace(/[^0-9]/g, "") : undefined);
       const res = await api.sendWhatsAppMessage({
         phone_number: cleanPhone,
         message: text,
@@ -2009,18 +2068,20 @@ export default function WhatsAppPage() {
       if (res && res.status === "success") {
         const savedData = res.data;
         // Seamlessly update optimistic message with real server ID and delivery status
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === tempId
-              ? {
-                  ...m,
-                  id: savedData?.id || m.id,
-                  status: (savedData?.status as any) || "DELIVERED",
-                  timeLabel: formatTime(savedData?.created_at) || m.timeLabel
-                }
-              : m
-          )
+        const updatedList = (chatMessagesCacheRef.current[cleanPhone] || messages).map((m) =>
+          m.id === tempId
+            ? {
+                ...m,
+                id: savedData?.id || m.id,
+                status: (savedData?.status as any) || "DELIVERED",
+                timeLabel: formatTime(savedData?.created_at) || m.timeLabel
+              }
+            : m
         );
+        chatMessagesCacheRef.current[cleanPhone] = updatedList;
+        if (activePhoneRef.current === cleanPhone) {
+          setMessages(updatedList);
+        }
         loadConversations(true);
       }
     } catch (err: any) {
@@ -2290,7 +2351,10 @@ export default function WhatsAppPage() {
       }
     };
 
-    setMessages((prev) => [...prev, optimisticMsg]);
+    const cleanSession = qrPhone ? qrPhone.replace(/[^0-9]/g, "") : (qrPhoneRef.current ? qrPhoneRef.current.replace(/[^0-9]/g, "") : undefined);
+    const nextList = [...(chatMessagesCacheRef.current[cleanPhone] || messages), optimisticMsg];
+    chatMessagesCacheRef.current[cleanPhone] = nextList;
+    setMessages(nextList);
     setIsSending(true);
 
     try {
@@ -2300,29 +2364,32 @@ export default function WhatsAppPage() {
         contact_id: activeChat.contact_id,
         file_base64: base64Data,
         file_name: file.name,
-        file_type: file.type
+        file_type: file.type,
+        session_id: cleanSession
       });
 
       if (res && res.status === "success") {
         const savedData = res.data;
         const fullMediaUrl = api.getMediaUrl(savedData?.media_url) || undefined;
 
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === tempId
-              ? {
-                  ...m,
-                  id: savedData?.id || m.id,
-                  status: (savedData?.status as any) || "DELIVERED",
-                  mediaUrl: fullMediaUrl || m.mediaUrl,
-                  attachment: {
-                    ...m.attachment!,
-                    url: fullMediaUrl || m.attachment!.url
-                  }
+        const updatedList = (chatMessagesCacheRef.current[cleanPhone] || messages).map((m) =>
+          m.id === tempId
+            ? {
+                ...m,
+                id: savedData?.id || m.id,
+                status: (savedData?.status as any) || "DELIVERED",
+                mediaUrl: fullMediaUrl || m.mediaUrl,
+                attachment: {
+                  ...m.attachment!,
+                  url: fullMediaUrl || m.attachment!.url
                 }
-              : m
-          )
+              }
+            : m
         );
+        chatMessagesCacheRef.current[cleanPhone] = updatedList;
+        if (activePhoneRef.current === cleanPhone) {
+          setMessages(updatedList);
+        }
         loadConversations(true);
         toast.success("Attachment Dispatched", `Sent ${file.name} to ${activeChat.contactName}`);
       }
@@ -3142,13 +3209,16 @@ export default function WhatsAppPage() {
                                         onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}
                                         onError={(e) => {
                                           const img = e.currentTarget;
-                                          if (!img.dataset.retried && msg.attachment?.url) {
-                                            img.dataset.retried = "true";
-                                            const fn = msg.attachment.url.split("/").pop();
-                                            if (fn) {
-                                              img.src = `https://zigmaa-whatsapp-bridge.onrender.com/media/whatsapp/${fn}`;
-                                              return;
-                                            }
+                                          const fn = msg.attachment?.url?.split("/").pop();
+                                          if (fn && !img.dataset.step) {
+                                            img.dataset.step = "1";
+                                            img.src = `http://localhost:5001/media/whatsapp/${fn}`;
+                                            return;
+                                          }
+                                          if (fn && img.dataset.step === "1") {
+                                            img.dataset.step = "2";
+                                            img.src = `https://zigmaa-whatsapp-bridge.onrender.com/media/whatsapp/${fn}`;
+                                            return;
                                           }
                                           img.style.display = "none";
                                         }}
@@ -3203,8 +3273,20 @@ export default function WhatsAppPage() {
                                     className="w-full max-h-[380px] object-cover rounded-lg block cursor-pointer transition-transform hover:scale-[1.01]"
                                     onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}
                                     onError={(e) => {
-                                      (e.target as HTMLElement).style.display = "none";
-                                      const fallback = (e.target as HTMLElement).nextElementSibling;
+                                      const img = e.currentTarget;
+                                      const fn = msg.attachment?.url?.split("/").pop();
+                                      if (fn && !img.dataset.step) {
+                                        img.dataset.step = "1";
+                                        img.src = `http://localhost:5001/media/whatsapp/${fn}`;
+                                        return;
+                                      }
+                                      if (fn && img.dataset.step === "1") {
+                                        img.dataset.step = "2";
+                                        img.src = `https://zigmaa-whatsapp-bridge.onrender.com/media/whatsapp/${fn}`;
+                                        return;
+                                      }
+                                      img.style.display = "none";
+                                      const fallback = img.nextElementSibling;
                                       if (fallback) fallback.classList.remove("hidden");
                                     }}
                                   />
@@ -3486,7 +3568,19 @@ export default function WhatsAppPage() {
                                         className="w-full max-h-64 object-cover rounded-xl transition-transform hover:scale-101"
                                         onClick={() => setSelectedImagePreview(msg.attachment?.url || null)}
                                         onError={(e) => {
-                                          (e.target as HTMLElement).style.display = "none";
+                                          const img = e.currentTarget;
+                                          const fn = msg.attachment?.url?.split("/").pop();
+                                          if (fn && !img.dataset.step) {
+                                            img.dataset.step = "1";
+                                            img.src = `http://localhost:5001/media/whatsapp/${fn}`;
+                                            return;
+                                          }
+                                          if (fn && img.dataset.step === "1") {
+                                            img.dataset.step = "2";
+                                            img.src = `https://zigmaa-whatsapp-bridge.onrender.com/media/whatsapp/${fn}`;
+                                            return;
+                                          }
+                                          img.style.display = "none";
                                         }}
                                       />
                                     </div>

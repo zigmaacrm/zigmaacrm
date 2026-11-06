@@ -3220,6 +3220,7 @@ export const zigmaaApi = {
     mimetype?: string;
     contact_id?: string;
     duration_seconds?: number;
+    session_id?: string;
   }): Promise<any> {
     try {
       const res = await fetch(`${API_BASE}/whatsapp/upload-voice`, {

@@ -515,18 +515,14 @@ async def get_whatsapp_messages(
 
     if target_session:
         session_suffix = target_session[-10:] if len(target_session) >= 10 else target_session
-        msg_conditions = [
-            WhatsAppMessage.session_id == target_session,
-            WhatsAppMessage.session_id.like(f"%{session_suffix}%"),
-            WhatsAppMessage.business_phone_number_id == target_session,
-            WhatsAppMessage.business_phone_number_id.like(f"%{session_suffix}%")
-        ]
-        if current_user:
-            msg_conditions.extend([
-                WhatsAppMessage.session_id == current_user.id,
-                WhatsAppMessage.assigned_user_id == current_user.id
-            ])
-        stmt = stmt.where(or_(*msg_conditions))
+        stmt = stmt.where(
+            or_(
+                WhatsAppMessage.session_id == target_session,
+                WhatsAppMessage.session_id.like(f"%{session_suffix}%"),
+                WhatsAppMessage.business_phone_number_id == target_session,
+                WhatsAppMessage.business_phone_number_id.like(f"%{session_suffix}%")
+            )
+        )
     elif current_user:
         stmt = stmt.where(WhatsAppMessage.assigned_user_id == current_user.id)
 
@@ -642,25 +638,18 @@ async def get_whatsapp_conversations(
 
     session_suffix = target_session[-10:] if target_session and len(target_session) >= 10 else (target_session or "")
 
-    # Strict isolation: ONLY messages tagged with this user's active session phone or user ID
-    conv_conditions = []
+    # Strict isolation: ONLY messages tagged with this user's active session phone
     if target_session:
-        conv_conditions.extend([
-            WhatsAppMessage.session_id == target_session,
-            WhatsAppMessage.session_id.like(f"%{session_suffix}%"),
-            WhatsAppMessage.business_phone_number_id == target_session,
-            WhatsAppMessage.business_phone_number_id.like(f"%{session_suffix}%")
-        ])
-    if user_session_id and user_session_id != "default":
-        conv_conditions.extend([
-            WhatsAppMessage.session_id == user_session_id,
-            WhatsAppMessage.assigned_user_id == user_session_id
-        ])
-    if current_user:
-        conv_conditions.append(WhatsAppMessage.assigned_user_id == current_user.id)
-
-    if conv_conditions:
-        stmt = stmt.where(or_(*conv_conditions))
+        stmt = stmt.where(
+            or_(
+                WhatsAppMessage.session_id == target_session,
+                WhatsAppMessage.session_id.like(f"%{session_suffix}%"),
+                WhatsAppMessage.business_phone_number_id == target_session,
+                WhatsAppMessage.business_phone_number_id.like(f"%{session_suffix}%")
+            )
+        )
+    elif current_user:
+        stmt = stmt.where(WhatsAppMessage.assigned_user_id == current_user.id)
 
     # Exclude dummy and stub messages
     stmt = stmt.where(
@@ -1148,8 +1137,8 @@ async def get_whatsapp_qr_status(
 
     for target in targets:
         try:
-            # If target is localhost, use a fast 2.0s timeout so we immediately fail over to the cloud Render bridge when laptop is off
-            target_timeout = 2.0 if "localhost" in target or "127.0.0.1" in target else 15.0
+            # Fast 6.0s timeout for local gateway, 15.0s for cloud
+            target_timeout = 6.0 if "localhost" in target or "127.0.0.1" in target else 15.0
             async with httpx.AsyncClient(timeout=target_timeout, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
                 resp = await client.get(f"{target}/status?sessionId={effective_session}")
                 if resp.status_code == 200:
@@ -1215,7 +1204,7 @@ async def refresh_whatsapp_qr(
     last_err = None
     for target in targets:
         try:
-            target_timeout = 2.0 if "localhost" in target or "127.0.0.1" in target else 25.0
+            target_timeout = 8.0 if "localhost" in target or "127.0.0.1" in target else 25.0
             async with httpx.AsyncClient(timeout=target_timeout, headers={"Bypass-Tunnel-Reminder": "true", "User-Agent": "ZigmaaCRM-Cloud"}) as client:
                 resp = await client.post(f"{target}/refresh-qr?sessionId={effective_session}", json={"sessionId": effective_session})
                 data = resp.json()
@@ -1437,6 +1426,7 @@ class VoiceNotePayload(BaseModel):
     mimetype: Optional[str] = "audio/mp4"
     contact_id: Optional[str] = None
     duration_seconds: Optional[int] = None
+    session_id: Optional[str] = None
 
 @router.post("/upload-voice", status_code=status.HTTP_201_CREATED)
 async def upload_and_send_voice_note(
@@ -1476,10 +1466,14 @@ async def upload_and_send_voice_note(
     outbound_status = "SENT"
     meta_id = f"wamid.voice_{uuid.uuid4().hex[:16]}"
 
+    target_session = normalize_phone(payload.session_id) if payload.session_id else None
+    if not target_session and current_user and current_user.whatsapp_phone_number:
+        target_session = normalize_phone(current_user.whatsapp_phone_number)
+    voice_session_id = target_session or (current_user.id if current_user else "default")
+
     # Dispatch to WhatsApp Bridge
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            voice_session_id = current_user.id if current_user else "default"
             resp = await client.post(
                 f"{gateway_url}/api/whatsapp/send-voice",
                 json={
@@ -1524,6 +1518,8 @@ async def upload_and_send_voice_note(
         organization_id=default_org_id,
         contact_id=payload.contact_id,
         assigned_user_id=current_user.id if current_user else None,
+        session_id=target_session or voice_session_id,
+        business_phone_number_id=target_session or voice_session_id,
         phone_number=clean_phone,
         direction="OUTBOUND",
         message_body=display_body,
