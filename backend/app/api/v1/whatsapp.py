@@ -1155,13 +1155,10 @@ async def get_whatsapp_qr_status(
                                 current_user.whatsapp_phone_number = data.get("phone")
                                 await db.commit()
                         elif data.get("status") != "CONNECTED":
-                            if data.get("logged_out"):
-                                if current_user.whatsapp_phone_number is not None:
-                                    current_user.whatsapp_phone_number = None
-                                    await db.commit()
-                                data["phone"] = None
-                            elif current_user.whatsapp_phone_number:
-                                data["phone"] = current_user.whatsapp_phone_number
+                            if current_user.whatsapp_phone_number is not None and (data.get("logged_out") or data.get("status") in ("DISCONNECTED", "SCAN_QR")):
+                                current_user.whatsapp_phone_number = None
+                                await db.commit()
+                            data["phone"] = None
 
                     return data
         except Exception as e:
@@ -1170,16 +1167,15 @@ async def get_whatsapp_qr_status(
     if user_cache["data"] and user_cache["data"].get("gateway_online") and user_cache["data"].get("status") == "CONNECTED" and (now - user_cache["ts"] < 15.0):
         return user_cache["data"]
 
-    saved_phone = current_user.whatsapp_phone_number if current_user else None
     return {
-        "status": "CONNECTED" if saved_phone else "DISCONNECTED",
-        "phone": saved_phone,
+        "status": "DISCONNECTED",
+        "phone": None,
         "name": getattr(current_user, "full_name", None),
         "avatar_url": None,
         "qr": None,
         "gateway_online": False,
         "session_id": effective_session,
-        "logged_out": False
+        "logged_out": True
     }
 
 @router.post("/qr/refresh")

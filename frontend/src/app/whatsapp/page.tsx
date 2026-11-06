@@ -1104,24 +1104,8 @@ export default function WhatsAppPage() {
   // QR WhatsApp State
   const [showQRModal, setShowQRModal] = useState(false);
   const [showNewChatModal, setShowNewChatModal] = useState(false);
-  const [qrStatus, setQrStatus] = useState<"DISCONNECTED" | "SCAN_QR" | "CONNECTED">(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const s = localStorage.getItem("zigmaa_whatsapp_status");
-        if (s === "CONNECTED") return "CONNECTED";
-      } catch (_) {}
-    }
-    return "DISCONNECTED";
-  });
-  const [qrPhone, setQrPhone] = useState<string | null>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const p = localStorage.getItem("zigmaa_whatsapp_phone");
-        if (p) return p;
-      } catch (_) {}
-    }
-    return null;
-  });
+  const [qrStatus, setQrStatus] = useState<"DISCONNECTED" | "SCAN_QR" | "CONNECTED">("DISCONNECTED");
+  const [qrPhone, setQrPhone] = useState<string | null>(null);
   const qrPhoneRef = useRef<string | null>(null);
   qrPhoneRef.current = qrPhone;
   const [linkedUserAvatar, setLinkedUserAvatar] = useState<string | null>(null);
@@ -1150,9 +1134,9 @@ export default function WhatsAppPage() {
             localStorage.setItem("zigmaa_whatsapp_phone", data.phone);
           } catch (_) {}
           loadConversations(true);
-        } else if ((data as any).logged_out) {
-          // Device is explicitly logged out: reset conversation & phone state
-          setQrStatus("DISCONNECTED");
+        } else {
+          // Clean state whenever session is disconnected or unlinked
+          setQrStatus(data.status === "SCAN_QR" ? "SCAN_QR" : "DISCONNECTED");
           setQrPhone(null);
           qrPhoneRef.current = null;
           try {
@@ -1163,15 +1147,6 @@ export default function WhatsAppPage() {
           setActivePhone("");
           setMessages([]);
           setLinkedUserAvatar(null);
-        } else {
-          // Gateway is reconnecting or waking up: keep existing linked state without flashing disconnected
-          if (data.status === "SCAN_QR") {
-            setQrStatus("SCAN_QR");
-          }
-          if (data.phone) {
-            setQrPhone(data.phone);
-            qrPhoneRef.current = data.phone;
-          }
         }
         if (data.qr) {
           setCachedQR(data.qr);
