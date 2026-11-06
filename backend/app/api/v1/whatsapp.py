@@ -1121,7 +1121,7 @@ async def get_whatsapp_qr_status(
         except Exception as e:
             logger.debug(f"WhatsApp QR Gateway at {target} not reachable for {effective_session}: {e}")
 
-    if user_cache["data"] and user_cache["data"].get("gateway_online") and (now - user_cache["ts"] < 15.0):
+    if user_cache["data"] and user_cache["data"].get("gateway_online") and user_cache["data"].get("status") == "CONNECTED" and (now - user_cache["ts"] < 15.0):
         return user_cache["data"]
 
     return {

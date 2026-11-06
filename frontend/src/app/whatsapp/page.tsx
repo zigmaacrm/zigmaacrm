@@ -4396,7 +4396,7 @@ export default function WhatsAppPage() {
       <WhatsAppQRModal
         isOpen={showQRModal}
         onClose={() => setShowQRModal(false)}
-        initialQR={cachedQR}
+        initialQR={null}
         sessionId={currentUser?.id || api.getCurrentUser()?.id || null}
         onStatusChange={(status, phone) => {
           setQrStatus(status);

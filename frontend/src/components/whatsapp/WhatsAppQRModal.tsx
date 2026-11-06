@@ -88,6 +88,7 @@ export default function WhatsAppQRModal({
 
   useEffect(() => {
     if (!isOpen) {
+      setQrCode(null);
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
@@ -96,6 +97,7 @@ export default function WhatsAppQRModal({
     }
 
     let isMounted = true;
+    setQrCode(null);
 
     const initQR = async () => {
       try {
@@ -106,21 +108,24 @@ export default function WhatsAppQRModal({
         setPhone(data.phone);
         setName(data.name);
         setGatewayOnline(data.gateway_online);
-        if (data.qr) {
+
+        if (data.status === "CONNECTED") {
+          if (onStatusChange) onStatusChange(data.status, data.phone);
+          return;
+        }
+
+        // If not connected, always request a brand-new live QR code to ensure it's not expired
+        const res = await api.refreshWhatsAppQR(sId).catch(() => null);
+        if (!isMounted) return;
+        if (res?.qr) {
+          setQrCode(res.qr);
+          setGatewayOnline(true);
+          setStatus(res.status || "SCAN_QR");
+        } else if (data.qr) {
           setQrCode(data.qr);
         }
         if (onStatusChange) {
           onStatusChange(data.status, data.phone);
-        }
-        // If not connected and still no QR, request refresh immediately
-        if (data.status !== "CONNECTED" && !data.qr) {
-          const res = await api.refreshWhatsAppQR(sId).catch(() => null);
-          if (!isMounted) return;
-          if (res?.qr) {
-            setQrCode(res.qr);
-            setGatewayOnline(true);
-            setStatus(res.status || "SCAN_QR");
-          }
         }
       } catch (e) {
         console.warn("Init QR error", e);
@@ -311,13 +316,17 @@ export default function WhatsAppQRModal({
             <div className="space-y-4">
               <div className="bg-slate-50 dark:bg-slate-800/40 p-4 rounded-xl border border-slate-200 dark:border-slate-800 flex justify-center">
                 {qrCode ? (
-                  <div className="bg-white p-2.5 rounded-lg shadow-sm border border-slate-100">
+                  <div className="bg-white p-3 rounded-xl shadow-xs border border-slate-100 flex flex-col items-center">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={qrCode}
                       alt="WhatsApp QR Code"
                       className="w-56 h-56 object-contain"
                     />
+                    <div className="flex items-center gap-1.5 mt-2.5 text-[11px] text-emerald-600 dark:text-emerald-500 font-semibold">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                      <span>Live QR Code &bull; Scan Now</span>
+                    </div>
                   </div>
                 ) : (
                   <div className="w-56 h-56 flex flex-col items-center justify-center text-slate-400 gap-2.5 p-3 text-center">

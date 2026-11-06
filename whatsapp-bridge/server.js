@@ -664,6 +664,11 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
 
     const { state, saveCreds } = await useMultiFileAuthState(session.authDir);
 
+    // CRUCIAL: Immediately persist initial credentials so subsequent reconnects don't generate new keys
+    if (!fs.existsSync(path.join(session.authDir, 'creds.json'))) {
+      await saveCreds();
+    }
+
     if (state?.creds?.me?.id && state?.creds?.registered !== false) {
       const mePhone = state.creds.me.id.split(':')[0].replace(/[^0-9]/g, '');
       if (mePhone) {
@@ -671,19 +676,20 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
         session.phone = `+${mePhone}`;
       }
     }
-    const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307], isLatest: true }));
+    const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1043857760], isLatest: true }));
 
     const thisSock = makeWASocket({
       version,
       logger,
       printQRInTerminal: false,
       auth: state,
-      browser: Browsers.macOS('Desktop'),
+      browser: Browsers.ubuntu('Chrome'),
       syncFullHistory: false,
       markOnlineOnConnect: true,
+      qrTimeout: 60000,
       connectTimeoutMs: 60000,
       defaultQueryTimeoutMs: 60000,
-      keepAliveIntervalMs: 25000,
+      keepAliveIntervalMs: 30000,
       getMessage: async (key) => {
         return msgStore.get(key.id) || undefined;
       }
@@ -692,7 +698,9 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
     session.sock = thisSock;
     session.sock.ev.on('creds.update', async () => {
       await saveCreds();
-      backupSessionToDatabase(session);
+      if (state?.creds?.registered) {
+        backupSessionToDatabase(session);
+      }
     });
 
     session.sock.ev.on('connection.update', async (update) => {
@@ -705,6 +713,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
         session.status = 'SCAN_QR';
         session.phone = null;
         session.isStarting = false;
+        session.qrTimestamp = Date.now();
         try {
           session.qr = await qrcode.toDataURL(qr, { width: 320, margin: 2 });
           console.log(`[WhatsApp Gateway:${session.id}] New QR code generated.`);
@@ -719,9 +728,15 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
 
         console.log(`[WhatsApp Gateway:${session.id}] Connection closed. Status code: ${statusCode}. Reconnecting: ${shouldReconnect}`);
 
+        try {
+          await saveCreds();
+        } catch (_) {}
+
         if (session.sock === thisSock) {
           try {
-            thisSock.ev.removeAllListeners();
+            if (!shouldReconnect) {
+              thisSock.ev.removeAllListeners();
+            }
             thisSock.ws?.close();
             thisSock.end?.();
           } catch (_) {}
@@ -758,13 +773,13 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
           } catch (_) {}
           // Do NOT auto-reconnect on explicit logout - wait for user to click Scan QR
         } else if (statusCode === DisconnectReason.restartRequired || statusCode === 515) {
-          console.log(`[WhatsApp Gateway:${session.id}] WhatsApp QR Scan accepted by server (code 515 restartRequired). Reconnecting immediately to finalize pairing...`);
+          console.log(`[WhatsApp Gateway:${session.id}] WhatsApp QR Scan accepted by server (code 515 restartRequired). Reconnecting in 2.5s to finalize pairing...`);
           session.isStarting = false;
           if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
           session.reconnectTimer = setTimeout(() => {
             session.reconnectTimer = null;
             initWhatsApp(session.id, false);
-          }, 500);
+          }, 2500);
         } else if (statusCode === 440) {
           console.warn(`[WhatsApp Gateway:${session.id}] Status 440 (Conflict). Waiting 3s for clean reconnect...`);
           session.isStarting = false;
@@ -774,13 +789,13 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
             initWhatsApp(session.id, false);
           }, 3000);
         } else {
-          console.log(`[WhatsApp Gateway:${session.id}] Temporary connection drop (code ${statusCode}). Reconnecting in 1.5s...`);
+          console.log(`[WhatsApp Gateway:${session.id}] Temporary connection drop (code ${statusCode}). Reconnecting in 2s...`);
           session.isStarting = false;
           if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
           session.reconnectTimer = setTimeout(() => {
             session.reconnectTimer = null;
             initWhatsApp(session.id, false);
-          }, 1500);
+          }, 2000);
         }
       } else if (connection === 'open') {
         session.status = 'CONNECTED';
