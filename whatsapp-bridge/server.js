@@ -664,11 +664,6 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
 
     const { state, saveCreds } = await useMultiFileAuthState(session.authDir);
 
-    // CRUCIAL: Immediately persist initial credentials so subsequent reconnects don't generate new keys
-    if (!fs.existsSync(path.join(session.authDir, 'creds.json'))) {
-      await saveCreds();
-    }
-
     if (state?.creds?.me?.id && state?.creds?.registered !== false) {
       const mePhone = state.creds.me.id.split(':')[0].replace(/[^0-9]/g, '');
       if (mePhone) {
@@ -683,7 +678,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
       logger,
       printQRInTerminal: false,
       auth: state,
-      browser: Browsers.windows('Desktop'),
+      browser: Browsers.windows('Chrome'),
       syncFullHistory: true,
       shouldSyncHistoryMessage: () => true,
       markOnlineOnConnect: true,
@@ -730,7 +725,9 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
         console.log(`[WhatsApp Gateway:${session.id}] Connection closed. Status code: ${statusCode}. Reconnecting: ${shouldReconnect}`);
 
         try {
-          await saveCreds();
+          if (state?.creds?.registered) {
+            await saveCreds();
+          }
         } catch (_) {}
 
         if (session.sock === thisSock) {
@@ -744,8 +741,8 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
           session.sock = null;
         }
 
-        if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 403) {
-          console.warn(`[WhatsApp Gateway:${session.id}] Logged out / 401 / 403. Purging dead credentials...`);
+        if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 403 || (statusCode === 428 && !state?.creds?.registered)) {
+          console.warn(`[WhatsApp Gateway:${session.id}] Logged out / 401 / 403 / unauthenticated 428. Purging dead credentials...`);
           session.status = 'DISCONNECTED';
           session.qr = null;
           session.phone = null;
@@ -1123,6 +1120,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
     session.sock.ev.on('chats.set', async ({ chats: setChats }) => {
       if (!Array.isArray(setChats) || setChats.length === 0) return;
       console.log(`[WhatsApp Gateway:${session.id}] Received ${setChats.length} chats from initial chat sync.`);
+      const initialMessages = [];
       for (const chat of setChats) {
         if (!chat.id || (!chat.id.endsWith('@s.whatsapp.net') && !chat.id.endsWith('@c.us'))) continue;
         const cleanPhone = resolvePhoneFromJid(chat.id, session);
@@ -1139,8 +1137,47 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
         };
         if (session.contactsStore) session.contactsStore.set(cleanPhone, item);
         session.pendingContacts.set(cleanPhone, item);
+
+        const chatTs = typeof chat.conversationTimestamp === 'number'
+          ? chat.conversationTimestamp
+          : (chat.conversationTimestamp?.low || Math.floor(Date.now() / 1000));
+        initialMessages.push({
+          phone_number: cleanPhone,
+          contact_name: bestName,
+          message_body: 'Active conversation',
+          meta_message_id: `wamid.init_chat_${cleanPhone}_${chatTs}`,
+          timestamp: chatTs,
+          direction: 'INBOUND',
+          message_type: 'text',
+          media_url: null,
+          file_name: null,
+          caption: null,
+          is_voice_note: false,
+          media_base64: null,
+          quoted_context: null
+        });
       }
       if (session.pendingContacts.size > 0) scheduleContactSync(session);
+
+      if (initialMessages.length > 0) {
+        console.log(`[WhatsApp Gateway:${session.id}] Dispatching ${initialMessages.length} initial direct chats to CRM sync-history...`);
+        for (let i = 0; i < initialMessages.length; i += 40) {
+          const batch = initialMessages.slice(i, i + 40);
+          try {
+            await fetch(FASTAPI_SYNC_HISTORY_URL, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                messages: batch,
+                assigned_user_id: session.id !== 'default' ? session.id : null,
+                session_id: session.ownerPhone || session.id
+              })
+            });
+          } catch (err) {
+            console.error(`[WhatsApp Gateway:${session.id}] Initial chats sync batch failed:`, err.message);
+          }
+        }
+      }
     });
 
     // Chats upsert (Update contactStore names and sync chatting contacts)
@@ -1958,10 +1995,19 @@ const server = app.listen(PORT, '0.0.0.0', () => {
       for (const entry of entries) {
         if (entry.startsWith('session_')) {
           const sId = entry.replace('session_', '');
-          const credsPath = path.join(SESSIONS_BASE_DIR, entry, 'creds.json');
+          const sessionFolder = path.join(SESSIONS_BASE_DIR, entry);
+          const credsPath = path.join(sessionFolder, 'creds.json');
           if (sId && fs.existsSync(credsPath)) {
-            console.log(`[WhatsApp Gateway] Restoring authenticated user session: ${sId}`);
-            initWhatsApp(sId, false);
+            try {
+              const credsData = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+              if (credsData && credsData.registered !== false && credsData.me) {
+                console.log(`[WhatsApp Gateway] Restoring authenticated user session: ${sId}`);
+                initWhatsApp(sId, false);
+              } else {
+                console.log(`[WhatsApp Gateway] Purging unauthenticated session folder: ${sId}`);
+                try { fs.rmSync(sessionFolder, { recursive: true, force: true }); } catch (_) {}
+              }
+            } catch (_) {}
           }
         }
       }

@@ -1125,8 +1125,8 @@ export default function WhatsAppPage() {
         } catch (_) {}
       }
       api.getWhatsAppQRStatus(sId || undefined).then((data) => {
-        setQrStatus(data.status);
         if (data.status === "CONNECTED" && data.phone) {
+          setQrStatus("CONNECTED");
           setQrPhone(data.phone);
           qrPhoneRef.current = data.phone;
           try {
@@ -1134,8 +1134,9 @@ export default function WhatsAppPage() {
             localStorage.setItem("zigmaa_whatsapp_phone", data.phone);
           } catch (_) {}
           loadConversations(true);
-        } else {
-          // Device is NOT connected / logged out: completely reset conversation & phone state
+        } else if ((data as any).logged_out) {
+          // Device is explicitly logged out: reset conversation & phone state
+          setQrStatus("DISCONNECTED");
           setQrPhone(null);
           qrPhoneRef.current = null;
           try {
@@ -1146,6 +1147,15 @@ export default function WhatsAppPage() {
           setActivePhone("");
           setMessages([]);
           setLinkedUserAvatar(null);
+        } else {
+          // Gateway is reconnecting or waking up: keep existing linked state without flashing disconnected
+          if (data.status === "SCAN_QR") {
+            setQrStatus("SCAN_QR");
+          }
+          if (data.phone) {
+            setQrPhone(data.phone);
+            qrPhoneRef.current = data.phone;
+          }
         }
         if (data.qr) {
           setCachedQR(data.qr);

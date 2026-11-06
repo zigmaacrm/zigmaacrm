@@ -757,14 +757,19 @@ async def update_whatsapp_message_status(
     """
     user_id = payload.assigned_user_id or payload.session_id
     if user_id and user_id != "default":
-        if (payload.status and payload.status.upper() == "DISCONNECTED") or not payload.phone:
+        if getattr(payload, "logged_out", False) or (payload.status and payload.status.upper() == "LOGGED_OUT"):
             await db.execute(
                 update(User)
                 .where(User.id == user_id)
                 .values(whatsapp_phone_number=None)
             )
             await db.commit()
-            logger.info(f"[WHATSAPP STATUS UPDATE] Cleared phone for disconnected user {user_id}")
+            logger.info(f"[WHATSAPP STATUS UPDATE] Cleared phone for explicitly logged out user {user_id}")
+            try:
+                from app.api.v1.whatsapp import _qr_status_cache
+                _qr_status_cache.pop(user_id, None)
+            except Exception:
+                pass
         elif payload.phone:
             clean_phone = normalize_phone(payload.phone)
             if clean_phone:
@@ -776,6 +781,20 @@ async def update_whatsapp_message_status(
                 )
                 await db.commit()
                 logger.info(f"[WHATSAPP STATUS UPDATE] Linked user {user_id} to phone {formatted}")
+                try:
+                    from app.api.v1.whatsapp import _qr_status_cache
+                    import time
+                    _qr_status_cache[user_id] = {
+                        "data": {
+                            "status": "CONNECTED",
+                            "phone": formatted,
+                            "session_id": user_id,
+                            "gateway_online": True
+                        },
+                        "ts": time.time()
+                    }
+                except Exception:
+                    pass
 
     if not payload.meta_message_id:
         return {"status": "success", "session_updated": bool(user_id)}

@@ -156,6 +156,9 @@ DUMMY_TEST_PHONES = {
 def is_valid_mobile_phone(phone: Optional[str]) -> bool:
     if not phone:
         return False
+    raw = str(phone).strip()
+    if "-" in raw or any(c in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ" for c in raw):
+        return False
     clean = normalize_phone(phone)
     if not clean:
         return False
@@ -493,7 +496,14 @@ async def get_whatsapp_messages(
         stmt = stmt.where(WhatsAppMessage.phone_number.like(f"%{search_suffix}%"))
 
     # Strict active session scoping: Only messages belonging to the currently connected device
-    target_session = normalize_phone(session_id or (current_user.whatsapp_phone_number if current_user else None) or active_session_phone)
+    target_session = None
+    if active_session_phone and is_valid_mobile_phone(active_session_phone):
+        target_session = normalize_phone(active_session_phone)
+    elif current_user and current_user.whatsapp_phone_number and is_valid_mobile_phone(current_user.whatsapp_phone_number):
+        target_session = normalize_phone(current_user.whatsapp_phone_number)
+    elif session_id and is_valid_mobile_phone(session_id):
+        target_session = normalize_phone(session_id)
+
     if not target_session and current_user:
         for cache_key in [current_user.id]:
             c_entry = _qr_status_cache.get(cache_key)
@@ -577,19 +587,51 @@ async def get_whatsapp_conversations(
     user_connected = False
     target_session = None
 
-    c_entry = _qr_status_cache.get(user_session_id)
-    if c_entry and c_entry.get("data") and c_entry["data"].get("status") == "CONNECTED":
+    if active_session_phone and is_valid_mobile_phone(active_session_phone):
+        target_session = normalize_phone(active_session_phone)
         user_connected = True
-        p = c_entry["data"].get("phone")
-        if p:
-            target_session = normalize_phone(p)
+
+    if not target_session and user_session_id:
+        c_entry = _qr_status_cache.get(user_session_id)
+        if c_entry and c_entry.get("data") and c_entry["data"].get("status") == "CONNECTED":
+            user_connected = True
+            p = c_entry["data"].get("phone")
+            if p:
+                target_session = normalize_phone(p)
 
     if not target_session and current_user and current_user.whatsapp_phone_number:
         target_session = normalize_phone(current_user.whatsapp_phone_number)
         user_connected = True
 
-    # If the current user has no connected device, return 0 conversations immediately!
-    if not user_connected or not target_session:
+    if not target_session and user_session_id and user_session_id != "default":
+        u_res = await db.execute(select(User).where(User.id == user_session_id).limit(1))
+        u = u_res.scalar_one_or_none()
+        if u and u.whatsapp_phone_number:
+            target_session = normalize_phone(u.whatsapp_phone_number)
+            user_connected = True
+
+    if not target_session and is_valid_mobile_phone(user_session_id):
+        target_session = normalize_phone(user_session_id)
+        user_connected = True
+
+    if not target_session and user_session_id and user_session_id != "default":
+        msg_chk = await db.execute(
+            select(WhatsAppMessage.session_id)
+            .where(
+                or_(
+                    WhatsAppMessage.assigned_user_id == user_session_id,
+                    WhatsAppMessage.session_id == user_session_id
+                )
+            )
+            .limit(1)
+        )
+        found_sess = msg_chk.scalar_one_or_none()
+        if found_sess:
+            target_session = normalize_phone(found_sess) or user_session_id
+            user_connected = True
+
+    # If the current user has no connected device and no historical messages, return 0 conversations immediately
+    if not user_connected and not target_session:
         return {
             "status": "success",
             "count": 0,
@@ -598,25 +640,27 @@ async def get_whatsapp_conversations(
             "message": "WhatsApp device is not connected. Please scan QR to access inbox."
         }
 
-    session_suffix = target_session[-10:] if len(target_session) >= 10 else target_session
+    session_suffix = target_session[-10:] if target_session and len(target_session) >= 10 else (target_session or "")
 
     # Strict isolation: ONLY messages tagged with this user's active session phone or user ID
-    conv_conditions = [
-        and_(
-            WhatsAppMessage.session_id.in_([target_session, user_session_id]),
-            or_(
-                WhatsAppMessage.assigned_user_id == user_session_id,
-                WhatsAppMessage.assigned_user_id.is_(None)
-            )
-        ),
-        WhatsAppMessage.session_id == target_session,
-        WhatsAppMessage.session_id.like(f"%{session_suffix}%"),
-        WhatsAppMessage.business_phone_number_id == target_session,
-        WhatsAppMessage.business_phone_number_id.like(f"%{session_suffix}%")
-    ]
+    conv_conditions = []
+    if target_session:
+        conv_conditions.extend([
+            WhatsAppMessage.session_id == target_session,
+            WhatsAppMessage.session_id.like(f"%{session_suffix}%"),
+            WhatsAppMessage.business_phone_number_id == target_session,
+            WhatsAppMessage.business_phone_number_id.like(f"%{session_suffix}%")
+        ])
+    if user_session_id and user_session_id != "default":
+        conv_conditions.extend([
+            WhatsAppMessage.session_id == user_session_id,
+            WhatsAppMessage.assigned_user_id == user_session_id
+        ])
     if current_user:
         conv_conditions.append(WhatsAppMessage.assigned_user_id == current_user.id)
-    stmt = stmt.where(or_(*conv_conditions))
+
+    if conv_conditions:
+        stmt = stmt.where(or_(*conv_conditions))
 
 
     # Optional Rep Filter
@@ -838,8 +882,75 @@ async def get_whatsapp_conversations(
                     "unread_count": unread_cnt
                 }
 
-    # Strict Scoping: Only conversations with message history in this session
-        # Sort pinned to the top, then by last message time
+    # 2. Enrich conversation list with synced WhatsApp contacts for this user/session without messages yet
+    synced_contacts_stmt = select(Contact).where(Contact.source == "WHATSAPP")
+    if user_session_id and user_session_id != "default":
+        synced_contacts_stmt = synced_contacts_stmt.where(
+            or_(
+                Contact.assigned_user_id == user_session_id,
+                Contact.owner_id == user_session_id,
+                Contact.assigned_user_id.is_(None)
+            )
+        )
+    synced_c_res = await db.execute(synced_contacts_stmt.limit(100))
+    for c in synced_c_res.scalars().all():
+        if not c.phone:
+            continue
+        clean_cp = normalize_phone(c.phone)
+        if not clean_cp or not is_valid_mobile_phone(clean_cp):
+            continue
+        if clean_cp not in conv_map and f"+{clean_cp}" not in conv_map:
+            c_data = dict(c.custom_data or {}) if isinstance(c.custom_data, dict) else {}
+            contact_session = c_data.get("session_id")
+            if contact_session and target_session and contact_session != target_session:
+                continue
+            phonebook_name = c_data.get("phonebook_name")
+            wa_name = c_data.get("whatsapp_name")
+            if phonebook_name and not is_generic_or_placeholder_name(str(phonebook_name), clean_cp):
+                c_name = str(phonebook_name).strip()
+            elif c.full_name and not is_generic_or_placeholder_name(c.full_name, clean_cp):
+                c_name = c.full_name.strip()
+            elif wa_name and not is_generic_or_placeholder_name(str(wa_name), clean_cp):
+                c_name = str(wa_name).strip()
+            else:
+                c_name = format_display_phone(clean_cp)
+
+            parts = c_name.strip().split()
+            initials = (parts[0][0] + (parts[1][0] if len(parts) > 1 else ""))[:2].upper() if parts else "WA"
+
+            conv_map[clean_cp] = {
+                "id": f"conv-{clean_cp}",
+                "phone_number": clean_cp,
+                "contact_id": c.id,
+                "assigned_user_id": c.assigned_user_id or user_session_id,
+                "business_phone_number_id": target_session,
+                "contact_name": c_name,
+                "company_name": c.company_name or "Direct Contact",
+                "email": c.email or "",
+                "avatar_url": c_data.get("avatar_url"),
+                "avatar_initials": initials,
+                "deal_stage": c.lifecycle_stage or "Lead",
+                "deal_value": 0,
+                "assigned_rep": {
+                    "id": c.assigned_user_id or user_session_id,
+                    "name": getattr(c, "assigned_user_name", None) or "Assigned Rep",
+                    "avatar": "SR",
+                    "role": "Sales Representative"
+                },
+                "last_message": "Direct contact ready to chat",
+                "last_message_type": "text",
+                "media_url": None,
+                "is_voice_note": False,
+                "is_pinned": bool(c_data.get("is_pinned", False)),
+                "is_archived": bool(c_data.get("is_archived", False)),
+                "is_blocked": bool(c_data.get("is_blocked", False)),
+                "last_message_time": c.updated_at.isoformat() if getattr(c, "updated_at", None) else (c.created_at.isoformat() if getattr(c, "created_at", None) else datetime.datetime.utcnow().isoformat()),
+                "last_direction": "INBOUND",
+                "last_status": "READ",
+                "unread_count": 0
+            }
+
+    # Sort pinned to the top, then by last message time
     active_conversations = list(conv_map.values())
     active_conversations.sort(
         key=lambda c: (1 if c.get("is_pinned") else 0, c.get("last_message_time") or ""),
@@ -1113,10 +1224,13 @@ async def get_whatsapp_qr_status(
                                 current_user.whatsapp_phone_number = data.get("phone")
                                 await db.commit()
                         elif data.get("status") != "CONNECTED":
-                            if current_user.whatsapp_phone_number is not None:
-                                current_user.whatsapp_phone_number = None
-                                await db.commit()
-                            data["phone"] = None
+                            if data.get("logged_out"):
+                                if current_user.whatsapp_phone_number is not None:
+                                    current_user.whatsapp_phone_number = None
+                                    await db.commit()
+                                data["phone"] = None
+                            elif current_user.whatsapp_phone_number:
+                                data["phone"] = current_user.whatsapp_phone_number
 
                     return data
         except Exception as e:
@@ -1125,10 +1239,11 @@ async def get_whatsapp_qr_status(
     if user_cache["data"] and user_cache["data"].get("gateway_online") and user_cache["data"].get("status") == "CONNECTED" and (now - user_cache["ts"] < 15.0):
         return user_cache["data"]
 
+    saved_phone = current_user.whatsapp_phone_number if current_user else None
     return {
-        "status": "DISCONNECTED",
-        "phone": None,
-        "name": None,
+        "status": "CONNECTED" if saved_phone else "DISCONNECTED",
+        "phone": saved_phone,
+        "name": getattr(current_user, "full_name", None),
         "avatar_url": None,
         "qr": None,
         "gateway_online": False,
