@@ -1897,6 +1897,17 @@ async def backup_whatsapp_session(
     """
     clean_session = payload.session_id.strip()
     clean_phone = normalize_phone(payload.owner_phone) if payload.owner_phone else None
+    auth_data_str = str(payload.auth_data or "")
+
+    # NEVER backup dead/deregistered credentials!
+    if '"registered":false' in auth_data_str or '"registered": false' in auth_data_str:
+        logger.info(f"[SESSION BACKUP] Skipping backup of dead/deregistered session {clean_session}")
+        await db.execute(
+            text("DELETE FROM whatsapp_session_backups WHERE session_id = :s_id;"),
+            {"s_id": clean_session}
+        )
+        await db.commit()
+        return {"status": "skipped", "reason": "deregistered"}
 
     await db.execute(
         text("""
@@ -1911,6 +1922,22 @@ async def backup_whatsapp_session(
     )
     await db.commit()
     return {"status": "success", "session_id": clean_session}
+
+@router.delete("/session-backup/{session_id}")
+async def delete_whatsapp_session_backup(
+    session_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Deletes Baileys session backup from PostgreSQL upon logout or session reset.
+    """
+    clean_id = session_id.strip()
+    await db.execute(
+        text("DELETE FROM whatsapp_session_backups WHERE session_id = :s_id;"),
+        {"s_id": clean_id}
+    )
+    await db.commit()
+    return {"status": "success", "deleted": clean_id}
 
 @router.get("/session-restore/{session_id}")
 async def restore_whatsapp_session(
@@ -1937,6 +1964,16 @@ async def restore_whatsapp_session(
 
     if not row:
         raise HTTPException(status_code=404, detail="No session backup found")
+
+    auth_data_str = str(row[2] or "")
+    if '"registered":false' in auth_data_str or '"registered": false' in auth_data_str:
+        logger.warning(f"[SESSION RESTORE] Detected dead/deregistered backup for {clean_id}. Purging from DB...")
+        await db.execute(
+            text("DELETE FROM whatsapp_session_backups WHERE session_id = :s_id;"),
+            {"s_id": clean_id}
+        )
+        await db.commit()
+        raise HTTPException(status_code=404, detail="Session backup was deregistered and has been purged")
 
     return {
         "status": "success",

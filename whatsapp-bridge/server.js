@@ -553,6 +553,15 @@ async function backupSessionToDatabase(session) {
   }
 }
 
+async function deleteSessionBackupFromDatabase(sessionId) {
+  if (!sessionId) return;
+  try {
+    await fetch(`${FASTAPI_SESSION_BACKUP_URL}/${sessionId}`, {
+      method: 'DELETE'
+    });
+  } catch (_) {}
+}
+
 async function restoreSessionFromDatabase(session) {
   if (!session) return false;
   try {
@@ -561,6 +570,16 @@ async function restoreSessionFromDatabase(session) {
       const data = await res.json();
       if (data && data.auth_data) {
         const bundle = typeof data.auth_data === 'string' ? JSON.parse(data.auth_data) : data.auth_data;
+        if (bundle && bundle['creds.json']) {
+          try {
+            const parsedCreds = typeof bundle['creds.json'] === 'string' ? JSON.parse(bundle['creds.json']) : bundle['creds.json'];
+            if (parsedCreds.registered === false) {
+              console.warn(`[WhatsApp Gateway:${session.id}] Ignoring dead/deregistered backup from database.`);
+              deleteSessionBackupFromDatabase(session.id);
+              return false;
+            }
+          } catch (_) {}
+        }
         if (!fs.existsSync(session.authDir)) fs.mkdirSync(session.authDir, { recursive: true });
         for (const [fname, content] of Object.entries(bundle)) {
           fs.writeFileSync(path.join(session.authDir, fname), typeof content === 'string' ? content : JSON.stringify(content));
@@ -645,22 +664,6 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
 
     const { state, saveCreds } = await useMultiFileAuthState(session.authDir);
 
-    // If credentials exist but marked as deregistered or not registered, purge dead keys for clean QR pairing
-    if (state?.creds && state.creds.registered === false && state.creds.me) {
-      console.warn(`[WhatsApp Gateway:${session.id}] Stale/deregistered credentials detected for ${session.id}. Purging auth dir for clean QR pairing.`);
-      try {
-        if (fs.existsSync(session.authDir)) {
-          fs.rmSync(session.authDir, { recursive: true, force: true });
-        }
-      } catch (_) {}
-      session.phone = null;
-      session.ownerPhone = null;
-      session.qr = null;
-      session.status = 'SCAN_QR';
-      session.isStarting = false;
-      return initWhatsApp(sessionId, true);
-    }
-
     if (state?.creds?.me?.id && state?.creds?.registered !== false) {
       const mePhone = state.creds.me.id.split(':')[0].replace(/[^0-9]/g, '');
       if (mePhone) {
@@ -675,7 +678,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
       logger,
       printQRInTerminal: false,
       auth: state,
-      browser: ['Zigmaa CRM', 'Desktop', '1.0.0'],
+      browser: Browsers.macOS('Desktop'),
       syncFullHistory: false,
       markOnlineOnConnect: true,
       connectTimeoutMs: 60000,
@@ -739,6 +742,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
               fs.rmSync(session.authDir, { recursive: true, force: true });
             }
           } catch (_) {}
+          deleteSessionBackupFromDatabase(session.id);
           try {
             fetch(FASTAPI_STATUS_UPDATE_URL, {
               method: 'POST',
@@ -753,6 +757,14 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
             }).catch(() => {});
           } catch (_) {}
           // Do NOT auto-reconnect on explicit logout - wait for user to click Scan QR
+        } else if (statusCode === DisconnectReason.restartRequired || statusCode === 515) {
+          console.log(`[WhatsApp Gateway:${session.id}] WhatsApp QR Scan accepted by server (code 515 restartRequired). Reconnecting immediately to finalize pairing...`);
+          session.isStarting = false;
+          if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
+          session.reconnectTimer = setTimeout(() => {
+            session.reconnectTimer = null;
+            initWhatsApp(session.id, false);
+          }, 500);
         } else if (statusCode === 440) {
           console.warn(`[WhatsApp Gateway:${session.id}] Status 440 (Conflict). Waiting 3s for clean reconnect...`);
           session.isStarting = false;
@@ -1334,6 +1346,7 @@ async function disconnectSession(sessionId) {
       fs.rmSync(session.authDir, { recursive: true, force: true });
     } catch (_) {}
   }
+  deleteSessionBackupFromDatabase(session.id);
   sessions.delete(session.id);
 }
 
