@@ -220,7 +220,6 @@ export default function ContactSlideDrawer({
       ...payload
     }));
     setEditingField(null);
-    toast.success("Contact Updated", `${field} saved successfully.`);
 
     try {
       const updated = await api.updateContact(currentContact.id, payload);
@@ -229,6 +228,10 @@ export default function ContactSlideDrawer({
           ...prev,
           ...updated
         }));
+      }
+      toast.success("Contact Updated", `${field} saved successfully.`);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("contacts_updated"));
       }
       if (onUpdated) onUpdated();
     } catch (err: any) {

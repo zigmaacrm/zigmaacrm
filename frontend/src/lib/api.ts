@@ -1874,14 +1874,25 @@ export const zigmaaApi = {
         const updated = contacts.map(item => String(item.id) === String(id) ? { ...item, ...normalized } : item);
         setStorage("zigmaa_contacts", updated);
         return normalized;
+      } else {
+        let errMsg = "Failed to update contact";
+        try {
+          const errData = await res.json();
+          errMsg = errData.detail || errMsg;
+        } catch (_) {}
+        throw new Error(errMsg);
       }
-    } catch {}
-
-    clientMemoryCache.delete("contacts:all");
-    const contacts = getStorage<Contact[]>("zigmaa_contacts", INITIAL_CONTACTS);
-    const updated = contacts.map(c => String(c.id) === String(id) ? { ...c, ...data } : c);
-    setStorage("zigmaa_contacts", updated);
-    return data;
+    } catch (err: any) {
+      if (err.message && !err.message.includes("Failed to fetch")) {
+        throw err;
+      }
+      // Fallback for offline / demo mode
+      clientMemoryCache.delete("contacts:all");
+      const contacts = getStorage<Contact[]>("zigmaa_contacts", INITIAL_CONTACTS);
+      const updated = contacts.map(c => String(c.id) === String(id) ? { ...c, ...data } : c);
+      setStorage("zigmaa_contacts", updated);
+      return data;
+    }
   },
 
   async deleteContact(id: number | string): Promise<boolean> {
@@ -1939,6 +1950,36 @@ export const zigmaaApi = {
         ...getAuthHeaders()
       },
       body: JSON.stringify(data)
+    });
+
+    if (!res.ok) {
+      let errorMsg = "Failed to send email";
+      try {
+        const errJson = await res.json();
+        errorMsg = errJson.detail || errorMsg;
+      } catch {}
+      throw new Error(errorMsg);
+    }
+
+    return await res.json();
+  },
+
+  async sendEmail(payload: {
+    to: string | string[];
+    subject: string;
+    body: string;
+    html_body?: string;
+    contact_id?: string;
+    lead_id?: string;
+    deal_id?: string;
+  }): Promise<any> {
+    const res = await fetch(`${API_BASE}/emails/send`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...getAuthHeaders()
+      },
+      body: JSON.stringify(payload)
     });
 
     if (!res.ok) {

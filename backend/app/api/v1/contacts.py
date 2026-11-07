@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func, delete
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
+from datetime import datetime
 
 from app.core.database import get_db
 from app.models.contact import Contact
@@ -591,14 +592,22 @@ async def update_contact(
     if not contact:
         raise HTTPException(status_code=404, detail="Contact not found")
 
+    target_org_id = contact.organization_id
+
+    # Only validate phone uniqueness if phone is actually being changed to a different number
     if "phone" in contact_in and contact_in["phone"]:
-        raw_phone = str(contact_in["phone"])
+        raw_phone = str(contact_in["phone"]).strip()
         clean_phone = "".join(c for c in raw_phone if c.isdigit())
-        if clean_phone and len(clean_phone) >= 7:
+        curr_clean_phone = "".join(c for c in (contact.phone or "") if c.isdigit())
+        if clean_phone and len(clean_phone) >= 7 and clean_phone != curr_clean_phone:
             phone_suffix = clean_phone[-10:] if len(clean_phone) >= 10 else clean_phone
-            dup_phone_res = await db.execute(
-                select(Contact).where(Contact.id != contact_id, Contact.phone.ilike(f"%{phone_suffix}%"))
+            dup_stmt = select(Contact).where(
+                Contact.id != contact_id,
+                Contact.phone.ilike(f"%{phone_suffix}%")
             )
+            if target_org_id:
+                dup_stmt = dup_stmt.where(Contact.organization_id == target_org_id)
+            dup_phone_res = await db.execute(dup_stmt)
             dup_phone = dup_phone_res.scalars().first()
             if dup_phone:
                 raise HTTPException(
@@ -606,12 +615,18 @@ async def update_contact(
                     detail=f"Another contact already exists with mobile number '{contact_in['phone']}' ({dup_phone.full_name})."
                 )
 
+    # Only validate email uniqueness if email is actually being changed to a different email
     if "email" in contact_in and contact_in["email"]:
         clean_email = str(contact_in["email"]).strip().lower()
-        if clean_email:
-            dup_email_res = await db.execute(
-                select(Contact).where(Contact.id != contact_id, func.lower(Contact.email) == clean_email)
+        curr_clean_email = str(contact.email or "").strip().lower()
+        if clean_email and clean_email != curr_clean_email:
+            dup_stmt = select(Contact).where(
+                Contact.id != contact_id,
+                func.lower(Contact.email) == clean_email
             )
+            if target_org_id:
+                dup_stmt = dup_stmt.where(Contact.organization_id == target_org_id)
+            dup_email_res = await db.execute(dup_stmt)
             dup_email = dup_email_res.scalars().first()
             if dup_email:
                 raise HTTPException(
@@ -650,11 +665,13 @@ async def update_contact(
         contact.lifecycle_stage = contact_in["status"]
 
     if "phone" in contact_in:
-        contact.phone = contact_in["phone"]
+        contact.phone = str(contact_in["phone"]).strip() if contact_in["phone"] else None
     if "email" in contact_in:
-        contact.email = contact_in["email"]
+        contact.email = str(contact_in["email"]).strip() if contact_in["email"] else None
     if "source" in contact_in:
         contact.source = contact_in["source"]
+
+    contact.updated_at = datetime.utcnow()
 
     # 2. Custom properties & custom data handling
     if "custom_properties" in contact_in and isinstance(contact_in["custom_properties"], dict):
@@ -788,61 +805,20 @@ async def send_contact_email(
     )
     sender_name = (current_user.full_name if current_user and current_user.full_name else None) or contact.assigned_user_name or "Team"
 
-    # Send email using Gmail API (if Google OAuth connected) or SMTP service / fallback
-    sent_successfully = False
-    if current_user and current_user.is_google_connected and current_user.google_access_token:
-        try:
-            import base64
-            from email.mime.text import MIMEText
-            from email.mime.multipart import MIMEMultipart
-            import httpx
+    # Send email using Gmail API (if Google OAuth connected) or fallback to SMTP
+    from app.services.gmail_service import dispatch_email_service
+    dispatch_res = await dispatch_email_service(
+        db=db,
+        current_user=current_user,
+        to_email=contact.email,
+        subject=req.subject,
+        body=req.body
+    )
 
-            message = MIMEMultipart("alternative")
-            message["to"] = contact.email
-            message["from"] = f"{sender_name} <{sender_email}>"
-            message["subject"] = req.subject
-            part = MIMEText(req.body, "plain")
-            message.attach(part)
-            raw = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
-
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                g_res = await client.post(
-                    "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
-                    headers={"Authorization": f"Bearer {current_user.google_access_token}"},
-                    json={"raw": raw}
-                )
-                if g_res.status_code in [200, 201]:
-                    sent_successfully = True
-                    print(f"[Gmail API]: Successfully dispatched email to {contact.email} from {sender_email}")
-                else:
-                    print(f"[Gmail API Warning]: status={g_res.status_code}, text={g_res.text}")
-        except Exception as ge:
-            print(f"[Gmail API Error]: {ge}")
-
-    if not sent_successfully:
-        from app.core.config import settings
-        if settings.SMTP_USER and settings.SMTP_PASSWORD:
-            try:
-                import asyncio
-                from app.core.email import send_email_async
-                html_body = f"""
-                <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1e293b; max-width: 600px; padding: 20px;">
-                    <p>{req.body.replace(chr(10), '<br/>')}</p>
-                    <br/>
-                    <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
-                    <p style="font-size: 12px; color: #94a3b8;">Sent via Zigmaa CRM by {sender_name}</p>
-                </div>
-                """
-                await asyncio.wait_for(send_email_async(contact.email, req.subject, html_body), timeout=5.0)
-                sent_successfully = True
-            except Exception as e:
-                print(f"[SMTP Send Warning]: {e}, logged mock interaction cleanly.")
-        else:
-            print(f"[Local Mock Email]: From={sender_email}, To={contact.email}, Subject={req.subject}, Body length={len(req.body)}")
-            sent_successfully = True
+    actual_sender = dispatch_res.get("sender") or sender_email
 
     # Audit & Record to Activity Timeline
-    activity_note = f"Sent Email from {sender_email}: \"{req.subject}\"\n\n{req.body}"
+    activity_note = f"Sent Email ({dispatch_res.get('channel', 'email')}) from {actual_sender}: \"{req.subject}\"\n\n{req.body}"
     activity = Activity(
         organization_id=contact.organization_id or (current_user.organization_id if current_user else "default-org"),
         contact_id=contact.id,
@@ -857,9 +833,12 @@ async def send_contact_email(
     return {
         "status": "success",
         "message": f"Email successfully sent to {contact.email}",
-        "sender": sender_email,
+        "sender": actual_sender,
         "recipient": contact.email,
         "subject": req.subject,
+        "channel": dispatch_res.get("channel"),
+        "message_id": dispatch_res.get("message_id"),
+        "thread_id": dispatch_res.get("thread_id"),
         "activity": {
             "id": activity.id,
             "type": "EMAIL",

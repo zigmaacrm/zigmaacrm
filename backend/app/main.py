@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import engine, Base
-from app.api.v1 import auth, organizations, leads, pipelines, deals, activities, webhooks, automations, invoices, contacts, custom_fields, copilot, tasks, dashboard, calendar, settings as settings_router, team, telephony, whatsapp, super_admin, integrations_google
+from app.api.v1 import auth, organizations, leads, pipelines, deals, activities, webhooks, automations, invoices, contacts, custom_fields, copilot, tasks, dashboard, calendar, settings as settings_router, team, telephony, whatsapp, super_admin, integrations_google, emails
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -189,6 +189,8 @@ app.include_router(copilot.router, prefix=settings.API_V1_STR, tags=["AI Copilot
 app.include_router(telephony.router, prefix=settings.API_V1_STR, tags=["Telephony"])
 app.include_router(telephony.router, prefix=f"{settings.API_V1_STR}/telephony", tags=["Telephony-Direct"])
 app.include_router(integrations_google.router, prefix=f"{settings.API_V1_STR}/integrations/google", tags=["Google-Integration"])
+app.include_router(emails.router, prefix=f"{settings.API_V1_STR}/emails", tags=["Emails"])
+app.include_router(emails.router, prefix=settings.API_V1_STR, tags=["Emails-Direct"])
 
 @app.on_event("startup")
 async def on_startup():
@@ -231,6 +233,22 @@ async def on_startup():
                 await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS message_type VARCHAR(50) DEFAULT 'text';"))
                 await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS session_id VARCHAR(100);"))
                 await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS quoted_context TEXT;"))
+                # OAuth Tokens Table (Gmail OAuth Integration)
+                await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS oauth_tokens (
+                        id VARCHAR(36) PRIMARY KEY,
+                        user_id VARCHAR(36) NOT NULL,
+                        provider VARCHAR(50) NOT NULL DEFAULT 'google',
+                        access_token TEXT,
+                        refresh_token TEXT,
+                        expires_at TIMESTAMP WITHOUT TIME ZONE,
+                        email VARCHAR(255),
+                        is_connected BOOLEAN DEFAULT TRUE,
+                        created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+                        updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()
+                    );
+                """))
+                await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_oauth_tokens_user_provider ON oauth_tokens (user_id, provider);"))
                 # WhatsApp Session Multi-Instance Cloud Persistence Table
                 await conn.execute(text("""
                     CREATE TABLE IF NOT EXISTS whatsapp_session_backups (

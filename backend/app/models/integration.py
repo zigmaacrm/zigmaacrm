@@ -15,3 +15,16 @@ class UserIntegration(TimeStampedBase):
 
     user = relationship("User", backref="user_integration")
 
+class OAuthToken(TimeStampedBase):
+    __tablename__ = "oauth_tokens"
+
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider = Column(String(50), default="google", nullable=False, index=True)
+    access_token = Column(Text, nullable=True)
+    refresh_token = Column(Text, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    email = Column(String(255), nullable=True)
+    is_connected = Column(Boolean, default=True)
+
+    user = relationship("User", backref="oauth_tokens")
+

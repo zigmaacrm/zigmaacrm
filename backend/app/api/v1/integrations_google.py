@@ -14,7 +14,7 @@ import base64
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.organization_user import User
-from app.models.integration import UserIntegration
+from app.models.integration import UserIntegration, OAuthToken
 from app.api.deps import get_current_user
 
 logger = logging.getLogger("zigmaa.integrations.google")
@@ -214,6 +214,33 @@ async def google_oauth_callback(
                     integration.google_refresh_token = refresh_token
                 integration.google_token_expiry = token_expiry
                 integration.is_google_connected = True
+
+            # Also update or create OAuthToken record
+            try:
+                tok_res = await db.execute(
+                    select(OAuthToken).where(OAuthToken.user_id == user.id, OAuthToken.provider == "google")
+                )
+                oauth_tok = tok_res.scalar_one_or_none()
+                if not oauth_tok:
+                    oauth_tok = OAuthToken(
+                        user_id=user.id,
+                        provider="google",
+                        email=google_email,
+                        access_token=access_token,
+                        refresh_token=refresh_token,
+                        expires_at=token_expiry,
+                        is_connected=True
+                    )
+                    db.add(oauth_tok)
+                else:
+                    oauth_tok.email = google_email
+                    oauth_tok.access_token = access_token
+                    if refresh_token:
+                        oauth_tok.refresh_token = refresh_token
+                    oauth_tok.expires_at = token_expiry
+                    oauth_tok.is_connected = True
+            except Exception as o_err:
+                logger.warning(f"OAuthToken sync warning: {o_err}")
 
             await db.commit()
             logger.info(f"Successfully connected Google OAuth for user {user.id} ({google_email})")
