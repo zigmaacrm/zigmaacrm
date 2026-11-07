@@ -1451,7 +1451,7 @@ export default function WhatsAppPage() {
       },
       businessPhoneNumberId: raw.business_phone_number_id,
       dealStage: raw.deal_stage || "Qualified",
-      dealValue: raw.deal_value || 1480000,
+      dealValue: raw.deal_value || 0,
       dealCloseDate: "28 Oct 2026",
       unreadCount: raw.unread_count || 0,
       isAssignedToMe: isMine,

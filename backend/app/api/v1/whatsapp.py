@@ -868,7 +868,7 @@ async def get_whatsapp_conversations(
                     "avatar_url": avatar_url,
                     "avatar_initials": initials,
                     "deal_stage": stage,
-                    "deal_value": 1480000,
+                    "deal_value": 0,
                     "assigned_rep": {
                         "id": m.assigned_user_id,
                         "name": rep_name,

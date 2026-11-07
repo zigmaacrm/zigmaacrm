@@ -618,14 +618,12 @@ export const zigmaaApi = {
       });
       if (res.ok) {
         const json = await res.json();
-        // If backend returns zero pipeline/deals but real user deals exist, merge real data!
-        if (deals.length > 0 && (json.pipeline_value === 0 || json.active_deals_count === 0)) {
-          json.pipeline_value = realPipelineVal;
-          json.active_deals_count = realActiveCount;
-          if (realWonRev > 0) {
-            json.won_revenue = realWonRev;
-            json.won_deals_count = realWonCount;
-          }
+
+        // If backend authentically reports zero active deals, ensure local cache is purged
+        if (json.active_deals_count === 0 && (!json.stage_breakdown || json.stage_breakdown.length === 0)) {
+          setStorage("zigmaa_deals", []);
+          clientMemoryCache.delete("deals:all");
+          clientMemoryCache.delete("deals:board");
         }
 
         // Clean up stage_breakdown: Filter out any stages with 0 deals
@@ -638,15 +636,9 @@ export const zigmaaApi = {
               color: STAGE_COLORS[normalizeStage(st.title)] || st.color || "#3b82f6"
             }));
 
-          if (cleanedBreakdown.length > 0) {
-            json.stage_breakdown = cleanedBreakdown;
-          } else if (realStageBreakdown.length > 0) {
-            json.stage_breakdown = realStageBreakdown;
-          } else {
-            json.stage_breakdown = [];
-          }
-        } else if (realStageBreakdown.length > 0) {
-          json.stage_breakdown = realStageBreakdown;
+          json.stage_breakdown = cleanedBreakdown;
+        } else {
+          json.stage_breakdown = [];
         }
 
         clientMemoryCache.set(cacheKey, { data: json, timestamp: Date.now() });
