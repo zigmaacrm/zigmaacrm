@@ -30,3 +30,19 @@ class MessageLog(TimeStampedBase):
     body = Column(Text, nullable=False)
     status = Column(String(50), default="SENT")  # SENT, DELIVERED, READ, FAILED
     sent_at = Column(DateTime, default=datetime.utcnow)
+
+class EmailLog(TimeStampedBase):
+    __tablename__ = "email_logs"
+
+    organization_id = Column(String(36), ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True, index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    contact_id = Column(String(36), ForeignKey("contacts.id", ondelete="SET NULL"), nullable=True, index=True)
+    lead_id = Column(String(36), ForeignKey("leads.id", ondelete="SET NULL"), nullable=True, index=True)
+    sender = Column(String(255), nullable=False)
+    recipient = Column(String(255), nullable=False)
+    subject = Column(String(500), nullable=False)
+    message_id = Column(String(255), nullable=True)        # Gmail API Message ID
+    rfc_message_id = Column(String(255), nullable=True, index=True)    # Standard RFC Message-ID header
+    channel = Column(String(50), default="gmail_oauth")    # gmail_oauth, system_smtp
+    status = Column(String(50), default="SENT")            # SENT, DELIVERED, FAILED
+    sent_at = Column(DateTime, default=datetime.utcnow)

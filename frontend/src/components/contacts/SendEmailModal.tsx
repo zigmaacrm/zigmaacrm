@@ -120,15 +120,16 @@ export default function SendEmailModal({
   if (!isOpen) return null;
 
   const handleInsertTemplate = (type: "intro" | "followup") => {
+    const senderDisplayName = currentUser?.full_name || "Team";
     if (type === "intro") {
       setSubject(`Introduction: Zigmaa CRM Solutions for ${contact.name}`);
       setBody(
-        `Hi ${contact.name},\n\nIt was great connecting with you. I wanted to follow up and introduce our enterprise CRM capabilities tailored for your team's workflow.\n\nWould you be open for a brief 10-minute demo this week?\n\nBest regards,\nMohamed Thoufiq\nZigmaa CRM Team`
+        `Hi ${contact.name},\n\nIt was great connecting with you. I wanted to follow up and introduce our enterprise CRM capabilities tailored for your team's workflow.\n\nWould you be open for a brief 10-minute demo this week?\n\nBest regards,\n${senderDisplayName}\nZigmaa CRM`
       );
     } else if (type === "followup") {
       setSubject(`Following up on our conversation - ${contact.name}`);
       setBody(
-        `Hi ${contact.name},\n\nI hope you are having a productive week. Checking in to see if you have any questions regarding the proposal we discussed.\n\nLooking forward to hearing your thoughts.\n\nWarm regards,\nMohamed Thoufiq`
+        `Hi ${contact.name},\n\nI hope you are having a productive week. Checking in to see if you have any questions regarding the proposal we discussed.\n\nLooking forward to hearing your thoughts.\n\nWarm regards,\n${senderDisplayName}`
       );
     }
   };

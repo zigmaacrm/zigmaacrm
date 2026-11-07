@@ -249,6 +249,36 @@ async def on_startup():
                     );
                 """))
                 await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_oauth_tokens_user_provider ON oauth_tokens (user_id, provider);"))
+                # Email Logs Transaction Table (RFC-Compliant Delivery Tracking)
+                await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS email_logs (
+                        id VARCHAR(36) PRIMARY KEY,
+                        organization_id VARCHAR(36),
+                        user_id VARCHAR(36),
+                        contact_id VARCHAR(36),
+                        lead_id VARCHAR(36),
+                        sender VARCHAR(255) NOT NULL,
+                        recipient VARCHAR(255) NOT NULL,
+                        subject VARCHAR(500) NOT NULL,
+                        message_id VARCHAR(255),
+                        rfc_message_id VARCHAR(255),
+                        channel VARCHAR(50) DEFAULT 'gmail_oauth',
+                        status VARCHAR(50) DEFAULT 'SENT',
+                        sent_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+                        created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+                        updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()
+                    );
+                """))
+                try:
+                    await conn.execute(text("ALTER TABLE email_logs ALTER COLUMN organization_id DROP NOT NULL;"))
+                except Exception:
+                    pass
+                try:
+                    await conn.execute(text("ALTER TABLE email_logs DROP CONSTRAINT IF EXISTS email_logs_organization_id_fkey;"))
+                except Exception:
+                    pass
+                await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_email_logs_org ON email_logs (organization_id);"))
+                await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_email_logs_rfc_msgid ON email_logs (rfc_message_id);"))
                 # WhatsApp Session Multi-Instance Cloud Persistence Table
                 await conn.execute(text("""
                     CREATE TABLE IF NOT EXISTS whatsapp_session_backups (

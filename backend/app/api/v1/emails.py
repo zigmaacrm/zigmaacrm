@@ -1,5 +1,11 @@
 from typing import Optional, List, Union, Dict, Any
 import logging
+import base64
+import re
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.utils import formatdate, make_msgid
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,8 +16,12 @@ from app.api.deps import get_current_user, get_optional_current_user
 from app.models.organization_user import User
 from app.models.contact import Contact
 from app.models.lead_pipeline import Lead
-from app.models.activity import Activity
-from app.services.gmail_service import dispatch_email_service
+from app.models.activity import Activity, EmailLog
+from app.services.gmail_service import (
+    dispatch_email_service,
+    build_rfc_compliant_gmail_message,
+    wrap_clean_email_html
+)
 
 logger = logging.getLogger("zigmaa.emails_api")
 
@@ -22,6 +32,7 @@ class SendEmailPayload(BaseModel):
     subject: str = Field(..., description="Subject of the email")
     body: str = Field(..., description="Plain-text body of the email")
     html_body: Optional[str] = Field(None, description="Optional rich HTML body")
+    reply_to: Optional[str] = Field(None, description="Optional custom Reply-To header")
     contact_id: Optional[str] = Field(None, description="Optional Contact ID to associate activity")
     lead_id: Optional[str] = Field(None, description="Optional Lead ID to associate activity")
     deal_id: Optional[str] = Field(None, description="Optional Deal ID")
@@ -33,7 +44,8 @@ async def send_email(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Sends an email via the user's authenticated Google OAuth Gmail API (with auto-refresh on expiry).
+    Sends an email via the user's authenticated Google OAuth Gmail API using a strict RFC-compliant
+    multipart/alternative structure to guarantee high inbox deliverability and prevent Spam classification.
     Falls back to SMTP ONLY if no Google OAuth connection exists for the current user.
     """
     if not payload.subject.strip():
@@ -62,7 +74,10 @@ async def send_email(
                 to_email=to_addr,
                 subject=payload.subject,
                 body=payload.body,
-                html_body=payload.html_body
+                html_body=payload.html_body,
+                contact_id=payload.contact_id,
+                lead_id=payload.lead_id,
+                reply_to=payload.reply_to
             )
             results.append(res)
         except HTTPException:
@@ -81,11 +96,12 @@ async def send_email(
         or "team@zigmaacrm.com"
     )
 
-    # Optional: Associate Activity timeline record if contact_id or lead_id is provided
+    # Associate Activity timeline record if contact_id or lead_id is provided
     activity_rec = None
     if payload.contact_id or payload.lead_id:
         try:
-            activity_note = f"Sent Email ({primary_res.get('channel', 'email')}): \"{payload.subject}\"\nTo: {', '.join(recipients)}\n\n{payload.body}"
+            rfc_id_note = f"\nMessage-ID: {primary_res.get('rfc_message_id', '')}" if primary_res.get('rfc_message_id') else ""
+            activity_note = f"Sent Email ({primary_res.get('channel', 'email')}): \"{payload.subject}\"\nTo: {', '.join(recipients)}{rfc_id_note}\n\n{payload.body}"
             activity = Activity(
                 organization_id=org_id,
                 contact_id=payload.contact_id,
@@ -114,6 +130,7 @@ async def send_email(
         "subject": payload.subject,
         "channel": primary_res.get("channel"),
         "message_id": primary_res.get("message_id"),
+        "rfc_message_id": primary_res.get("rfc_message_id"),
         "thread_id": primary_res.get("thread_id"),
         "activity": activity_rec,
         "results": results

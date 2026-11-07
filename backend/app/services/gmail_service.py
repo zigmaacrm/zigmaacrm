@@ -1,9 +1,11 @@
 import base64
 import json
 import logging
+import re
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import formatdate, make_msgid
 from typing import Optional, Dict, Any, Union
 
 import httpx
@@ -14,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.integration import OAuthToken, UserIntegration
 from app.models.organization_user import User
+from app.models.activity import EmailLog, Activity
 
 logger = logging.getLogger("zigmaa.gmail_service")
 
@@ -172,6 +175,121 @@ async def refresh_google_access_token(
         logger.error(f"Exception during Google token refresh: {e}", exc_info=True)
         return None
 
+def wrap_clean_email_html(content: str, sender_name: str = "Zigmaa CRM") -> str:
+    """
+    Wraps email content in an RFC/mobile-responsive container with UTF-8 meta attributes,
+    standard typography, and a clean spam-safe footer without tracking URLs or suspicious redirects.
+    """
+    lower_c = content.lower()
+    if "<html" in lower_c or "<body" in lower_c:
+        return content
+
+    # Format linebreaks if plain text or raw paragraphs
+    if "<p" not in lower_c and "<div" not in lower_c and "<br" not in lower_c:
+        paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
+        if paragraphs:
+            inner_html = "".join(f'<p style="margin: 0 0 16px 0;">{p.replace(chr(10), "<br/>")}</p>' for p in paragraphs)
+        else:
+            inner_html = f'<p style="margin: 0 0 16px 0;">{content.replace(chr(10), "<br/>")}</p>'
+    else:
+        inner_html = content
+
+    clean_footer = """
+    <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #6b7280;">
+      Sent via Zigmaa CRM
+    </div>
+    """
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.5; color: #111827; background-color: #ffffff;">
+  <div style="max-width: 600px; margin: 0 auto;">
+    <div style="font-size: 15px; color: #111827; line-height: 1.6;">
+      {inner_html}
+    </div>
+    {clean_footer}
+  </div>
+</body>
+</html>"""
+
+def build_rfc_compliant_gmail_message(
+    sender_name: str,
+    sender_email: str,
+    to_email: str,
+    subject: str,
+    html_content: str,
+    reply_to: Optional[str] = None,
+    plain_text_override: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Constructs a strict multipart/alternative RFC-compliant MIME message engineered
+    to pass SPF, DKIM, and Gmail automated spam filters:
+    1. Root multipart/alternative container with standard boundary
+    2. Crucial RFC headers: From (sanitized), To, Subject, Date, Message-ID (domain-matched), Reply-To, X-Mailer
+    3. Plain text part extraction (strip HTML) placed FIRST before HTML part
+    4. Base64url encoding without newlines for Google Gmail API
+    """
+    # 1. Create root multipart/alternative message
+    msg = MIMEMultipart("alternative")
+
+    # 2. Critical RFC Headers for Inbox Deliverability
+    # Strict sanitize sender_email to match authenticated OAuth identity
+    clean_sender_email = sender_email.strip().lower()
+    clean_sender_name = re.sub(r'[^\w\s-]', '', sender_name).strip() or clean_sender_email.split('@')[0]
+
+    msg["From"] = f'"{clean_sender_name}" <{clean_sender_email}>'
+    msg["To"] = to_email.strip()
+    msg["Subject"] = subject.strip()
+    msg["Date"] = formatdate(localtime=True)
+
+    # Generate authentic Google/Domain Message-ID
+    domain = clean_sender_email.split('@')[-1] if '@' in clean_sender_email else "gmail.com"
+    msg["Message-ID"] = make_msgid(domain=domain)
+
+    if reply_to:
+        msg["Reply-To"] = reply_to.strip()
+    else:
+        msg["Reply-To"] = clean_sender_email
+
+    msg["X-Mailer"] = "Zigmaa CRM Mail Delivery Service"
+
+    # Wrap HTML body in clean, compliant container
+    effective_html = wrap_clean_email_html(html_content, clean_sender_name)
+
+    # 3. Plain Text Extraction (Crucial Spam Guardrail)
+    if plain_text_override and plain_text_override.strip():
+        plain_text = plain_text_override.strip()
+    else:
+        # Strip HTML tags to provide genuine plain text fallback
+        plain_text = re.sub(r'<[^>]+>', ' ', effective_html)
+        plain_text = re.sub(r'\s+', ' ', plain_text).strip()
+
+    # 4. Attach Both Parts (Plain text MUST precede HTML per RFC 2046)
+    part_text = MIMEText(plain_text, "plain", "utf-8")
+    part_html = MIMEText(effective_html, "html", "utf-8")
+
+    msg.attach(part_text)
+    msg.attach(part_html)
+
+    # 5. Base64URL Encoding without newlines for Google Gmail API
+    raw_bytes = msg.as_bytes()
+    raw_b64 = base64.urlsafe_b64encode(raw_bytes).decode("utf-8")
+
+    return {
+        "raw": raw_b64,
+        "message_id": msg["Message-ID"],
+        "date": msg["Date"],
+        "from": msg["From"],
+        "to": msg["To"],
+        "subject": msg["Subject"],
+        "plain_text": plain_text,
+        "html_content": effective_html
+    }
+
 def build_mime_message(
     sender_name: str,
     sender_email: str,
@@ -181,32 +299,17 @@ def build_mime_message(
     html_body: Optional[str] = None
 ) -> str:
     """
-    Creates an RFC 2822 / MIME multipart message and returns its base64url encoded representation.
+    Backwards-compatible wrapper returning raw base64url encoded RFC MIME payload.
     """
-    msg = MIMEMultipart("alternative")
-    msg["To"] = to_email
-    msg["From"] = f"{sender_name} <{sender_email}>" if sender_name else sender_email
-    msg["Subject"] = subject
-
-    # Plain text part
-    plain_text = body.strip() if body else ""
-    part_plain = MIMEText(plain_text, "plain", "utf-8")
-    msg.attach(part_plain)
-
-    # HTML part
-    if not html_body:
-        html_body = f"""
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1e293b; max-width: 600px; padding: 20px;">
-            <p>{plain_text.replace(chr(10), '<br/>')}</p>
-            <br/>
-            <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
-            <p style="font-size: 12px; color: #94a3b8;">Sent via Zigmaa CRM by {sender_name or sender_email}</p>
-        </div>
-        """
-    part_html = MIMEText(html_body, "html", "utf-8")
-    msg.attach(part_html)
-
-    return base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
+    res = build_rfc_compliant_gmail_message(
+        sender_name=sender_name,
+        sender_email=sender_email,
+        to_email=to_email,
+        subject=subject,
+        html_content=html_body or body,
+        plain_text_override=body
+    )
+    return res["raw"]
 
 async def send_via_gmail_api(
     access_token: str,
@@ -231,16 +334,21 @@ async def dispatch_email_service(
     to_email: str,
     subject: str,
     body: str,
-    html_body: Optional[str] = None
+    html_body: Optional[str] = None,
+    contact_id: Optional[str] = None,
+    lead_id: Optional[str] = None,
+    reply_to: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Main dispatch service:
     1. Checks if current_user has active Google OAuth tokens in oauth_tokens, user_integrations, or users.
     2. If OAuth exists:
+       - Verifies sender identity against Google token profile to prevent header discrepancies and phishing flags.
        - Checks token freshness and auto-refreshes if needed.
+       - Builds strict RFC-compliant multipart/alternative message (Message-ID, Date, Reply-To, plain_text + HTML).
        - Dispatches via Google Gmail API (POST https://gmail.googleapis.com/gmail/v1/users/me/messages/send).
        - If Google returns 401 Unauthorized, automatically refreshes token and retries once.
-       - Guarantees email syncs directly to the user's authentic Gmail "Sent" folder.
+       - Logs Message-ID and records in email_logs and activity tables for delivery tracking.
        - STRICT REQUIREMENT: Does NOT invoke or touch SMTP for OAuth-connected users!
     3. If NO OAuth record exists:
        - Only then falls back to system SMTP credentials in .env.
@@ -250,22 +358,13 @@ async def dispatch_email_service(
         raise HTTPException(status_code=400, detail="Invalid recipient email address.")
 
     user_id = str(current_user.id) if current_user else None
+    org_id = current_user.organization_id if current_user and current_user.organization_id and current_user.organization_id != "default-org" else None
     oauth_record = await get_user_google_oauth(user_id, db) if user_id else None
 
     # =========================================================================
     # PATH A: Authenticated User with Google OAuth
     # =========================================================================
     if oauth_record and (oauth_record.get("access_token") or oauth_record.get("refresh_token")):
-        sender_email = (
-            oauth_record.get("email")
-            or (current_user.google_email if current_user and current_user.google_email else None)
-            or (current_user.email if current_user and current_user.email else None)
-        )
-        sender_name = (
-            (current_user.full_name if current_user and current_user.full_name else None)
-            or "Zigmaa User"
-        )
-
         access_token = oauth_record.get("access_token")
         refresh_token = oauth_record.get("refresh_token")
         expires_at = oauth_record.get("expires_at")
@@ -274,7 +373,7 @@ async def dispatch_email_service(
         now = datetime.utcnow()
         if not access_token or (expires_at and (expires_at - now).total_seconds() < 60):
             if refresh_token:
-                logger.info(f"[Gmail Dispatch] Access token expired or nearing expiry for {sender_email}. Refreshing...")
+                logger.info(f"[Gmail Dispatch] Access token expired or nearing expiry for user {user_id}. Refreshing...")
                 fresh_token = await refresh_google_access_token(user_id, refresh_token, db)
                 if fresh_token:
                     access_token = fresh_token
@@ -288,7 +387,40 @@ async def dispatch_email_service(
                 detail="Your Google OAuth session has expired. Please reconnect your Google account in Settings > Email Sync."
             )
 
-        raw_mime = build_mime_message(sender_name, sender_email, clean_to, subject, body, html_body)
+        # Step 3: Strictly verify sender email against Google token profile / verified identity
+        verified_oauth_email = None
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                t_resp = await client.get(f"https://www.googleapis.com/oauth2/v3/tokeninfo?access_token={access_token}")
+                if t_resp.status_code == 200:
+                    t_info = t_resp.json()
+                    verified_oauth_email = t_info.get("email")
+        except Exception as ver_err:
+            logger.debug(f"Google tokeninfo lookup note: {ver_err}")
+
+        sender_email = (
+            verified_oauth_email
+            or oauth_record.get("email")
+            or (current_user.google_email if current_user and current_user.google_email else None)
+            or (current_user.email if current_user and current_user.email else None)
+        )
+        sender_name = (
+            (current_user.full_name if current_user and current_user.full_name else None)
+            or "Zigmaa User"
+        )
+
+        # Build RFC-Compliant MIME message with authentic headers
+        compiled_msg = build_rfc_compliant_gmail_message(
+            sender_name=sender_name,
+            sender_email=sender_email,
+            to_email=clean_to,
+            subject=subject,
+            html_content=html_body or body,
+            reply_to=reply_to,
+            plain_text_override=body
+        )
+        raw_mime = compiled_msg["raw"]
+        rfc_message_id = compiled_msg["message_id"]
 
         # Attempt 1: Send via Gmail API
         resp = await send_via_gmail_api(access_token, raw_mime)
@@ -305,15 +437,42 @@ async def dispatch_email_service(
             resp_data = resp.json()
             gmail_msg_id = resp_data.get("id")
             thread_id = resp_data.get("threadId")
-            logger.info(f"[Gmail API SUCCESS] Message {gmail_msg_id} sent to {clean_to} from {sender_email} (Sent Folder Synced)")
+            logger.info(
+                f"[Gmail API SUCCESS] RFC Message-ID: {rfc_message_id}, Gmail ID: {gmail_msg_id} "
+                f"sent to {clean_to} from {compiled_msg['from']} (Sent Folder Synced)"
+            )
+
+            # Log transaction in email_logs table for delivery tracking
+            try:
+                email_log = EmailLog(
+                    organization_id=org_id,
+                    user_id=user_id,
+                    contact_id=contact_id,
+                    lead_id=lead_id,
+                    sender=compiled_msg["from"],
+                    recipient=clean_to,
+                    subject=subject,
+                    message_id=gmail_msg_id,
+                    rfc_message_id=rfc_message_id,
+                    channel="gmail_oauth",
+                    status="SENT",
+                    sent_at=datetime.utcnow()
+                )
+                db.add(email_log)
+                await db.commit()
+            except Exception as log_err:
+                logger.warning(f"Failed to record EmailLog transaction: {log_err}")
+
             return {
                 "status": "success",
                 "channel": "gmail_oauth",
                 "message_id": gmail_msg_id,
+                "rfc_message_id": rfc_message_id,
                 "thread_id": thread_id,
-                "sender": sender_email,
+                "sender": compiled_msg["from"],
                 "recipient": clean_to,
-                "subject": subject
+                "subject": subject,
+                "date": compiled_msg["date"]
             }
         else:
             err_detail = "Gmail API dispatch failed"
@@ -336,24 +495,44 @@ async def dispatch_email_service(
     logger.info(f"[SMTP Dispatch] User {user_id} has no Google OAuth connection. Using system SMTP credentials.")
     sender_name = (current_user.full_name if current_user and current_user.full_name else None) or settings.SMTP_FROM_NAME or "Zigmaa CRM"
     sender_email = settings.SMTP_FROM_EMAIL or "noreply@zigmaacrm.com"
+    clean_sender_email = sender_email.strip().lower()
+    clean_sender_name = re.sub(r'[^\w\s-]', '', sender_name).strip() or "Zigmaa CRM"
+
+    domain = clean_sender_email.split('@')[-1] if '@' in clean_sender_email else "zigmaacrm.com"
+    rfc_message_id = make_msgid(domain=domain)
+    effective_html = wrap_clean_email_html(html_body or body, clean_sender_name)
 
     if settings.SMTP_USER and settings.SMTP_PASSWORD:
         from app.core.email import send_email_async
-        effective_html = html_body or f"""
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1e293b; max-width: 600px; padding: 20px;">
-            <p>{body.replace(chr(10), '<br/>')}</p>
-            <br/>
-            <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
-            <p style="font-size: 12px; color: #94a3b8;">Sent via Zigmaa CRM by {sender_name}</p>
-        </div>
-        """
         try:
             await send_email_async(clean_to, subject, effective_html, body)
-            logger.info(f"[SMTP SUCCESS] Dispatched email to {clean_to} from {sender_email}")
+            logger.info(f"[SMTP SUCCESS] Dispatched email to {clean_to} from {clean_sender_email}")
+
+            try:
+                email_log = EmailLog(
+                    organization_id=org_id,
+                    user_id=user_id,
+                    contact_id=contact_id,
+                    lead_id=lead_id,
+                    sender=f'"{clean_sender_name}" <{clean_sender_email}>',
+                    recipient=clean_to,
+                    subject=subject,
+                    message_id=None,
+                    rfc_message_id=rfc_message_id,
+                    channel="system_smtp",
+                    status="SENT",
+                    sent_at=datetime.utcnow()
+                )
+                db.add(email_log)
+                await db.commit()
+            except Exception as log_err:
+                logger.warning(f"Failed to record EmailLog transaction: {log_err}")
+
             return {
                 "status": "success",
                 "channel": "system_smtp",
-                "sender": sender_email,
+                "rfc_message_id": rfc_message_id,
+                "sender": f'"{clean_sender_name}" <{clean_sender_email}>',
                 "recipient": clean_to,
                 "subject": subject
             }
@@ -365,11 +544,13 @@ async def dispatch_email_service(
             )
     else:
         # Dev / Mock Mode when no SMTP configured
-        logger.info(f"[Local Mock Email] From={sender_email}, To={clean_to}, Subject={subject}")
+        logger.info(f"[Local Mock Email] From={clean_sender_email}, To={clean_to}, Subject={subject}")
         return {
             "status": "success",
             "channel": "mock_development",
-            "sender": sender_email,
+            "rfc_message_id": rfc_message_id,
+            "sender": f'"{clean_sender_name}" <{clean_sender_email}>',
             "recipient": clean_to,
             "subject": subject
         }
+

@@ -812,13 +812,15 @@ async def send_contact_email(
         current_user=current_user,
         to_email=contact.email,
         subject=req.subject,
-        body=req.body
+        body=req.body,
+        contact_id=contact.id
     )
 
     actual_sender = dispatch_res.get("sender") or sender_email
 
     # Audit & Record to Activity Timeline
-    activity_note = f"Sent Email ({dispatch_res.get('channel', 'email')}) from {actual_sender}: \"{req.subject}\"\n\n{req.body}"
+    rfc_id_note = f"\nMessage-ID: {dispatch_res.get('rfc_message_id', '')}" if dispatch_res.get('rfc_message_id') else ""
+    activity_note = f"Sent Email ({dispatch_res.get('channel', 'email')}) from {actual_sender}: \"{req.subject}\"{rfc_id_note}\n\n{req.body}"
     activity = Activity(
         organization_id=contact.organization_id or (current_user.organization_id if current_user else "default-org"),
         contact_id=contact.id,
@@ -838,6 +840,7 @@ async def send_contact_email(
         "subject": req.subject,
         "channel": dispatch_res.get("channel"),
         "message_id": dispatch_res.get("message_id"),
+        "rfc_message_id": dispatch_res.get("rfc_message_id"),
         "thread_id": dispatch_res.get("thread_id"),
         "activity": {
             "id": activity.id,
