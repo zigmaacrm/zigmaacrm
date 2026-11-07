@@ -47,16 +47,18 @@ async def get_dashboard_metrics(
     ) if is_rep else None
 
     # 1. Total Leads
-    target_org = current_user.organization_id or "default_org"
+    target_org = current_user.organization_id
 
     # 1. Total Leads
-    contact_query = select(Contact).where(
-        or_(
-            Contact.organization_id == target_org,
-            Contact.organization_id.is_(None),
-            Contact.organization_id == "default_org"
+    if target_org:
+        contact_query = select(Contact).where(Contact.organization_id == target_org)
+    else:
+        contact_query = select(Contact).where(
+            or_(
+                Contact.organization_id.is_(None),
+                Contact.organization_id == "default_org"
+            )
         )
-    )
     if is_rep:
         contact_query = contact_query.where(contact_rep_filter)
     if filter_start and range_type != "All Time":
@@ -72,40 +74,49 @@ async def get_dashboard_metrics(
     total_leads = len(contacts)
 
     # All-time contacts count for baseline
-    all_contacts_query = select(func.count(Contact.id)).where(
-        or_(
-            Contact.organization_id == target_org,
-            Contact.organization_id.is_(None),
-            Contact.organization_id == "default_org"
+    if target_org:
+        all_contacts_query = select(func.count(Contact.id)).where(Contact.organization_id == target_org)
+    else:
+        all_contacts_query = select(func.count(Contact.id)).where(
+            or_(
+                Contact.organization_id.is_(None),
+                Contact.organization_id == "default_org"
+            )
         )
-    )
     if is_rep:
         all_contacts_query = all_contacts_query.where(contact_rep_filter)
     all_contacts_res = await db.execute(all_contacts_query)
     all_time_leads = all_contacts_res.scalar() or 0
 
     # Leads created today
-    today_leads_query = select(func.count(Contact.id)).where(
-        Contact.created_at >= today_start,
-        or_(
-            Contact.organization_id == target_org,
-            Contact.organization_id.is_(None),
-            Contact.organization_id == "default_org"
+    if target_org:
+        today_leads_query = select(func.count(Contact.id)).where(
+            Contact.created_at >= today_start,
+            Contact.organization_id == target_org
         )
-    )
+    else:
+        today_leads_query = select(func.count(Contact.id)).where(
+            Contact.created_at >= today_start,
+            or_(
+                Contact.organization_id.is_(None),
+                Contact.organization_id == "default_org"
+            )
+        )
     if is_rep:
         today_leads_query = today_leads_query.where(contact_rep_filter)
     today_leads_res = await db.execute(today_leads_query)
     today_leads = today_leads_res.scalar() or 0
 
     # 2. Deals and Pipeline calculations
-    deals_query = select(Deal).where(
-        or_(
-            Deal.organization_id == target_org,
-            Deal.organization_id.is_(None),
-            Deal.organization_id == "default_org"
+    if target_org:
+        deals_query = select(Deal).where(Deal.organization_id == target_org)
+    else:
+        deals_query = select(Deal).where(
+            or_(
+                Deal.organization_id.is_(None),
+                Deal.organization_id == "default_org"
+            )
         )
-    )
     if is_rep:
         deal_rep_filter = or_(
             Deal.owner_id == current_user.id,

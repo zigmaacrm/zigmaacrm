@@ -988,7 +988,12 @@ async def bulk_sync_whatsapp_contacts(
     default_org = res_org.scalars().first()
     default_org_id = default_org.id if default_org else None
 
+    # Pre-resolve user org if payload has session_id or assigned_user_id
     effective_user_id = await resolve_valid_user_id(db, payload.assigned_user_id, payload.session_id)
+    if effective_user_id:
+        u_org = (await db.execute(select(User.organization_id).where(User.id == effective_user_id).limit(1))).scalar_one_or_none()
+        if u_org:
+            default_org_id = u_org
 
     synced_count = 0
     for item in payload.contacts:
@@ -1313,6 +1318,13 @@ async def sync_whatsapp_chat_history(
     default_org = res_org.scalars().first()
     default_org_id = default_org.id if default_org else None
 
+    # Pre-resolve user org if payload has session_id or assigned_user_id
+    effective_user_id = await resolve_valid_user_id(db, payload.assigned_user_id, payload.session_id)
+    if effective_user_id:
+        u_org = (await db.execute(select(User.organization_id).where(User.id == effective_user_id).limit(1))).scalar_one_or_none()
+        if u_org:
+            default_org_id = u_org
+
     synced_count = 0
     for item in payload.messages:
         clean_phone = normalize_phone(item.phone_number)
@@ -1517,6 +1529,13 @@ async def upload_and_send_voice_note(
     res_org = await db.execute(select(Organization).limit(1))
     default_org = res_org.scalars().first()
     default_org_id = default_org.id if default_org else None
+
+    # Pre-resolve user org if payload has session_id or assigned_user_id
+    effective_user_id = await resolve_valid_user_id(db, payload.assigned_user_id, payload.session_id)
+    if effective_user_id:
+        u_org = (await db.execute(select(User.organization_id).where(User.id == effective_user_id).limit(1))).scalar_one_or_none()
+        if u_org:
+            default_org_id = u_org
 
     wa_msg = WhatsAppMessage(
         organization_id=default_org_id,

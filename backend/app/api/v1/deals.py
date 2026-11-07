@@ -30,13 +30,7 @@ async def get_deals(
 ):
     query = select(Deal).order_by(Deal.id.desc())
     if current_user.organization_id:
-        query = query.where(
-            or_(
-                Deal.organization_id == current_user.organization_id,
-                Deal.organization_id.is_(None),
-                Deal.organization_id == "default_org"
-            )
-        )
+        query = query.where(Deal.organization_id == current_user.organization_id)
     if pipeline_id:
         query = query.where(Deal.pipeline_id == pipeline_id)
 
@@ -149,13 +143,7 @@ async def get_deals_board(
     # Retrieve deals for this pipeline with organization filtering
     deals_query = select(Deal).where(Deal.pipeline_id == pipeline.id)
     if current_user.organization_id:
-        deals_query = deals_query.where(
-            or_(
-                Deal.organization_id == current_user.organization_id,
-                Deal.organization_id.is_(None),
-                Deal.organization_id == "default_org"
-            )
-        )
+        deals_query = deals_query.where(Deal.organization_id == current_user.organization_id)
     role = (current_user.role or "").upper().replace(" ", "_")
     is_admin = role in ("ADMIN", "SUPER_ADMIN", "OWNER") or "ADMIN" in role
     if not is_admin and role in ("SALES_REP", "MEMBER", "REP"):
