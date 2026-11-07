@@ -4,7 +4,6 @@ import base64
 import re
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.utils import formatdate, make_msgid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field

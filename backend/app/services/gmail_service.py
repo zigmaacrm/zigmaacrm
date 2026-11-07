@@ -175,10 +175,11 @@ async def refresh_google_access_token(
         logger.error(f"Exception during Google token refresh: {e}", exc_info=True)
         return None
 
-def wrap_clean_email_html(content: str, sender_name: str = "Zigmaa CRM") -> str:
+def wrap_clean_email_html(content: str, sender_name: str = "") -> str:
     """
-    Wraps email content in an RFC/mobile-responsive container with UTF-8 meta attributes,
-    standard typography, and a clean spam-safe footer without tracking URLs or suspicious redirects.
+    Wraps email content in a clean, natural email container.
+    Keeps the body completely natural without any promotional or CRM footer text,
+    matching authentic email client output (Apple Mail / Gmail app).
     """
     lower_c = content.lower()
     if "<html" in lower_c or "<body" in lower_c:
@@ -194,24 +195,15 @@ def wrap_clean_email_html(content: str, sender_name: str = "Zigmaa CRM") -> str:
     else:
         inner_html = content
 
-    clean_footer = """
-    <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #6b7280;">
-      Sent via Zigmaa CRM
-    </div>
-    """
-
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 </head>
-<body style="margin: 0; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.5; color: #111827; background-color: #ffffff;">
-  <div style="max-width: 600px; margin: 0 auto;">
-    <div style="font-size: 15px; color: #111827; line-height: 1.6;">
-      {inner_html}
-    </div>
-    {clean_footer}
+<body style="margin: 0; padding: 16px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.5; color: #111827; background-color: #ffffff;">
+  <div style="max-width: 650px; font-size: 15px; color: #111827; line-height: 1.6;">
+    {inner_html}
   </div>
 </body>
 </html>"""
@@ -226,45 +218,32 @@ def build_rfc_compliant_gmail_message(
     plain_text_override: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Constructs a strict multipart/alternative RFC-compliant MIME message engineered
-    to pass SPF, DKIM, and Gmail automated spam filters:
-    1. Root multipart/alternative container with standard boundary
-    2. Crucial RFC headers: From (sanitized), To, Subject, Date, Message-ID (domain-matched), Reply-To, X-Mailer
-    3. Plain text part extraction (strip HTML) placed FIRST before HTML part
-    4. Base64url encoding without newlines for Google Gmail API
+    Constructs a strict multipart/alternative MIME message for Google Gmail API.
+    Strictly keeps ONLY essential headers (To, From, Subject, optional Reply-To)
+    and omits manual Message-ID, Date, or X-Mailer headers so that Google's authentic
+    Gmail mail transfer agent (MTA) assigns its own cryptographic, authentic Message-ID and Date.
     """
     # 1. Create root multipart/alternative message
     msg = MIMEMultipart("alternative")
 
-    # 2. Critical RFC Headers for Inbox Deliverability
-    # Strict sanitize sender_email to match authenticated OAuth identity
+    # 2. Strict Essential Headers Only
     clean_sender_email = sender_email.strip().lower()
     clean_sender_name = re.sub(r'[^\w\s-]', '', sender_name).strip() or clean_sender_email.split('@')[0]
 
-    msg["From"] = f'"{clean_sender_name}" <{clean_sender_email}>'
     msg["To"] = to_email.strip()
+    msg["From"] = f'"{clean_sender_name}" <{clean_sender_email}>'
     msg["Subject"] = subject.strip()
-    msg["Date"] = formatdate(localtime=True)
 
-    # Generate authentic Google/Domain Message-ID
-    domain = clean_sender_email.split('@')[-1] if '@' in clean_sender_email else "gmail.com"
-    msg["Message-ID"] = make_msgid(domain=domain)
-
-    if reply_to:
+    if reply_to and reply_to.strip().lower() != clean_sender_email:
         msg["Reply-To"] = reply_to.strip()
-    else:
-        msg["Reply-To"] = clean_sender_email
 
-    msg["X-Mailer"] = "Zigmaa CRM Mail Delivery Service"
-
-    # Wrap HTML body in clean, compliant container
+    # Wrap HTML body cleanly without any CRM footers
     effective_html = wrap_clean_email_html(html_content, clean_sender_name)
 
-    # 3. Plain Text Extraction (Crucial Spam Guardrail)
+    # 3. Plain Text Extraction (Crucial Spam Guardrail: Plain text MUST precede HTML)
     if plain_text_override and plain_text_override.strip():
         plain_text = plain_text_override.strip()
     else:
-        # Strip HTML tags to provide genuine plain text fallback
         plain_text = re.sub(r'<[^>]+>', ' ', effective_html)
         plain_text = re.sub(r'\s+', ' ', plain_text).strip()
 
@@ -281,8 +260,6 @@ def build_rfc_compliant_gmail_message(
 
     return {
         "raw": raw_b64,
-        "message_id": msg["Message-ID"],
-        "date": msg["Date"],
         "from": msg["From"],
         "to": msg["To"],
         "subject": msg["Subject"],
@@ -420,7 +397,6 @@ async def dispatch_email_service(
             plain_text_override=body
         )
         raw_mime = compiled_msg["raw"]
-        rfc_message_id = compiled_msg["message_id"]
 
         # Attempt 1: Send via Gmail API
         resp = await send_via_gmail_api(access_token, raw_mime)
@@ -438,8 +414,8 @@ async def dispatch_email_service(
             gmail_msg_id = resp_data.get("id")
             thread_id = resp_data.get("threadId")
             logger.info(
-                f"[Gmail API SUCCESS] RFC Message-ID: {rfc_message_id}, Gmail ID: {gmail_msg_id} "
-                f"sent to {clean_to} from {compiled_msg['from']} (Sent Folder Synced)"
+                f"[Gmail API SUCCESS] Message {gmail_msg_id} "
+                f"sent to {clean_to} from {compiled_msg['from']} (Sent Folder Synced, Google MTA Authenticated)"
             )
 
             # Log transaction in email_logs table for delivery tracking
@@ -453,7 +429,7 @@ async def dispatch_email_service(
                     recipient=clean_to,
                     subject=subject,
                     message_id=gmail_msg_id,
-                    rfc_message_id=rfc_message_id,
+                    rfc_message_id=gmail_msg_id,
                     channel="gmail_oauth",
                     status="SENT",
                     sent_at=datetime.utcnow()
@@ -467,12 +443,11 @@ async def dispatch_email_service(
                 "status": "success",
                 "channel": "gmail_oauth",
                 "message_id": gmail_msg_id,
-                "rfc_message_id": rfc_message_id,
+                "rfc_message_id": gmail_msg_id,
                 "thread_id": thread_id,
                 "sender": compiled_msg["from"],
                 "recipient": clean_to,
-                "subject": subject,
-                "date": compiled_msg["date"]
+                "subject": subject
             }
         else:
             err_detail = "Gmail API dispatch failed"
