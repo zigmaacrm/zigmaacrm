@@ -885,9 +885,11 @@ export default function SettingsPage() {
                     </div>
                   )}
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs items-start">
                     <div>
-                      <label className="block text-slate-700 font-bold mb-1.5">Current Password</label>
+                      <label className="block text-slate-700 font-bold mb-1.5 h-5 flex items-center">
+                        Current Password
+                      </label>
                       <div className="relative">
                         <input
                           type={showCurrentPassword ? "text" : "password"}
@@ -900,7 +902,7 @@ export default function SettingsPage() {
                         <button
                           type="button"
                           onClick={() => setShowCurrentPassword(!showCurrentPassword)}
-                          className="absolute right-3 top-3 text-slate-400 hover:text-slate-600"
+                          className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 cursor-pointer"
                         >
                           {showCurrentPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                         </button>
@@ -908,11 +910,8 @@ export default function SettingsPage() {
                     </div>
 
                     <div>
-                      <label className="block text-slate-700 font-bold mb-1.5">
-                        New Password <span className="text-red-500">*</span>
-                        <span className="text-[11px] text-red-500 font-normal ml-2">
-                          (Min. 8 chars, 1 uppercase, 1 number, 1 special)
-                        </span>
+                      <label className="block text-slate-700 font-bold mb-1.5 h-5 flex items-center">
+                        New Password <span className="text-red-500 ml-0.5">*</span>
                       </label>
                       <div className="relative">
                         <input
@@ -929,15 +928,20 @@ export default function SettingsPage() {
                         <button
                           type="button"
                           onClick={() => setShowNewPassword(!showNewPassword)}
-                          className="absolute right-3 top-3 text-slate-400 hover:text-slate-600"
+                          className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 cursor-pointer"
                         >
                           {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                         </button>
                       </div>
+                      <p className="text-[11px] text-slate-400 mt-1.5">
+                        Min. 8 chars, 1 uppercase, 1 number, 1 special
+                      </p>
                     </div>
 
                     <div>
-                      <label className="block text-slate-700 font-bold mb-1.5">Confirm New Password</label>
+                      <label className="block text-slate-700 font-bold mb-1.5 h-5 flex items-center">
+                        Confirm New Password <span className="text-red-500 ml-0.5">*</span>
+                      </label>
                       <div className="relative">
                         <input
                           type={showConfirmPassword ? "text" : "password"}
@@ -953,7 +957,7 @@ export default function SettingsPage() {
                         <button
                           type="button"
                           onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                          className="absolute right-3 top-3 text-slate-400 hover:text-slate-600"
+                          className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 cursor-pointer"
                         >
                           {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                         </button>

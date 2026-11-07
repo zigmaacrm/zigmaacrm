@@ -270,22 +270,6 @@ export default function InviteMemberDrawer({
                     </div>
                   </div>
                 </div>
-
-                {/* RBAC Info Card */}
-                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200/80">
-                  <div className="flex items-center gap-2 mb-2 text-slate-700 font-semibold text-xs">
-                    <Lock className="w-3.5 h-3.5 text-slate-500" />
-                    <span>Security & Scoping Policy</span>
-                  </div>
-                  <ul className="text-[11px] text-slate-500 space-y-1.5 list-disc pl-4 leading-normal">
-                    <li>
-                      Sales Reps will view contacts and pipeline deals assigned to them or their organization.
-                    </li>
-                    <li>
-                      Company-level settings and system resets are restricted to Administrators.
-                    </li>
-                  </ul>
-                </div>
               </div>
 
               {/* Sticky Action Footer */}
