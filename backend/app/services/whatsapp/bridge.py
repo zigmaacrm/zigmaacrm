@@ -115,6 +115,7 @@ async def request_pairing_code(session_id: str, phone: str, organization_id: str
                 return await call("POST", f"/pairing-code?sessionId={session_id}", json={"sessionId": session_id, "phone": clean, "organization_id": organization_id, "user_id": user_id}, timeout=25.0)
             except Exception:
                 pass
+            raise BridgeRejected("Phone pairing code requires active bridge v2. Please use the 'Scan QR Code' tab to connect.", 400, "PAIRING_FALLBACK")
         raise
 
 

@@ -838,17 +838,24 @@ export class WASession {
   async requestPairingCode(phoneNumber) {
     const clean = String(phoneNumber || '').replace(/[^0-9]/g, '');
     if (!clean || clean.length < 8) throw new BridgeError(400, 'Invalid phone number for pairing code');
-    if (this.sock?.requestPairingCode && !this.paired) {
-      const code = await this.sock.requestPairingCode(clean);
-      return { status: 'pairing_code', pairing_code: code, phone: clean };
+
+    if (!this.sock) {
+      await this.start();
     }
-    await this.start();
     let attempts = 0;
-    while (!this.sock?.requestPairingCode && attempts < 24) {
+    while (!this.sock?.requestPairingCode && attempts < 30) {
       await new Promise((r) => setTimeout(r, 250));
       attempts++;
     }
     if (!this.sock?.requestPairingCode) throw new BridgeError(500, 'WhatsApp socket failed to initialize');
+
+    // Wait until QR is emitted (which confirms companion registration is active on WhatsApp)
+    let qrWait = 0;
+    while (!this.latestQr && qrWait < 24) {
+      await new Promise((r) => setTimeout(r, 250));
+      qrWait++;
+    }
+
     const code = await this.sock.requestPairingCode(clean);
     return { status: 'pairing_code', pairing_code: code, phone: clean };
   }

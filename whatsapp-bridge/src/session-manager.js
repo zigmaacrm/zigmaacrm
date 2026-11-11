@@ -80,7 +80,7 @@ export class SessionManager {
       const res = await this.db.query(
         `INSERT INTO whatsapp_sessions (id, organization_id, user_id, status, desired_state, created_at, updated_at)
          VALUES ($1, $2, $3, 'DISCONNECTED', 'running', ${NOW_UTC}, ${NOW_UTC})
-         ON CONFLICT (id) DO UPDATE SET desired_state = 'running', updated_at = ${NOW_UTC}
+         ON CONFLICT (organization_id, user_id) DO UPDATE SET desired_state = 'running', updated_at = ${NOW_UTC}
          RETURNING id, organization_id, user_id`,
         [id, organizationId, userId]
       );

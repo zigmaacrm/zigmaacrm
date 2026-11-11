@@ -26,6 +26,12 @@ import {
 function resolveApiBase(): string {
   let raw = (process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || "").trim().replace(/\/+$/, "");
   if (!raw) {
+    if (typeof window !== "undefined") {
+      const host = window.location.hostname;
+      if (host === "localhost" || host === "127.0.0.1") {
+        return "http://localhost:8000/api/v1";
+      }
+    }
     raw = "https://zigmaacrm-backend.onrender.com/api/v1";
   }
   if (!raw.endsWith("/api/v1")) {
@@ -41,6 +47,9 @@ export function getBridgeMediaUrl(mediaPath?: string | null): string {
   const s = String(mediaPath).trim();
   if (s.startsWith("http://") || s.startsWith("https://") || s.startsWith("blob:") || s.startsWith("data:")) return s;
   const cleanPath = s.startsWith("/") ? s : `/${s}`;
+  if (typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")) {
+    return `http://localhost:5001${cleanPath}`;
+  }
   return `https://zigmaa-whatsapp-bridge.onrender.com${cleanPath}`;
 }
 

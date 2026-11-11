@@ -259,8 +259,10 @@ def serialize_session(row: Optional[Mapping[str, Any]], *, gateway_online: Optio
         # The pairing is intact, so this is "reconnecting", never "logged out".
         status = "CONNECTING"
     if not linked and status in ("CONNECTED", "DISCONNECTED"):
-        status = "NOT_LINKED"
-    show_qr = status == "SCAN_QR" and not stale
+        status = "SCAN_QR" if row.get("qr") else "NOT_LINKED"
+    show_qr = bool(row.get("qr")) and not linked
+    if show_qr:
+        status = "SCAN_QR"
     last = None
     if row.get("last_disconnect_at") is not None and status != "CONNECTED":
         last = {

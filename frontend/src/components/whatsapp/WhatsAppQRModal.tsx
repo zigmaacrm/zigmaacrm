@@ -64,7 +64,10 @@ export default function WhatsAppQRModal({
   };
 
   const handleRequestPairingCode = async () => {
-    const clean = pairingPhone.replace(/[^0-9]/g, "");
+    let clean = pairingPhone.replace(/[^0-9]/g, "");
+    if (clean.length === 10 && /^[6-9]/.test(clean)) {
+      clean = `91${clean}`;
+    }
     if (!clean || clean.length < 8) {
       toast.error("Invalid Phone Number", "Please include country code, e.g. 919600471080");
       return;
@@ -237,7 +240,7 @@ export default function WhatsAppQRModal({
     if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
     timeoutTimerRef.current = setTimeout(() => {
       setHasTimedOut(true);
-    }, 12000);
+    }, 25000);
 
     try {
       const sId = getResolvedSessionId();
