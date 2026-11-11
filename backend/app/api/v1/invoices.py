@@ -15,7 +15,7 @@ from app.models.activity import Activity
 from app.models.lead_pipeline import PipelineStage
 from app.models.organization_user import Organization, User
 from app.models.organization_setting import OrganizationSetting
-from app.api.deps import get_optional_current_user
+from app.api.deps import get_current_user, get_optional_current_user
 
 router = APIRouter()
 
@@ -215,12 +215,12 @@ async def get_invoices(
     status: Optional[str] = Query(None),
     deal_id: Optional[str] = Query(None),
     contact_id: Optional[str] = Query(None),
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     query = select(Invoice).order_by(Invoice.created_at.desc())
 
-    if current_user and current_user.organization_id:
+    if current_user.organization_id:
         query = query.where(Invoice.organization_id == current_user.organization_id)
 
     if deal_id:
@@ -251,10 +251,10 @@ async def get_invoices(
 async def create_invoice(
     payload: InvoiceCreate,
     org_id: Optional[str] = None,
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    target_org_id = org_id or (current_user.organization_id if current_user else None)
+    target_org_id = current_user.organization_id or org_id
     if not target_org_id:
         res = await db.execute(select(Organization))
         org = res.scalars().first()
@@ -398,7 +398,11 @@ async def create_invoice(
     return _serialize_invoice(invoice)
 
 @router.get("/invoices/{invoice_id}")
-async def get_invoice_detail(invoice_id: str, db: AsyncSession = Depends(get_db)):
+async def get_invoice_detail(
+    invoice_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     res = await db.execute(select(Invoice).where(Invoice.id == invoice_id))
     inv = res.scalar_one_or_none()
     if not inv:
@@ -409,14 +413,25 @@ async def get_invoice_detail(invoice_id: str, db: AsyncSession = Depends(get_db)
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice or quote not found")
 
+    if current_user.organization_id and inv.organization_id and inv.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied: Invoice belongs to another organization.")
+
     return _serialize_invoice(inv)
 
 @router.patch("/invoices/{invoice_id}")
-async def update_invoice(invoice_id: str, payload: InvoiceUpdate, db: AsyncSession = Depends(get_db)):
+async def update_invoice(
+    invoice_id: str,
+    payload: InvoiceUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     res = await db.execute(select(Invoice).where(Invoice.id == invoice_id))
     inv = res.scalar_one_or_none()
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
+
+    if current_user.organization_id and inv.organization_id and inv.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied: Cannot update an invoice from another organization.")
 
     if payload.status:
         inv.status = payload.status.upper()
@@ -503,18 +518,31 @@ async def update_invoice(invoice_id: str, payload: InvoiceUpdate, db: AsyncSessi
     return _serialize_invoice(inv)
 
 @router.delete("/invoices/{invoice_id}")
-async def delete_invoice(invoice_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_invoice(
+    invoice_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     res = await db.execute(select(Invoice).where(Invoice.id == invoice_id))
     inv = res.scalar_one_or_none()
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
+
+    if current_user.organization_id and inv.organization_id and inv.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied: Cannot delete an invoice from another organization.")
+    if (current_user.role or "").upper() == "SALES_REP":
+        raise HTTPException(status_code=403, detail="Access denied: Sales representatives are not authorized to delete invoices.")
 
     await db.delete(inv)
     await db.commit()
     return {"message": "Document deleted successfully", "id": invoice_id}
 
 @router.get("/invoices/{invoice_id}/pdf")
-async def generate_invoice_pdf_view(invoice_id: str, db: AsyncSession = Depends(get_db)):
+async def generate_invoice_pdf_view(
+    invoice_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     res = await db.execute(select(Invoice).where(Invoice.id == invoice_id))
     inv = res.scalar_one_or_none()
     if not inv:
@@ -523,6 +551,9 @@ async def generate_invoice_pdf_view(invoice_id: str, db: AsyncSession = Depends(
 
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice or quote not found")
+
+    if current_user.organization_id and inv.organization_id and inv.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied: Invoice belongs to another organization.")
 
     # Fetch dynamic organization settings
     org_setting_res = await db.execute(select(OrganizationSetting).order_by(OrganizationSetting.created_at.desc()))

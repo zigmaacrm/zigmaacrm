@@ -542,18 +542,6 @@ export const zigmaaApi = {
       return cached.data;
     }
 
-    // Pre-calculate real metrics from all deals (merged backend + localStorage)
-    const [deals, contacts, tasks] = await Promise.all([
-      this.getDeals().catch(() => []),
-      this.getContacts().catch(() => []),
-      this.getTasks().catch(() => [])
-    ]);
-
-    let realPipelineVal = 0;
-    let realWonRev = 0;
-    let realWonCount = 0;
-    let realActiveCount = 0;
-
     const STAGE_COLORS: Record<string, string> = {
       "New Deal": "#64748b",
       "Discovery": "#3b82f6",
@@ -577,40 +565,7 @@ export const zigmaaApi = {
       return s || "New Deal";
     };
 
-    const stageMap: Record<string, { title: string; count: number; value: number; color?: string; order: number }> = {};
-
-    deals.forEach((d: any) => {
-      const v = Number(d.value || d.deal_value || (d.custom_data && (d.custom_data.value || d.custom_data.deal_value))) || 0;
-      const rawSt = d.stage || (d.custom_data && d.custom_data.stage) || d.stage_id || "";
-      const st = normalizeStage(rawSt);
-      const isWon = st === "Won" || (d.status || "").toUpperCase() === "WON";
-      const isLost = st === "Lost" || (d.status || "").toUpperCase() === "LOST";
-
-      if (isWon) {
-        realWonRev += v;
-        realWonCount += 1;
-      } else if (!isLost) {
-        realPipelineVal += v;
-        realActiveCount += 1;
-      }
-
-      if (!stageMap[st]) {
-        stageMap[st] = {
-          title: st,
-          count: 0,
-          value: 0,
-          color: STAGE_COLORS[st] || "#3b82f6",
-          order: CANONICAL_ORDER.indexOf(st) >= 0 ? CANONICAL_ORDER.indexOf(st) : 99
-        };
-      }
-      stageMap[st].count += 1;
-      stageMap[st].value += v;
-    });
-
-    const realStageBreakdown = Object.values(stageMap)
-      .filter((s) => s.count > 0)
-      .sort((a, b) => a.order - b.order);
-
+    // FAST-PATH: Direct query to backend /dashboard/metrics (single roundtrip)
     try {
       const res = await fetch(`${API_BASE}/dashboard/metrics?range_type=${encodeURIComponent(rangeType)}`, {
         headers: getAuthHeaders(),
@@ -647,6 +602,52 @@ export const zigmaaApi = {
     } catch (e) {
       console.error("Dashboard metrics API error:", e);
     }
+
+    // Offline / Network Failure Fallback Only:
+    const [deals, contacts, tasks] = await Promise.all([
+      this.getDeals().catch(() => []),
+      this.getContacts().catch(() => []),
+      this.getTasks().catch(() => [])
+    ]);
+
+    let realPipelineVal = 0;
+    let realWonRev = 0;
+    let realWonCount = 0;
+    let realActiveCount = 0;
+
+    const stageMap: Record<string, { title: string; count: number; value: number; color?: string; order: number }> = {};
+
+    deals.forEach((d: any) => {
+      const v = Number(d.value || d.deal_value || (d.custom_data && (d.custom_data.value || d.custom_data.deal_value))) || 0;
+      const rawSt = d.stage || (d.custom_data && d.custom_data.stage) || d.stage_id || "";
+      const st = normalizeStage(rawSt);
+      const isWon = st === "Won" || (d.status || "").toUpperCase() === "WON";
+      const isLost = st === "Lost" || (d.status || "").toUpperCase() === "LOST";
+
+      if (isWon) {
+        realWonRev += v;
+        realWonCount += 1;
+      } else if (!isLost) {
+        realPipelineVal += v;
+        realActiveCount += 1;
+      }
+
+      if (!stageMap[st]) {
+        stageMap[st] = {
+          title: st,
+          count: 0,
+          value: 0,
+          color: STAGE_COLORS[st] || "#3b82f6",
+          order: CANONICAL_ORDER.indexOf(st) >= 0 ? CANONICAL_ORDER.indexOf(st) : 99
+        };
+      }
+      stageMap[st].count += 1;
+      stageMap[st].value += v;
+    });
+
+    const realStageBreakdown = Object.values(stageMap)
+      .filter((s) => s.count > 0)
+      .sort((a, b) => a.order - b.order);
 
     // Complete real fallback when backend is offline or unreachable
     const totalLeads = contacts.length;

@@ -10,7 +10,7 @@ from app.core.database import get_db
 from app.models.task import Task
 from app.models.contact import Contact
 from app.models.organization_user import User, Organization
-from app.api.deps import get_optional_current_user
+from app.api.deps import get_current_user, get_optional_current_user
 
 logger = logging.getLogger("zigmaa.tasks")
 
@@ -67,31 +67,27 @@ class TaskOut(BaseModel):
 @router.get("/", response_model=List[TaskOut])
 async def get_tasks(
     status: Optional[str] = Query(None),
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     query = select(Task).order_by(Task.created_at.desc())
-    if current_user and current_user.organization_id:
+    if current_user.organization_id:
+        query = query.where(Task.organization_id == current_user.organization_id)
+
+    # Supabase RLS / Query Isolation:
+    # Admins, Owners, and Super Admins MUST receive ALL organization tasks across sessions.
+    # Only non-admin sales reps have their query scoped to assigned tasks.
+    role = (current_user.role or "").upper().replace(" ", "_")
+    is_admin = role in ("ADMIN", "SUPER_ADMIN", "OWNER") or "ADMIN" in role
+    if not is_admin and role in ("SALES_REP", "REP", "MEMBER"):
         query = query.where(
             or_(
-                Task.organization_id == current_user.organization_id,
-                Task.organization_id == None
+                Task.assigned_to == current_user.full_name,
+                Task.assigned_to.ilike(f"%{current_user.full_name}%"),
+                Task.owner_id == current_user.id,
+                Task.owner_name.ilike(f"%{current_user.full_name}%")
             )
         )
-        # Supabase RLS / Query Isolation:
-        # Admins, Owners, and Super Admins MUST receive ALL organization tasks across sessions.
-        # Only non-admin sales reps have their query scoped to assigned tasks.
-        role = (current_user.role or "").upper().replace(" ", "_")
-        is_admin = role in ("ADMIN", "SUPER_ADMIN", "OWNER") or "ADMIN" in role
-        if not is_admin and role in ("SALES_REP", "REP", "MEMBER"):
-            query = query.where(
-                or_(
-                    Task.assigned_to == current_user.full_name,
-                    Task.assigned_to.ilike(f"%{current_user.full_name}%"),
-                    Task.owner_id == current_user.id,
-                    Task.owner_name.ilike(f"%{current_user.full_name}%")
-                )
-            )
     if status and status != "ALL":
         query = query.where(Task.status.ilike(status))
     result = await db.execute(query)
@@ -101,7 +97,7 @@ async def get_tasks(
 @router.post("/", response_model=TaskOut, status_code=201)
 async def create_task(
     payload: TaskCreate,
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     # If contact_id is provided, auto-fill contact details if missing
@@ -119,13 +115,13 @@ async def create_task(
 
     # Role-based assignment protection:
     # Sales Reps can only assign tasks to themselves; Admins can assign to any rep
-    if current_user and current_user.role and current_user.role.lower() in ("sales_rep", "sales rep", "rep", "member"):
+    if (current_user.role or "").upper() == "SALES_REP":
         assigned_name = current_user.full_name
     else:
-        assigned_name = payload.assigned_to or (current_user.full_name if current_user else "Mohamed Thoufiq")
+        assigned_name = payload.assigned_to or current_user.full_name
 
-    # Resolve organization_id to ensure task is never orphaned
-    org_id = current_user.organization_id if current_user and current_user.organization_id else None
+    # Resolve organization_id to ensure task is strictly scoped to user's org
+    org_id = current_user.organization_id
     if not org_id:
         res = await db.execute(select(Organization))
         org = res.scalars().first()
@@ -140,8 +136,8 @@ async def create_task(
         priority=payload.priority or "Medium",
         status=payload.status or "PENDING",
         assigned_to=assigned_name,
-        owner_id=current_user.id if current_user else None,
-        owner_name=current_user.full_name if current_user else assigned_name,
+        owner_id=current_user.id,
+        owner_name=current_user.full_name,
         description=payload.description,
         contact_id=payload.contact_id,
         contact_name=c_name,
@@ -163,7 +159,7 @@ async def create_task(
 async def update_task(
     task_id: str,
     payload: TaskUpdate,
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     result = await db.execute(select(Task).where(Task.id == task_id))
@@ -180,9 +176,15 @@ async def update_task(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
+    if current_user.organization_id and task.organization_id and task.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied: Cannot update a task from another organization.")
+    if (current_user.role or "").upper() == "SALES_REP":
+        if task.owner_id and task.owner_id != current_user.id and task.assigned_to != current_user.full_name:
+            raise HTTPException(status_code=403, detail="Access denied: You can only update tasks assigned to you.")
+
     update_data = payload.dict(exclude_unset=True)
     # Sales reps cannot reassign tasks to other users
-    if current_user and current_user.role and current_user.role.lower() in ("sales_rep", "sales rep", "rep", "member"):
+    if (current_user.role or "").upper() == "SALES_REP":
         update_data.pop("assigned_to", None)
 
     for field, value in update_data.items():
@@ -200,7 +202,8 @@ async def update_task(
 @router.patch("/{task_id}/toggle-status", response_model=TaskOut)
 async def toggle_task_status(
     task_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     result = await db.execute(select(Task).where(Task.id == task_id))
     task = result.scalar_one_or_none()
@@ -215,6 +218,12 @@ async def toggle_task_status(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
+    if current_user.organization_id and task.organization_id and task.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied: Task belongs to another organization.")
+    if (current_user.role or "").upper() == "SALES_REP":
+        if task.owner_id and task.owner_id != current_user.id and task.assigned_to != current_user.full_name:
+            raise HTTPException(status_code=403, detail="Access denied: You can only update tasks assigned to you.")
+
     task.status = "PENDING" if task.status == "COMPLETED" else "COMPLETED"
     try:
         await db.commit()
@@ -228,7 +237,7 @@ async def toggle_task_status(
 @router.delete("/{task_id}")
 async def delete_task(
     task_id: str,
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     result = await db.execute(select(Task).where(Task.id == task_id))
@@ -244,6 +253,11 @@ async def delete_task(
     if not task:
         return {"message": "Task already deleted or not found", "id": task_id}
 
+    if current_user.organization_id and task.organization_id and task.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied: Cannot delete a task from another organization.")
+    if (current_user.role or "").upper() == "SALES_REP":
+        raise HTTPException(status_code=403, detail="Access denied: Sales representatives are not authorized to delete tasks.")
+
     try:
         await db.delete(task)
         await db.commit()
@@ -251,5 +265,4 @@ async def delete_task(
         await db.rollback()
         logger.error(f"Failed to delete task: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Database delete error: {str(e)}")
-    return {"message": "Task deleted successfully", "id": task_id}
     return {"message": "Task deleted successfully", "id": task_id}

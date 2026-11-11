@@ -258,7 +258,7 @@ async def create_deal(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    org_id = org_id or current_user.organization_id
+    org_id = current_user.organization_id or org_id
     if not org_id or not isinstance(org_id, str):
         res = await db.execute(select(Organization))
         org = res.scalars().first()
@@ -442,12 +442,18 @@ async def create_deal(
 async def update_deal(
     deal_id: str,
     deal_in: dict,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     result = await db.execute(select(Deal).where(Deal.id == deal_id))
     deal = result.scalar_one_or_none()
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
+    if current_user.organization_id and deal.organization_id and deal.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied: Cannot update a deal from another organization.")
+    if (current_user.role or "").upper() == "SALES_REP":
+        if deal.owner_id and deal.owner_id != current_user.id and deal.assigned_user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Access denied: You can only update deals assigned to you.")
 
     if "custom_properties" in deal_in:
         deal.custom_properties = deal_in["custom_properties"]
@@ -511,12 +517,19 @@ async def update_deal(
 async def update_deal_stage(
     deal_id: str,
     move_in: DealStageUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     result = await db.execute(select(Deal).where(Deal.id == deal_id))
     deal = result.scalar_one_or_none()
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
+
+    if current_user.organization_id and deal.organization_id and deal.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied: Cannot update a deal from another organization.")
+    if (current_user.role or "").upper() == "SALES_REP":
+        if deal.owner_id and deal.owner_id != current_user.id and deal.assigned_user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Access denied: You can only update deals assigned to you.")
 
     target_stage = move_in.stage_id or move_in.stage
     if not target_stage:
@@ -619,12 +632,19 @@ async def update_deal_stage(
 @router.delete("/deals/{deal_id}")
 async def delete_deal(
     deal_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     result = await db.execute(select(Deal).where(Deal.id == deal_id))
     deal = result.scalar_one_or_none()
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
+
+    if current_user.organization_id and deal.organization_id and deal.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied: Cannot delete a deal from another organization.")
+    if (current_user.role or "").upper() == "SALES_REP":
+        raise HTTPException(status_code=403, detail="Access denied: Sales representatives are not authorized to delete deals.")
+
     await db.delete(deal)
     await db.commit()
     return {"message": "Deal deleted successfully"}

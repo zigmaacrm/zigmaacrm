@@ -137,12 +137,15 @@ async def get_contacts(
 @router.get("/contacts/{contact_id}")
 async def get_contact_detail(
     contact_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     res = await db.execute(select(Contact).where(Contact.id == contact_id))
     contact = res.scalar_one_or_none()
     if not contact:
         raise HTTPException(status_code=404, detail="Contact not found")
+    if current_user.organization_id and contact.organization_id and contact.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied: Contact belongs to another organization.")
 
     # Fetch linked deals
     deals_res = await db.execute(select(Deal).where(Deal.contact_id == contact.id).order_by(Deal.created_at.desc()))
@@ -582,12 +585,18 @@ async def create_contact(
 async def update_contact(
     contact_id: str,
     contact_in: dict,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     res = await db.execute(select(Contact).where(Contact.id == contact_id))
     contact = res.scalar_one_or_none()
     if not contact:
         raise HTTPException(status_code=404, detail="Contact not found")
+    if current_user.organization_id and contact.organization_id and contact.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied: Cannot update a contact from another organization.")
+    if (current_user.role or "").upper() == "SALES_REP":
+        if contact.owner_id and contact.owner_id != current_user.id and contact.assigned_user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Access denied: You can only update contacts assigned to you.")
 
     target_org_id = contact.organization_id
 
@@ -759,12 +768,17 @@ async def bulk_delete_contacts(
 @router.delete("/contacts/{contact_id}")
 async def delete_contact(
     contact_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     res = await db.execute(select(Contact).where(Contact.id == contact_id))
     contact = res.scalar_one_or_none()
     if not contact:
         raise HTTPException(status_code=404, detail="Contact not found")
+    if current_user.organization_id and contact.organization_id and contact.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied: Cannot delete a contact from another organization.")
+    if (current_user.role or "").upper() == "SALES_REP":
+        raise HTTPException(status_code=403, detail="Access denied: Sales representatives are not authorized to delete contacts.")
 
     await db.delete(contact)
     await db.commit()

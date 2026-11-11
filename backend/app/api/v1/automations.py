@@ -7,7 +7,8 @@ from datetime import datetime
 
 from app.core.database import get_db
 from app.models.workflow import Workflow, WorkflowLog
-from app.models.organization_user import Organization
+from app.models.organization_user import Organization, User
+from app.api.deps import get_current_user
 
 router = APIRouter()
 
@@ -52,9 +53,12 @@ class WorkflowLogOut(BaseModel):
 @router.get("/automations", response_model=List[WorkflowOut])
 async def get_workflows(
     module: Optional[str] = Query(None),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     query = select(Workflow).order_by(Workflow.created_at.desc())
+    if current_user.organization_id:
+        query = query.where(Workflow.organization_id == current_user.organization_id)
     if module:
         query = query.where(Workflow.module == module.upper())
     result = await db.execute(query)
@@ -96,15 +100,20 @@ async def get_workflows(
 async def create_workflow(
     wf_in: WorkflowCreate,
     org_id: Optional[str] = Query(None),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    if not org_id:
+    if (current_user.role or "").upper() == "SALES_REP":
+        raise HTTPException(status_code=403, detail="Access denied: Only administrators can configure automations.")
+
+    target_org_id = current_user.organization_id or org_id
+    if not target_org_id:
         res = await db.execute(select(Organization))
         org = res.scalars().first()
-        org_id = org.id if org else "default_org"
+        target_org_id = org.id if org else "default_org"
 
     wf = Workflow(
-        organization_id=org_id,
+        organization_id=target_org_id,
         name=wf_in.name,
         module=wf_in.module.upper(),
         trigger_event=wf_in.trigger_event,
@@ -144,12 +153,19 @@ async def create_workflow(
 @router.patch("/automations/{workflow_id}/toggle")
 async def toggle_workflow(
     workflow_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
+    if (current_user.role or "").upper() == "SALES_REP":
+        raise HTTPException(status_code=403, detail="Access denied: Only administrators can configure automations.")
+
     res = await db.execute(select(Workflow).where(Workflow.id == workflow_id))
     wf = res.scalar_one_or_none()
     if not wf:
         raise HTTPException(status_code=404, detail="Workflow not found")
+
+    if current_user.organization_id and wf.organization_id and wf.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied: Workflow belongs to another organization.")
 
     wf.is_active = not wf.is_active
     await db.commit()
@@ -159,12 +175,19 @@ async def toggle_workflow(
 @router.delete("/automations/{workflow_id}")
 async def delete_workflow(
     workflow_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
+    if (current_user.role or "").upper() == "SALES_REP":
+        raise HTTPException(status_code=403, detail="Access denied: Only administrators can delete automations.")
+
     res = await db.execute(select(Workflow).where(Workflow.id == workflow_id))
     wf = res.scalar_one_or_none()
     if not wf:
         raise HTTPException(status_code=404, detail="Workflow not found")
+
+    if current_user.organization_id and wf.organization_id and wf.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied: Workflow belongs to another organization.")
 
     # Delete logs
     await db.execute(
@@ -177,14 +200,18 @@ async def delete_workflow(
 @router.get("/automations/history", response_model=List[WorkflowLogOut])
 async def get_automation_history(
     limit: int = 100,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    res = await db.execute(
+    query = (
         select(WorkflowLog, Workflow.name.label("workflow_name"))
         .outerjoin(Workflow, WorkflowLog.workflow_id == Workflow.id)
         .order_by(desc(WorkflowLog.executed_at))
         .limit(limit)
     )
+    if current_user.organization_id:
+        query = query.where(Workflow.organization_id == current_user.organization_id)
+    res = await db.execute(query)
     rows = res.all()
     history = []
     for log, wf_name in rows:

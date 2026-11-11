@@ -579,6 +579,8 @@ async def get_whatsapp_conversations(
     Strictly scoped to the active session phone number to prevent cross-session bleeding.
     """
     stmt = select(WhatsAppMessage)
+    if current_user and current_user.organization_id:
+        stmt = stmt.where(WhatsAppMessage.organization_id == current_user.organization_id)
 
     effective_limit = int(limit) if isinstance(limit, (int, str)) and str(limit).isdigit() else 25
 
@@ -630,15 +632,24 @@ async def get_whatsapp_conversations(
             target_session = normalize_phone(found_sess) or user_session_id
             user_connected = True
 
-    # If the current user has no connected device and no historical messages, return 0 conversations immediately
+    # If the user has no connected device and no messages in organization, return 0 conversations
     if not user_connected and not target_session:
-        return {
-            "status": "success",
-            "count": 0,
-            "conversations": [],
-            "is_connected": False,
-            "message": "WhatsApp device is not connected. Please scan QR to access inbox."
-        }
+        has_history = False
+        if current_user and current_user.organization_id:
+            org_has_msg = await db.execute(
+                select(WhatsAppMessage.id)
+                .where(WhatsAppMessage.organization_id == current_user.organization_id)
+                .limit(1)
+            )
+            has_history = bool(org_has_msg.scalar_one_or_none())
+        if not has_history:
+            return {
+                "status": "success",
+                "count": 0,
+                "conversations": [],
+                "is_connected": False,
+                "message": "WhatsApp device is not connected. Please scan QR to access inbox."
+            }
 
     session_suffix = target_session[-10:] if target_session and len(target_session) >= 10 else (target_session or "")
 
@@ -655,7 +666,7 @@ async def get_whatsapp_conversations(
                 WhatsAppMessage.business_phone_number_id.like(f"%{session_suffix}%")
             )
         )
-    elif current_user:
+    elif current_user and current_user.role == "SALES_REP":
         stmt = stmt.where(WhatsAppMessage.assigned_user_id == current_user.id)
 
     # Exclude dummy and stub messages

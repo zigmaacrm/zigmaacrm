@@ -5,8 +5,9 @@ from typing import List, Optional
 from datetime import datetime
 
 from app.core.database import get_db
+from app.api.deps import get_current_user
+from app.models.organization_user import Organization, User
 from app.models.lead_pipeline import Lead, Pipeline, PipelineStage
-from app.models.organization_user import Organization
 from app.models.contact import Contact
 from app.models.deal import Deal
 from app.models.activity import Activity
@@ -22,12 +23,25 @@ async def get_leads(
     search: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     source: Optional[str] = Query(None),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     query = select(Lead).order_by(Lead.id.desc())
 
-    if org_id:
-        query = query.where(Lead.organization_id == org_id)
+    # Multi-tenant isolation: strictly scope to current user's organization
+    target_org = current_user.organization_id or org_id
+    if target_org:
+        query = query.where(Lead.organization_id == target_org)
+
+    # Role-based scoping: sales reps can only view leads assigned to them
+    if (current_user.role or "").upper() == "SALES_REP":
+        query = query.where(
+            or_(
+                Lead.assigned_user_id == current_user.id,
+                Lead.assigned_user_id.is_(None)
+            )
+        )
+
     if search:
         term = f"%{search}%"
         query = query.where(or_(Lead.full_name.ilike(term), Lead.phone.ilike(term), Lead.email.ilike(term), Lead.company_name.ilike(term)))
@@ -43,16 +57,21 @@ async def get_leads(
 async def create_lead(
     lead_in: LeadCreate,
     org_id: Optional[str] = Query(None),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    # Resolve org_id
-    if not org_id:
+    target_org = current_user.organization_id or org_id
+    if not target_org:
         res = await db.execute(select(Organization))
         org = res.scalars().first()
-        org_id = org.id if org else "default_org"
+        target_org = org.id if org else "default_org"
+
+    # Auto-assign sales rep if created by a sales rep
+    if (current_user.role or "").upper() == "SALES_REP" and not lead_in.assigned_user_id:
+        lead_in.assigned_user_id = current_user.id
 
     try:
-        lead = await LeadService.create_lead(db, org_id, lead_in)
+        lead = await LeadService.create_lead(db, target_org, lead_in)
         return lead
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -113,19 +132,36 @@ async def bulk_upload(
     )
 
 @router.get("/leads/{lead_id}", response_model=LeadOut)
-async def get_lead(lead_id: str, db: AsyncSession = Depends(get_db)):
+async def get_lead(
+    lead_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     result = await db.execute(select(Lead).where(Lead.id == lead_id))
     lead = result.scalar_one_or_none()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
+    if current_user.organization_id and lead.organization_id and lead.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied: Lead belongs to another organization.")
+    if (current_user.role or "").upper() == "SALES_REP" and lead.assigned_user_id and lead.assigned_user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied: Lead is not assigned to you.")
     return lead
 
 @router.patch("/leads/{lead_id}", response_model=LeadOut)
-async def update_lead(lead_id: str, patch_data: dict, db: AsyncSession = Depends(get_db)):
+async def update_lead(
+    lead_id: str,
+    patch_data: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     result = await db.execute(select(Lead).where(Lead.id == lead_id))
     lead = result.scalar_one_or_none()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
+    if current_user.organization_id and lead.organization_id and lead.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied: Cannot update a lead from another organization.")
+    if (current_user.role or "").upper() == "SALES_REP" and lead.assigned_user_id and lead.assigned_user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied: You can only update your assigned leads.")
 
     # Map fields
     if "name" in patch_data and "full_name" not in patch_data:
@@ -145,11 +181,19 @@ async def update_lead(lead_id: str, patch_data: dict, db: AsyncSession = Depends
     return lead
 
 @router.delete("/leads/{lead_id}")
-async def delete_lead(lead_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_lead(
+    lead_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     result = await db.execute(select(Lead).where(Lead.id == lead_id))
     lead = result.scalar_one_or_none()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
+    if current_user.organization_id and lead.organization_id and lead.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied: Cannot delete a lead from another organization.")
+    if (current_user.role or "").upper() == "SALES_REP":
+        raise HTTPException(status_code=403, detail="Access denied: Sales representatives are not authorized to delete leads.")
 
     await db.delete(lead)
     await db.commit()
@@ -159,13 +203,16 @@ async def delete_lead(lead_id: str, db: AsyncSession = Depends(get_db)):
 async def convert_lead(
     lead_id: str,
     payload: LeadConvertRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     # 1. Fetch Lead
     result = await db.execute(select(Lead).where(Lead.id == lead_id))
     lead = result.scalar_one_or_none()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
+    if current_user.organization_id and lead.organization_id and lead.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied: Cannot convert a lead from another organization.")
 
     org_id = lead.organization_id
 

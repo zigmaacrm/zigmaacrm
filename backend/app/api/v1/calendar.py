@@ -10,7 +10,7 @@ from app.models.calendar_event import CalendarEvent
 from app.models.contact import Contact
 from app.models.activity import Activity
 from app.models.organization_user import Organization, User
-from app.api.deps import get_optional_current_user
+from app.api.deps import get_current_user, get_optional_current_user
 from app.api.v1.integrations_google import create_google_calendar_event, delete_google_calendar_event
 
 router = APIRouter()
@@ -80,9 +80,12 @@ def _serialize_event(e: CalendarEvent) -> dict:
 @router.get("/events", response_model=List[CalendarEventOut])
 async def get_calendar_events(
     contact_id: Optional[str] = Query(None),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     query = select(CalendarEvent).order_by(CalendarEvent.start_time.asc())
+    if current_user.organization_id:
+        query = query.where(CalendarEvent.organization_id == current_user.organization_id)
     if contact_id:
         query = query.where(CalendarEvent.contact_id == contact_id)
     result = await db.execute(query)
@@ -93,7 +96,7 @@ async def get_calendar_events(
 @router.post("/events", response_model=CalendarEventOut, status_code=status.HTTP_201_CREATED)
 async def create_calendar_event(
     payload: CalendarEventCreate,
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     if not payload.title or not payload.title.strip():
@@ -118,13 +121,11 @@ async def create_calendar_event(
         if contact and contact.organization_id:
             target_org_id = contact.organization_id
 
+    target_org_id = current_user.organization_id
     if not target_org_id:
-        if current_user and current_user.organization_id:
-            target_org_id = current_user.organization_id
-        else:
-            res = await db.execute(select(Organization))
-            org = res.scalars().first()
-            target_org_id = org.id if org else None
+        res = await db.execute(select(Organization))
+        org = res.scalars().first()
+        target_org_id = org.id if org else None
 
     # Derive attendee name and email if empty and contact exists
     att_name = payload.attendee_name
@@ -235,13 +236,19 @@ async def create_calendar_event(
 @router.delete("/events/{event_id}")
 async def delete_calendar_event(
     event_id: str,
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     res = await db.execute(select(CalendarEvent).where(CalendarEvent.id == event_id))
     event = res.scalar_one_or_none()
     if not event:
         raise HTTPException(status_code=404, detail="Calendar event not found")
+
+    if current_user.organization_id and event.organization_id and event.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied: Cannot delete a calendar event from another organization.")
+    if (current_user.role or "").upper() == "SALES_REP":
+        if event.owner_id and event.owner_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Access denied: You can only delete calendar events created by you.")
 
     # If linked to Google Calendar, delete remotely via Google API
     if event.google_event_id:

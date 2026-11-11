@@ -1124,8 +1124,19 @@ export default function WhatsAppPage() {
   // QR WhatsApp State
   const [showQRModal, setShowQRModal] = useState(false);
   const [showNewChatModal, setShowNewChatModal] = useState(false);
-  const [qrStatus, setQrStatus] = useState<"DISCONNECTED" | "SCAN_QR" | "CONNECTED">("DISCONNECTED");
-  const [qrPhone, setQrPhone] = useState<string | null>(null);
+  const [qrStatus, setQrStatus] = useState<"DISCONNECTED" | "SCAN_QR" | "CONNECTED">(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("zigmaa_whatsapp_status");
+      if (saved === "CONNECTED") return "CONNECTED";
+    }
+    return "CONNECTED";
+  });
+  const [qrPhone, setQrPhone] = useState<string | null>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("zigmaa_whatsapp_phone") || null;
+    }
+    return null;
+  });
   const qrPhoneRef = useRef<string | null>(null);
   qrPhoneRef.current = qrPhone;
   const [linkedUserAvatar, setLinkedUserAvatar] = useState<string | null>(null);
@@ -1409,13 +1420,12 @@ export default function WhatsAppPage() {
 
   // Active conversation object
   const activeChat = useMemo(() => {
-    if (qrStatus !== "CONNECTED") return null;
     if (!activePhone) return null;
     return (
       conversations.find((c) => c.phone.replace(/[^0-9]/g, "") === activePhone.replace(/[^0-9]/g, "")) ||
       null
     );
-  }, [conversations, activePhone, qrStatus]);
+  }, [conversations, activePhone]);
 
   // Transform backend raw conversation into WhatsAppConversation
   const mapBackendConv = (raw: any, index: number): WhatsAppConversation => {
@@ -1499,7 +1509,7 @@ export default function WhatsAppPage() {
       const sId = currentUser?.id || api.getCurrentUser()?.id || undefined;
       const data = await api.getWhatsAppConversations(100, repParam, cleanSession, sId);
       if (data && data.status === "success" && Array.isArray(data.conversations)) {
-        if (data.is_connected === false) {
+        if (data.is_connected === false && (!data.conversations || data.conversations.length === 0)) {
           // If user already has conversations on screen, do not wipe them on a transient query miss
           if (conversationsRef.current.length === 0) {
             setConversations([]);
@@ -2657,7 +2667,7 @@ export default function WhatsAppPage() {
                     </div>
                   ))}
                 </div>
-              ) : (!qrPhone || qrStatus !== "CONNECTED") ? (
+              ) : (!qrPhone && qrStatus !== "CONNECTED" && conversations.length === 0) ? (
                 <div className="p-8 text-center flex flex-col items-center justify-center my-auto space-y-3">
                   <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-inner">
                     <QrCode className="w-7 h-7" />
@@ -2818,7 +2828,7 @@ export default function WhatsAppPage() {
             "flex-1 flex flex-col relative min-w-0 transition-colors",
             isDark ? "bg-[#0D0B14]" : "bg-[#F0F2F5]"
           )}>
-            {qrStatus !== "CONNECTED" ? (
+            {qrStatus !== "CONNECTED" && conversations.length === 0 ? (
               <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-4">
                 <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-inner">
                   <ShieldCheck className="w-8 h-8" />
@@ -4655,15 +4665,11 @@ export default function WhatsAppPage() {
         sessionId={currentUser?.id || api.getCurrentUser()?.id || null}
         onStatusChange={(status, phone) => {
           setQrStatus(status);
-          setQrPhone(phone);
-          qrPhoneRef.current = phone;
-          if (status !== "CONNECTED" || !phone) {
-            setQrPhone(null);
-            qrPhoneRef.current = null;
-            setConversations([]);
-            setMessages([]);
-            setActivePhone("");
-          } else {
+          if (phone) {
+            setQrPhone(phone);
+            qrPhoneRef.current = phone;
+          }
+          if (status === "CONNECTED" && phone) {
             loadConversations(false);
           }
         }}
