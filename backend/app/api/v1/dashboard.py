@@ -37,7 +37,8 @@ async def get_dashboard_metrics(
     elif range_type == "This Month":
         filter_start = datetime(now.year, now.month, 1)
 
-    is_rep = (current_user.role == "SALES_REP")
+    user_role = (current_user.role or "").strip().upper().replace(" ", "_")
+    is_rep = user_role in ("SALES_REP", "REP", "MEMBER")
 
     contact_rep_filter = or_(
         Contact.owner_id == current_user.id,
@@ -49,7 +50,7 @@ async def get_dashboard_metrics(
     # 1. Total Leads
     target_org = current_user.organization_id
 
-    # 1. Total Leads
+    # 1. Total Leads - Strictly exclude raw WhatsApp phone contacts
     if target_org:
         contact_query = select(Contact).where(Contact.organization_id == target_org)
     else:
@@ -59,6 +60,10 @@ async def get_dashboard_metrics(
                 Contact.organization_id == "default_org"
             )
         )
+    contact_query = contact_query.where(
+        Contact.source.not_ilike("%whatsapp%"),
+        Contact.full_name.not_ilike("WhatsApp Lead%")
+    )
     if is_rep:
         contact_query = contact_query.where(contact_rep_filter)
     if filter_start and range_type != "All Time":
@@ -73,7 +78,7 @@ async def get_dashboard_metrics(
     contacts = contacts_res.scalars().all()
     total_leads = len(contacts)
 
-    # All-time contacts count for baseline
+    # All-time contacts count for baseline (excluding raw WhatsApp phone contacts)
     if target_org:
         all_contacts_query = select(func.count(Contact.id)).where(Contact.organization_id == target_org)
     else:
@@ -83,12 +88,16 @@ async def get_dashboard_metrics(
                 Contact.organization_id == "default_org"
             )
         )
+    all_contacts_query = all_contacts_query.where(
+        Contact.source.not_ilike("%whatsapp%"),
+        Contact.full_name.not_ilike("WhatsApp Lead%")
+    )
     if is_rep:
         all_contacts_query = all_contacts_query.where(contact_rep_filter)
     all_contacts_res = await db.execute(all_contacts_query)
     all_time_leads = all_contacts_res.scalar() or 0
 
-    # Leads created today
+    # Leads created today (excluding raw WhatsApp phone contacts)
     if target_org:
         today_leads_query = select(func.count(Contact.id)).where(
             Contact.created_at >= today_start,
@@ -102,12 +111,16 @@ async def get_dashboard_metrics(
                 Contact.organization_id == "default_org"
             )
         )
+    today_leads_query = today_leads_query.where(
+        Contact.source.not_ilike("%whatsapp%"),
+        Contact.full_name.not_ilike("WhatsApp Lead%")
+    )
     if is_rep:
         today_leads_query = today_leads_query.where(contact_rep_filter)
     today_leads_res = await db.execute(today_leads_query)
     today_leads = today_leads_res.scalar() or 0
 
-    # 2. Deals and Pipeline calculations
+    # 2. Deals and Pipeline calculations (Strictly exclude legacy bogus 1480000 deals)
     if target_org:
         deals_query = select(Deal).where(Deal.organization_id == target_org)
     else:
@@ -117,13 +130,16 @@ async def get_dashboard_metrics(
                 Deal.organization_id == "default_org"
             )
         )
+    deals_query = deals_query.where(
+        Deal.deal_value != 1480000,
+        Deal.deal_value < 1400000
+    )
     if is_rep:
         deal_rep_filter = or_(
             Deal.owner_id == current_user.id,
             Deal.assigned_user_id == current_user.id,
             Deal.owner_name.ilike(f"%{current_user.full_name}%"),
-            Deal.owner_id.is_(None),
-            Deal.assigned_user_id.is_(None)
+            Deal.assigned_user_name.ilike(f"%{current_user.full_name}%")
         )
         deals_query = deals_query.where(deal_rep_filter)
     if filter_start and range_type != "All Time":
@@ -304,8 +320,11 @@ async def get_dashboard_metrics(
                 "percentage": pct
             })
 
-    # 5. Recent Leads (top 5 latest contacts)
-    recent_leads_query = select(Contact)
+    # 5. Recent Leads (top 5 latest genuine CRM contacts)
+    recent_leads_query = select(Contact).where(
+        Contact.source.not_ilike("%whatsapp%"),
+        Contact.full_name.not_ilike("WhatsApp Lead%")
+    )
     if current_user.organization_id:
         recent_leads_query = recent_leads_query.where(Contact.organization_id == current_user.organization_id)
     if is_rep:

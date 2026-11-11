@@ -60,7 +60,13 @@ async def get_contacts(
     current_user: User = Depends(get_current_user)
 ):
     query = select(Contact).order_by(Contact.created_at.desc())
-    if current_user.role == "SALES_REP":
+    # Exclude raw WhatsApp phonebook sync contacts from CRM contacts list
+    query = query.where(
+        Contact.source.not_ilike("%whatsapp%"),
+        Contact.full_name.not_ilike("WhatsApp Lead%")
+    )
+    user_role = (current_user.role or "").strip().upper().replace(" ", "_")
+    if user_role in ("SALES_REP", "REP", "MEMBER"):
         query = query.where(
             or_(
                 Contact.owner_id == current_user.id,
@@ -122,8 +128,8 @@ async def get_contacts(
             "source": c.source or "MANUAL",
             "custom_data": c.custom_data or {},
             "custom_properties": c.custom_properties or c.custom_data or {},
-            "assigned_user_name": c.assigned_user_name or "Mohamed Thoufiq",
-            "assigned_to": c.assigned_user_name or "Mohamed Thoufiq",
+            "assigned_user_name": c.assigned_user_name or current_user.full_name or "Unassigned",
+            "assigned_to": c.assigned_user_name or current_user.full_name or "Unassigned",
             "assigned_user_id": c.assigned_user_id,
             "created_at": c.created_at,
             "updated_at": c.updated_at,

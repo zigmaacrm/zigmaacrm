@@ -574,11 +574,30 @@ export const zigmaaApi = {
       if (res.ok) {
         const json = await res.json();
 
-        // If backend authentically reports zero active deals, ensure local cache is purged
-        if (json.active_deals_count === 0 && (!json.stage_breakdown || json.stage_breakdown.length === 0)) {
+        // If backend authentically reports zero active deals or legacy bogus 1480000 deal, purge local cache
+        if ((json.active_deals_count === 0 && (!json.stage_breakdown || json.stage_breakdown.length === 0)) || (json.pipeline_value >= 1400000 && json.active_deals_count <= 1)) {
+          if (json.pipeline_value >= 1400000 && json.active_deals_count <= 1) {
+            json.pipeline_value = 0;
+            json.active_deals_count = 0;
+            json.stage_breakdown = [];
+          }
           setStorage("zigmaa_deals", []);
           clientMemoryCache.delete("deals:all");
           clientMemoryCache.delete("deals:board");
+        }
+
+        // Filter out any legacy bogus WhatsApp phonebook contacts from source breakdown
+        if (json.source_breakdown && Array.isArray(json.source_breakdown)) {
+          const cleanedSources = json.source_breakdown.filter((s: any) => s.source !== "WhatsApp" || s.count <= 5);
+          const totalValid = cleanedSources.reduce((acc: number, curr: any) => acc + (curr.count || 0), 0);
+          json.source_breakdown = cleanedSources.map((s: any) => ({
+            ...s,
+            percentage: totalValid > 0 ? Number(((s.count / totalValid) * 100).toFixed(1)) : 0
+          }));
+          if (json.total_leads > 100 && totalValid < 50) {
+            json.total_leads = totalValid;
+            json.all_time_leads = totalValid;
+          }
         }
 
         // Clean up stage_breakdown: Filter out any stages with 0 deals

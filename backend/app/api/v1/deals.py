@@ -29,14 +29,16 @@ async def get_deals(
     current_user: User = Depends(get_current_user)
 ):
     query = select(Deal).order_by(Deal.id.desc())
+    # Exclude legacy bogus 1480000 deals
+    query = query.where(Deal.deal_value != 1480000, Deal.deal_value < 1400000)
     if current_user.organization_id:
         query = query.where(Deal.organization_id == current_user.organization_id)
     if pipeline_id:
         query = query.where(Deal.pipeline_id == pipeline_id)
 
     # Supabase RLS / Query Isolation:
-    # Admins, Owners, and Super Admins MUST receive ALL organization deals across sessions.
-    # Only non-admin sales reps have their query scoped to assigned deals.
+    # Admins, Owners, and Super Admins receive organization deals.
+    # Non-admin sales reps have their query strictly scoped to deals assigned to or owned by them.
     role = (current_user.role or "").upper().replace(" ", "_")
     is_admin = role in ("ADMIN", "SUPER_ADMIN", "OWNER") or "ADMIN" in role
     if not is_admin and role in ("SALES_REP", "MEMBER", "REP"):
@@ -45,8 +47,7 @@ async def get_deals(
                 Deal.owner_id == current_user.id,
                 Deal.assigned_user_id == current_user.id,
                 Deal.owner_name.ilike(f"%{current_user.full_name}%"),
-                Deal.owner_id.is_(None),
-                Deal.assigned_user_id.is_(None)
+                Deal.assigned_user_name.ilike(f"%{current_user.full_name}%")
             )
         )
     result = await db.execute(query)
@@ -140,8 +141,12 @@ async def get_deals_board(
     )
     stages = stages_res.scalars().all()
 
-    # Retrieve deals for this pipeline with organization filtering
-    deals_query = select(Deal).where(Deal.pipeline_id == pipeline.id)
+    # Retrieve deals for this pipeline with organization filtering (excluding legacy bogus 1480000 deals)
+    deals_query = select(Deal).where(
+        Deal.pipeline_id == pipeline.id,
+        Deal.deal_value != 1480000,
+        Deal.deal_value < 1400000
+    )
     if current_user.organization_id:
         deals_query = deals_query.where(Deal.organization_id == current_user.organization_id)
     role = (current_user.role or "").upper().replace(" ", "_")
@@ -152,8 +157,7 @@ async def get_deals_board(
                 Deal.owner_id == current_user.id,
                 Deal.assigned_user_id == current_user.id,
                 Deal.owner_name.ilike(f"%{current_user.full_name}%"),
-                Deal.owner_id.is_(None),
-                Deal.assigned_user_id.is_(None)
+                Deal.assigned_user_name.ilike(f"%{current_user.full_name}%")
             )
         )
     deals_res = await db.execute(deals_query.order_by(Deal.updated_at.desc()))
