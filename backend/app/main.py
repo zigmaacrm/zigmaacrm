@@ -183,6 +183,8 @@ app.include_router(calendar.router, prefix=settings.API_V1_STR, tags=["Calendar"
 app.include_router(webhooks.router, prefix=f"{settings.API_V1_STR}/webhooks", tags=["Webhooks"])
 app.include_router(webhooks.router, prefix=settings.API_V1_STR, tags=["Webhooks-Direct"])
 app.include_router(whatsapp.router, prefix=f"{settings.API_V1_STR}/whatsapp", tags=["WhatsApp"])
+app.include_router(whatsapp.router, prefix="/whatsapp", tags=["WhatsApp-Root"])
+app.include_router(whatsapp.router, prefix=settings.API_V1_STR, tags=["WhatsApp-Direct"])
 app.include_router(automations.router, prefix=settings.API_V1_STR, tags=["Automations"])
 app.include_router(invoices.router, prefix=settings.API_V1_STR, tags=["Invoices"])
 app.include_router(copilot.router, prefix=settings.API_V1_STR, tags=["AI Copilot"])

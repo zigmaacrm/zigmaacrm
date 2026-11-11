@@ -76,40 +76,95 @@ async def start_session(session_id: str, organization_id: str, user_id: str) -> 
 
 
 async def request_qr(session_id: str, organization_id: str, user_id: str) -> Dict[str, Any]:
-    return await call("POST", f"/sessions/{session_id}/qr", json={"organization_id": organization_id, "user_id": user_id}, timeout=25.0)
+    try:
+        return await call("POST", f"/sessions/{session_id}/qr", json={"organization_id": organization_id, "user_id": user_id}, timeout=25.0)
+    except BridgeError as exc:
+        if exc.status_code in (404, 405):
+            # Fallback to transitional bridge endpoints
+            try:
+                res = await call("POST", "/refresh-qr", json={"sessionId": session_id, "organization_id": organization_id, "user_id": user_id}, timeout=25.0)
+                qr = res.get("qr") or res.get("qr_code")
+                return {"status": "SCAN_QR" if qr else "CONNECTING", "qr": qr, "qr_code": qr, "session_id": session_id}
+            except Exception:
+                pass
+        raise
 
 
 async def connect_session(session_id: str, organization_id: str, user_id: str) -> Dict[str, Any]:
-    return await call("POST", f"/sessions/{session_id}/connect", json={"organization_id": organization_id, "user_id": user_id}, timeout=25.0)
+    try:
+        return await call("POST", f"/sessions/{session_id}/connect", json={"organization_id": organization_id, "user_id": user_id}, timeout=25.0)
+    except BridgeError as exc:
+        if exc.status_code in (404, 405):
+            # Fallback to transitional bridge endpoints
+            try:
+                res = await call("POST", "/refresh-qr", json={"sessionId": session_id, "organization_id": organization_id, "user_id": user_id}, timeout=25.0)
+                qr = res.get("qr") or res.get("qr_code")
+                return {"status": "SCAN_QR" if qr else "CONNECTING", "qr": qr, "qr_code": qr, "session_id": session_id}
+            except Exception:
+                pass
+        raise
 
 
 async def get_session_qr(session_id: str) -> Dict[str, Any]:
-    return await call("GET", f"/sessions/{session_id}/qr", timeout=10.0)
+    try:
+        return await call("GET", f"/sessions/{session_id}/qr", timeout=10.0)
+    except BridgeError as exc:
+        if exc.status_code in (404, 405):
+            try:
+                res = await call("GET", f"/status?sessionId={session_id}", timeout=10.0)
+                qr = res.get("qr") or res.get("qr_code")
+                return {"status": res.get("status") or ("SCAN_QR" if qr else "CONNECTING"), "qr": qr, "qr_code": qr}
+            except Exception:
+                pass
+        return {}
 
 
 async def logout_session(session_id: str) -> Dict[str, Any]:
-    return await call("POST", f"/sessions/{session_id}/logout", timeout=30.0)
+    try:
+        return await call("POST", f"/sessions/{session_id}/logout", timeout=30.0)
+    except BridgeError as exc:
+        if exc.status_code in (404, 405):
+            try:
+                return await call("POST", "/disconnect", json={"sessionId": session_id}, timeout=30.0)
+            except Exception:
+                pass
+        raise
 
 
 async def health() -> bool:
     try:
         async with httpx.AsyncClient(timeout=6.0, headers=_HEADERS) as client:
-            resp = await client.get(f"{gateway_url()}/health")
-        return resp.status_code == 200
-    except httpx.HTTPError:
+            try:
+                resp = await client.get(f"{gateway_url()}/health")
+                if resp.status_code == 200:
+                    return True
+            except Exception:
+                pass
+            resp2 = await client.get(f"{gateway_url()}/status")
+            return resp2.status_code == 200
+    except Exception:
         return False
 
 
 async def gateway_status() -> Dict[str, Any]:
-    url = f"{gateway_url()}/status"
-    try:
-        async with httpx.AsyncClient(timeout=5.0, headers=_HEADERS) as client:
-            resp = await client.get(url)
-            if resp.status_code == 200:
-                data = resp.json()
-                return data if isinstance(data, dict) else {"status": "ONLINE", "gateway_online": True}
-    except Exception:
-        pass
+    for path in ("/status", "/health"):
+        url = f"{gateway_url()}{path}"
+        try:
+            async with httpx.AsyncClient(timeout=5.0, headers=_HEADERS) as client:
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, dict):
+                        return {
+                            "status": data.get("status") or "ONLINE",
+                            "gateway_online": bool(data.get("gateway_online", True)),
+                            "phone": data.get("phone"),
+                            "qr": data.get("qr"),
+                            "uptime": data.get("uptime")
+                        }
+                    return {"status": "ONLINE", "gateway_online": True}
+        except Exception:
+            pass
     return {"status": "OFFLINE", "gateway_online": False}
 
 
@@ -117,7 +172,14 @@ async def gateway_status() -> Dict[str, Any]:
 
 async def send_message(session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     # Media has to be uploaded to WhatsApp before this returns, hence the long timeout.
-    return await call("POST", f"/sessions/{session_id}/messages", json=payload, timeout=120.0)
+    try:
+        return await call("POST", f"/sessions/{session_id}/messages", json=payload, timeout=120.0)
+    except BridgeError as exc:
+        if exc.status_code in (404, 405):
+            phone = payload.get("phone_number") or payload.get("chat_id")
+            text = payload.get("text") or payload.get("message")
+            return await call("POST", "/send", json={"phone_number": phone, "message": text, "sessionId": session_id}, timeout=120.0)
+        raise
 
 
 async def react(session_id: str, message_id: str, emoji: str) -> Dict[str, Any]:

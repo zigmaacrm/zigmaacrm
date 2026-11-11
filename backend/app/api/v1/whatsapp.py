@@ -177,6 +177,10 @@ async def connect_whatsapp_session(
         serialized["qr"] = qr_data
         serialized["qr_code"] = qr_data
         serialized["status"] = "SCAN_QR"
+        try:
+            await repository.update_user_session_qr(db, current_user.organization_id, current_user.id, qr_data, status="SCAN_QR")
+        except Exception as e:
+            logger.warning("Could not persist session QR: %s", e)
     return serialized
 
 
@@ -203,6 +207,10 @@ async def get_whatsapp_qr(
         serialized["qr"] = final_qr
         serialized["qr_code"] = final_qr
         serialized["status"] = "SCAN_QR"
+        try:
+            await repository.update_user_session_qr(db, current_user.organization_id, current_user.id, final_qr, status="SCAN_QR")
+        except Exception as e:
+            logger.warning("Could not persist session QR: %s", e)
     return serialized
 
 
@@ -219,6 +227,18 @@ async def get_my_session_status(
     """
     session_row, is_stale = await repository.get_user_session(db, current_user.organization_id, current_user.id)
     gateway_online = await bridge.health()
+
+    # If the database does not have an active QR yet, check if bridge has one cached
+    if (not session_row or not session_row.get("qr")) and not (session_row and session_row.get("phone_number")):
+        try:
+            sid = _get_user_session_id(current_user)
+            b_res = await bridge.get_session_qr(sid)
+            qr_val = b_res.get("qr_code") or b_res.get("qr")
+            if qr_val:
+                await repository.update_user_session_qr(db, current_user.organization_id, current_user.id, qr_val, status="SCAN_QR")
+                session_row, is_stale = await repository.get_user_session(db, current_user.organization_id, current_user.id)
+        except Exception:
+            pass
 
     return serializers.serialize_session(session_row, gateway_online=gateway_online, stale=is_stale)
 
@@ -249,6 +269,10 @@ async def refresh_qr_code(
         serialized["qr"] = qr_data
         serialized["qr_code"] = qr_data
         serialized["status"] = "SCAN_QR"
+        try:
+            await repository.update_user_session_qr(db, current_user.organization_id, current_user.id, qr_data, status="SCAN_QR")
+        except Exception as e:
+            logger.warning("Could not persist session QR: %s", e)
     return serialized
 
 

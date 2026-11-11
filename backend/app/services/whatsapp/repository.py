@@ -76,6 +76,19 @@ async def ensure_user_session(
     return dict(result.mappings().first())
 
 
+async def update_user_session_qr(
+    db: AsyncSession, organization_id: str, user_id: str, qr: Optional[str], status: str = "SCAN_QR"
+) -> None:
+    """Persists generated QR code to the database row so all clients get it immediately."""
+    stmt = text(
+        f"""UPDATE whatsapp_sessions
+           SET qr = :qr, status = :status, updated_at = {NOW_UTC}
+           WHERE organization_id = :org_id AND user_id = :user_id"""
+    )
+    await db.execute(stmt, {"qr": qr, "status": status, "org_id": organization_id, "user_id": user_id})
+    await db.commit()
+
+
 async def list_chats(
     db: AsyncSession,
     *,
