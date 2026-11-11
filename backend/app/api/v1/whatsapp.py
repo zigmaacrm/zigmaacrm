@@ -483,23 +483,26 @@ async def convert_chat_to_lead_endpoint(
 async def list_chat_messages(
     chat_id: Optional[str] = None,
     phone_number: Optional[str] = Query(None),
+    phone: Optional[str] = Query(None),
+    contact_id: Optional[str] = Query(None),
     before_seq: Optional[int] = Query(None),
     limit: int = Query(50, ge=1, le=100),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    session_row, phone = await _resolve_active_session_and_phone(db, current_user)
-    if not phone:
+    session_row, own_phone = await _resolve_active_session_and_phone(db, current_user)
+    if not own_phone:
         return {"status": "success", "messages": [], "count": 0}
 
     target_chat_id = chat_id
-    if not target_chat_id and phone_number:
+    search_num = phone_number or phone
+    if not target_chat_id and search_num:
         # Resolve chat_id by phone number
-        clean_p = phone_number.replace("+", "").replace(" ", "").replace("-", "")
+        clean_p = search_num.replace("+", "").replace(" ", "").replace("-", "")
         chats = await repository.list_chats(
             db,
             organization_id=current_user.organization_id,
-            session_id=phone,
+            session_id=own_phone,
             search=clean_p,
             limit=5,
         )

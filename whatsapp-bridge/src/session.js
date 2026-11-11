@@ -497,9 +497,11 @@ export class WASession {
       this.qrTimestamp = 0;
       this.qrExpiresAt = null;
       if (this.auth.state.creds.me) this._adoptAccount(this.auth.state.creds.me);
+      await this.auth?.saveCreds().catch(() => {});
       await this._setStatus('CONNECTING', {
         qr: null,
         qr_expires_at: null,
+        desired_state: 'running',
         ...(this.accountId ? { phone_number: this.accountId } : {})
       });
     }
@@ -581,9 +583,14 @@ export class WASession {
     await this.auth?.flush().catch(() => {});
     const record = { last_disconnect_code: code, last_disconnect_reason: reason, last_disconnect_at: SQL_NOW };
 
-    // 401: WhatsApp says this device is no longer linked. The only case in
-    // which the stored pairing is destroyed.
-    if (code === DisconnectReason.loggedOut) {
+    const isConflict = /conflict|replaced/i.test(reason);
+    const isRestart = /restart/i.test(reason);
+
+    // 401: WhatsApp says this device is no longer linked.
+    // WARNING: Baileys wraps stream conflicts in 401 ("Stream Errored (conflict)").
+    // True logouts happen only when the user explicitly unlinks the device.
+    // Stream collisions or restarts must NEVER destroy the stored pairing!
+    if (code === DisconnectReason.loggedOut && !isConflict && !isRestart) {
       await this._becomeLoggedOut(record);
       return;
     }
@@ -602,8 +609,8 @@ export class WASession {
       this.qrTimestamp = 0;
       this.qrExpiresAt = null;
       const qrWasShown = this.qrCount > 0;
-      if (!qrWasShown && this.unpairedFailures < 3) {
-        // Never got as far as a QR code (network hiccup): try again shortly.
+      if (isConflict || isRestart || (!qrWasShown && this.unpairedFailures < 3)) {
+        // Never got as far as a QR code or transient stream collision: try again shortly.
         this.unpairedFailures += 1;
         await this._setStatus('CONNECTING', record);
         this._scheduleReconnect(1500 * this.unpairedFailures, { count: false });
@@ -619,12 +626,12 @@ export class WASession {
 
     // Paired session: always reconnect in the background.
     let delay;
-    if (code === DisconnectReason.restartRequired) {
+    if (code === DisconnectReason.restartRequired || isRestart) {
       delay = 0; // 515 right after pairing, or a server-requested restart
       this.reconnectAttempts = 0;
-    } else if (code === DisconnectReason.connectionReplaced) {
-      // 440: another connection used these credentials. Back off so two
-      // processes cannot knock each other out in a tight loop.
+    } else if (code === DisconnectReason.connectionReplaced || isConflict) {
+      // 440 or stream conflict: another connection used these credentials. Back off so two
+      // processes or overlapping sockets do not knock each other out in a tight loop.
       delay = Math.max(5000, this._backoffMs() * 2);
     } else if (code === 405) {
       await refreshWaVersion();

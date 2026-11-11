@@ -83,10 +83,15 @@ export default function WhatsAppQRModal({
       if (onStatusChange) {
         onStatusChange(data.status, data.phone);
       }
-      if (data.status === "CONNECTED" && pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
+      if (data.status === "CONNECTED") {
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+        }
         if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
+        setTimeout(() => {
+          onClose();
+        }, 1200);
       }
     } catch (e) {
       console.warn("Failed to check QR status", e);
@@ -140,6 +145,11 @@ export default function WhatsAppQRModal({
         if (data.status === "CONNECTED" || data.phone) {
           if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
           if (onStatusChange) onStatusChange(data.status || "CONNECTED", data.phone);
+          if (data.status === "CONNECTED") {
+            setTimeout(() => {
+              if (isMounted) onClose();
+            }, 1000);
+          }
           return;
         }
 

@@ -153,9 +153,11 @@ function parseQuotedReply(rawText?: string | null): {
   return { hasQuote: false, quotedSender: "", quotedText: "", body: raw };
 }
 
-function formatLastMessagePreview(text?: string | null): string {
+function formatLastMessagePreview(text?: any): string {
   if (!text) return "";
-  const raw = text.trim();
+  const str = typeof text === "string" ? text : (text?.preview || text?.text || text?.body || text?.message || "");
+  if (!str || typeof str !== "string") return "";
+  const raw = str.trim();
   if (raw.startsWith(">")) {
     const parsed = parseQuotedReply(raw);
     if (parsed.hasQuote && parsed.body) {
@@ -171,8 +173,8 @@ function formatLastMessagePreview(text?: string | null): string {
   return raw;
 }
 
-function cleanDisplayCaption(text?: string | null, fileName?: string | null): string {
-  if (!text) return "";
+function cleanDisplayCaption(text?: any, fileName?: string | null): string {
+  if (!text || typeof text !== "string") return "";
   const t = text.trim();
   const lower = t.toLowerCase();
 
@@ -1465,14 +1467,19 @@ export default function WhatsAppPage() {
 
   // Transform backend raw conversation into WhatsAppConversation
   const mapBackendConv = (raw: any, index: number): WhatsAppConversation => {
-    const name = raw.contact_name || `WhatsApp User (+${raw.phone_number})`;
+    const rawPhone = String(raw.phone_number || raw.phone || raw.jid || raw.id || "").replace(/@.*$/, "").trim();
+    const cleanPhoneDigits = rawPhone.replace(/[^0-9]/g, "");
+    const formattedPhone = raw.display_phone || (cleanPhoneDigits ? `+${cleanPhoneDigits}` : (rawPhone ? (rawPhone.startsWith("+") ? rawPhone : `+${rawPhone}`) : ""));
+    const phoneVal = formattedPhone || (cleanPhoneDigits ? `+${cleanPhoneDigits}` : "") || rawPhone || "Unknown";
+
+    const name = raw.contact_name || raw.name || raw.custom_name || raw.push_name || (phoneVal !== "Unknown" ? `WhatsApp User (${phoneVal})` : "WhatsApp User");
     const parts = name.trim().split(" ");
-    const initials = (parts[0][0] + (parts[1] ? parts[1][0] : "")).toUpperCase();
+    const initials = ((parts[0]?.[0] || "W") + (parts[1]?.[0] || "")).toUpperCase();
     const grad = AVATAR_GRADIENTS[index % AVATAR_GRADIENTS.length];
 
     const repName = raw.assigned_rep?.name || (raw.assigned_user_id ? "Assigned Rep" : "Unassigned");
     const repParts = repName.trim().split(" ");
-    const repInitials = (repParts[0][0] + (repParts[1] ? repParts[1][0] : "")).toUpperCase();
+    const repInitials = ((repParts[0]?.[0] || "S") + (repParts[1]?.[0] || "R")).toUpperCase();
 
     const loggedInUser = currentUser || api.getCurrentUser();
     const isMine = raw.assigned_user_id
@@ -1482,13 +1489,13 @@ export default function WhatsAppPage() {
     const isConverted = Boolean(raw.lead_id || raw.crm?.lead_id || raw.contact_id);
 
     return {
-      id: raw.id || `conv-${raw.phone_number}`,
+      id: raw.id || `conv-${phoneVal}`,
       contact_id: raw.contact_id || raw.crm?.contact_id,
       lead_id: raw.lead_id || raw.crm?.lead_id,
       is_converted: isConverted,
       contactName: name,
       companyName: raw.company_name || "",
-      phone: raw.phone_number.startsWith("+") ? raw.phone_number : `+${raw.phone_number}`,
+      phone: phoneVal,
       email: raw.email || "",
       avatar_url: raw.avatar_url || null,
       avatarInitials: initials || "WA",
@@ -1505,17 +1512,17 @@ export default function WhatsAppPage() {
       dealCloseDate: "28 Oct 2026",
       unreadCount: raw.unread_count || 0,
       isAssignedToMe: isMine,
-      lastMessage: formatLastMessagePreview(raw.last_message),
-      lastMessageTime: raw.last_message_time,
-      last_direction: raw.last_direction,
-      last_status: raw.last_status,
+      lastMessage: formatLastMessagePreview(raw.last_message || raw.last_message_text || raw.last_message_preview),
+      lastMessageTime: raw.last_message_time || raw.last_message?.at || raw.sort_at,
+      last_direction: raw.last_direction || (raw.last_message?.from_me ? "outbound" : "inbound"),
+      last_status: raw.last_status || raw.last_message?.status,
       is_pinned: Boolean(raw.is_pinned),
       is_archived: Boolean(raw.is_archived),
       is_blocked: Boolean(raw.is_blocked),
       notes: (() => {
-        if (typeof window !== "undefined") {
+        if (typeof window !== "undefined" && phoneVal && phoneVal !== "Unknown") {
           try {
-            const saved = localStorage.getItem(`wa_notes_${raw.phone_number}`);
+            const saved = localStorage.getItem(`wa_notes_${phoneVal}`);
             if (saved) return JSON.parse(saved);
           } catch (e) {}
         }

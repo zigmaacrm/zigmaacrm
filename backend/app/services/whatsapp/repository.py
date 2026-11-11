@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 logger = logging.getLogger("zigmaa.whatsapp.repository")
 
 NOW_UTC = "timezone('utc', clock_timestamp())"
-STALE_HEARTBEAT_SECONDS = 45
+STALE_HEARTBEAT_SECONDS = 180
 
 
 async def get_user_session(
@@ -107,6 +107,7 @@ async def list_chats(
         "c.organization_id = :org_id",
         "c.session_id = :session_id",
         "c.merged_into IS NULL",
+        "(c.jid NOT LIKE '%@lid' OR c.phone_number IS NOT NULL OR c.last_message_at IS NOT NULL)",
     ]
     params: Dict[str, Any] = {
         "org_id": organization_id,
@@ -147,7 +148,7 @@ async def list_chats(
         LEFT JOIN leads l ON l.id = c.lead_id AND l.organization_id = c.organization_id
         LEFT JOIN contacts ct ON ct.id = c.contact_id AND ct.organization_id = c.organization_id
         WHERE {where_clause}
-        ORDER BY c.is_pinned DESC, COALESCE(c.last_message_at, c.created_at) DESC NULLS LAST
+        ORDER BY c.is_pinned DESC, c.last_message_at DESC NULLS LAST, c.created_at DESC
         LIMIT :limit OFFSET :offset
     """
 
@@ -168,7 +169,10 @@ async def get_chat_counts(
                COUNT(*) FILTER (WHERE is_pinned = TRUE) AS pinned_count,
                COUNT(*) FILTER (WHERE is_archived = TRUE) AS archived_count
            FROM whatsapp_chats
-           WHERE organization_id = :org_id AND session_id = :session_id AND merged_into IS NULL"""
+           WHERE organization_id = :org_id 
+             AND session_id = :session_id 
+             AND merged_into IS NULL
+             AND (jid NOT LIKE '%@lid' OR phone_number IS NOT NULL OR last_message_at IS NOT NULL)"""
     )
     result = await db.execute(sql, {"org_id": organization_id, "session_id": session_id})
     row = result.mappings().first()

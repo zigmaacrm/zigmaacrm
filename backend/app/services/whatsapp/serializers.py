@@ -94,10 +94,16 @@ def serialize_chat(row: Mapping[str, Any], own_phone: Optional[str] = None) -> D
     lead_ok = bool(row.get("lead_id") and row.get("lead_name") is not None)
     contact_ok = bool(row.get("contact_id") and row.get("contact_name") is not None)
     phone = row.get("phone_number")
+    if not phone and row.get("jid"):
+        clean_jid = str(row.get("jid")).split("@")[0]
+        if clean_jid.isdigit() and len(clean_jid) >= 7 and len(clean_jid) <= 15:
+            phone = clean_jid
+    display_phone_val = format_phone(phone) or (f"+{phone}" if phone else None)
     return {
         "id": row["id"],
         "phone_number": phone,
-        "display_phone": format_phone(phone),
+        "phone": display_phone_val or phone,
+        "display_phone": display_phone_val,
         "address_type": "phone" if phone else "lid",
         "name": chat_display_name(row, own_phone),
         "saved_name": _clean_name(row.get("name")),
