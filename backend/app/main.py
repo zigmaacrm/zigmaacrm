@@ -297,10 +297,20 @@ async def on_startup():
                 # Fast index for high-speed WhatsApp polling and conversation loading
                 await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_wa_msgs_session_created ON whatsapp_messages (session_id, created_at DESC);"))
                 await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_wa_msgs_biz_phone ON whatsapp_messages (business_phone_number_id, created_at DESC);"))
+                # Safe cleanup of auto-created WhatsApp contacts not explicitly converted
+                await conn.execute(text("DELETE FROM contacts WHERE (source ILIKE '%whatsapp%' OR full_name LIKE 'WhatsApp Lead%') AND id NOT IN (SELECT contact_id FROM whatsapp_chats WHERE contact_id IS NOT NULL);"))
+                # Clean up legacy bogus deals
+                await conn.execute(text("DELETE FROM deals WHERE deal_value = 1480000 OR (title ILIKE '%test%' AND deal_value >= 1400000);"))
             except Exception as e:
                 print(f"[STARTUP MIGRATION] Schema check note: {e}")
     except Exception as e:
         print(f"[STARTUP DB INIT NOTE] Initial schema sync deferred or failed: {e}")
+
+    try:
+        from app.services.whatsapp.schema import apply_schema
+        await apply_schema(engine)
+    except Exception as e:
+        print(f"[STARTUP WHATSAPP SCHEMA] apply_schema note: {e}")
     try:
         from app.core.database import AsyncSessionLocal
         from app.api.v1.webhooks.whatsapp import cleanup_bogus_whatsapp_data

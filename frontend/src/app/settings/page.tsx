@@ -933,9 +933,6 @@ export default function SettingsPage() {
                           {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                         </button>
                       </div>
-                      <p className="text-[11px] text-slate-400 mt-1.5">
-                        Min. 8 chars, 1 uppercase, 1 number, 1 special
-                      </p>
                     </div>
 
                     <div>
@@ -965,7 +962,7 @@ export default function SettingsPage() {
                     </div>
                   </div>
 
-                  <div className="pt-2 flex justify-start">
+                  <div className="pt-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                     <button
                       type="submit"
                       disabled={passwordSaving}
@@ -974,6 +971,9 @@ export default function SettingsPage() {
                       <Lock className="w-3.5 h-3.5" />
                       <span>{passwordSaving ? "Updating Password..." : "Update Password"}</span>
                     </button>
+                    <p className="text-[11px] text-slate-400">
+                      Password requirement: Min. 8 characters, 1 uppercase, 1 number, 1 special character.
+                    </p>
                   </div>
                 </form>
               </div>

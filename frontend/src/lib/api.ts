@@ -3378,6 +3378,22 @@ export const zigmaaApi = {
     return { status: "success" };
   },
 
+  async convertWhatsAppChatToLead(chatId: string, data?: { lead_name?: string; company_name?: string; email?: string }): Promise<any> {
+    const res = await fetch(`${API_BASE}/whatsapp/chats/${encodeURIComponent(chatId)}/convert-lead`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...getAuthHeaders(),
+      },
+      body: JSON.stringify(data || {}),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Failed to convert WhatsApp contact to CRM lead" }));
+      throw new Error(err.detail || "Failed to convert WhatsApp contact to CRM lead");
+    }
+    return await res.json();
+  },
+
   async updateWhatsAppContactName(params: {
     contactId?: string;
     phoneNumber?: string;

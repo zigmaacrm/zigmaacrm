@@ -555,6 +555,8 @@ export interface WhatsAppConversation {
   is_pinned?: boolean;
   is_archived?: boolean;
   is_blocked?: boolean;
+  lead_id?: string;
+  is_converted?: boolean;
 }
 
 const META_TEMPLATES = [
@@ -1120,6 +1122,33 @@ export default function WhatsAppPage() {
     toast.success("Quotation Sent", `Quotation ${quoteNumber} sent to ${activeChat.contactName}`);
   };
 
+  const [isConvertingLead, setIsConvertingLead] = useState(false);
+
+  const handleConvertToLead = async () => {
+    if (!activeChat) return;
+    const cleanPhone = activeChat.phone.replace(/[^0-9]/g, "");
+    setIsConvertingLead(true);
+    try {
+      const res = await api.convertWhatsAppChatToLead(activeChat.id, {
+        lead_name: activeChat.contactName,
+        company_name: activeChat.companyName || undefined,
+        email: activeChat.email || undefined,
+      });
+      toast.success("Added to CRM Leads", `${activeChat.contactName} has been converted and linked to your CRM pipeline.`);
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === activeChat.id || c.phone.replace(/[^0-9]/g, "") === cleanPhone
+            ? { ...c, is_converted: true, contact_id: res.chat?.contact_id || c.contact_id, lead_id: res.chat?.lead_id }
+            : c
+        )
+      );
+    } catch (err: any) {
+      toast.error("Conversion Failed", err?.message || "Could not convert contact to CRM lead.");
+    } finally {
+      setIsConvertingLead(false);
+    }
+  };
+
   // Multi-Number Rep State
   // QR WhatsApp State
   const [showQRModal, setShowQRModal] = useState(false);
@@ -1447,9 +1476,13 @@ export default function WhatsAppPage() {
       ? raw.assigned_user_id === loggedInUser?.id
       : false;
 
+    const isConverted = Boolean(raw.lead_id || raw.crm?.lead_id || raw.contact_id);
+
     return {
       id: raw.id || `conv-${raw.phone_number}`,
-      contact_id: raw.contact_id,
+      contact_id: raw.contact_id || raw.crm?.contact_id,
+      lead_id: raw.lead_id || raw.crm?.lead_id,
+      is_converted: isConverted,
       contactName: name,
       companyName: raw.company_name || "",
       phone: raw.phone_number.startsWith("+") ? raw.phone_number : `+${raw.phone_number}`,
@@ -2941,8 +2974,30 @@ export default function WhatsAppPage() {
                     </div>
                   </div>
 
-                  {/* Header Actions: Send Quote + Search in Chat + Three Dots Menu */}
+                  {/* Header Actions: Add to CRM + Send Quote + Search in Chat + Three Dots Menu */}
                   <div className="relative flex items-center gap-1.5 sm:gap-2 shrink-0">
+                    {activeChat.is_converted ? (
+                      <span className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[11px] font-bold shrink-0 select-none">
+                        <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                        <span>CRM Lead</span>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleConvertToLead}
+                        disabled={isConvertingLead}
+                        className="inline-flex items-center justify-center gap-1.5 h-9 px-3 sm:px-3.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white text-xs font-bold whitespace-nowrap shadow-sm shadow-red-600/20 transition-all cursor-pointer hover:scale-102 active:scale-98 shrink-0 disabled:opacity-50"
+                        title="Add this WhatsApp conversation into CRM Leads"
+                      >
+                        {isConvertingLead ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <UserPlus className="w-3.5 h-3.5 shrink-0" />
+                        )}
+                        <span>{isConvertingLead ? "Adding..." : "Add to CRM"}</span>
+                      </button>
+                    )}
+
                     <button
                       onClick={handleOpenQuotePicker}
                       className="inline-flex items-center justify-center gap-1.5 h-9 px-3.5 sm:px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold whitespace-nowrap shadow-sm shadow-emerald-600/25 transition-all cursor-pointer hover:scale-102 active:scale-98 shrink-0"
