@@ -66,10 +66,7 @@ async def get_contacts(
                 Contact.owner_id == current_user.id,
                 Contact.assigned_user_id == current_user.id,
                 Contact.owner_name.ilike(f"%{current_user.full_name}%"),
-                Contact.assigned_user_name.ilike(f"%{current_user.full_name}%"),
-                Contact.source.ilike("%whatsapp%"),
-                Contact.owner_id.is_(None),
-                Contact.assigned_user_id.is_(None)
+                Contact.assigned_user_name.ilike(f"%{current_user.full_name}%")
             )
         )
     target_org = org_id or current_user.organization_id

@@ -67,71 +67,138 @@ def is_generic_or_placeholder_name(name: Optional[str], phone: str) -> bool:
         return True
     return False
 
-async def backfill_whatsapp_contacts(db: AsyncSession) -> int:
+async def cleanup_bogus_whatsapp_data(db: AsyncSession) -> dict:
     """
-    Automated check on existing messages in whatsapp_messages table:
-    Find all unique sender numbers that do not yet exist in contacts.
+    Automated cleanup routine:
+    1. Backfills contact_name directly onto whatsapp_messages table.
+    2. Nullifies contact_id foreign key references on whatsapp_messages, activities, tasks, email_logs.
+    3. Deletes bogus auto-generated WhatsApp contacts and leads that have no linked deals/tasks.
     """
-    res_org = await db.execute(select(Organization).limit(1))
-    default_org = res_org.scalars().first()
-    default_org_id = default_org.id if default_org else None
+    try:
+        from sqlalchemy import text
+        # 1. Backfill contact_name in whatsapp_messages from contacts before unlinking
+        await db.execute(text("""
+            UPDATE whatsapp_messages wm
+            SET contact_name = c.full_name
+            FROM contacts c
+            WHERE wm.contact_id = c.id
+              AND (wm.contact_name IS NULL OR wm.contact_name = '')
+              AND c.full_name NOT LIKE 'WhatsApp Lead%';
+        """))
 
-    stmt = select(WhatsAppMessage.phone_number).distinct()
-    res = await db.execute(stmt)
-    phones = [p for p in res.scalars().all() if p]
-
-    created_count = 0
-    for sender_phone in phones:
-        clean = normalize_phone(sender_phone)
-        if not clean:
-            continue
-        clean_digits = "".join(filter(str.isdigit, clean))[-10:]
-        if not clean_digits:
-            continue
-
-        existing_c = await db.execute(
-            select(Contact).where(Contact.phone.ilike(f"%{clean_digits}%")).limit(1)
-        )
-        contact = existing_c.scalars().first()
-
-        if not contact:
-            lead_res = await db.execute(
-                select(Lead).where(Lead.phone.ilike(f"%{clean_digits}%")).limit(1)
-            )
-            existing_lead = lead_res.scalars().first()
-            if existing_lead and existing_lead.full_name and not is_generic_or_placeholder_name(existing_lead.full_name, clean):
-                contact_display_name = existing_lead.full_name
-            else:
-                contact_display_name = f"WhatsApp Lead (+{clean})"
-
-            new_contact = Contact(
-                organization_id=default_org_id,
-                full_name=contact_display_name,
-                phone=f"+{sender_phone.lstrip('+')}",
-                email=None,
-                company_name=None,
-                source="WhatsApp",
-                status="NEW",
-                lifecycle_stage="New",
-                assigned_user_name="Unassigned",
-                created_at=dt_utcnow.utcnow()
-            )
-            db.add(new_contact)
-            await db.commit()
-            await db.refresh(new_contact)
-            created_count += 1
-
-            await db.execute(
-                update(WhatsAppMessage)
-                .where(
-                    WhatsAppMessage.phone_number == sender_phone,
-                    WhatsAppMessage.contact_id.is_(None)
+        # 2. Delete auto-generated activities on bogus contacts
+        r_act = await db.execute(text("""
+            DELETE FROM activities 
+            WHERE contact_id IN (
+                SELECT id FROM contacts 
+                WHERE (
+                    source = 'WHATSAPP' 
+                    OR source ILIKE '%whatsapp%'
+                    OR (custom_data->>'session_id') IS NOT NULL
+                    OR (custom_data->>'phonebook_name') IS NOT NULL
+                    OR full_name LIKE 'WhatsApp Lead%'
                 )
-                .values(contact_id=new_contact.id)
-            )
-            await db.commit()
+                AND id NOT IN (SELECT contact_id FROM deals WHERE contact_id IS NOT NULL)
+                AND id NOT IN (SELECT contact_id FROM tasks WHERE contact_id IS NOT NULL)
+                AND id NOT IN (SELECT contact_id FROM invoices WHERE contact_id IS NOT NULL)
+                AND id NOT IN (SELECT contact_id FROM calendar_events WHERE contact_id IS NOT NULL)
+                AND (lifecycle_stage IS NULL OR lifecycle_stage != 'Customer')
+            );
+        """))
 
-    return created_count
+        # 3. Nullify contact_id in whatsapp_messages
+        r_wm = await db.execute(text("""
+            UPDATE whatsapp_messages 
+            SET contact_id = NULL 
+            WHERE contact_id IN (
+                SELECT id FROM contacts 
+                WHERE (
+                    source = 'WHATSAPP' 
+                    OR source ILIKE '%whatsapp%'
+                    OR (custom_data->>'session_id') IS NOT NULL
+                    OR (custom_data->>'phonebook_name') IS NOT NULL
+                    OR full_name LIKE 'WhatsApp Lead%'
+                )
+                AND id NOT IN (SELECT contact_id FROM deals WHERE contact_id IS NOT NULL)
+                AND id NOT IN (SELECT contact_id FROM tasks WHERE contact_id IS NOT NULL)
+                AND id NOT IN (SELECT contact_id FROM invoices WHERE contact_id IS NOT NULL)
+                AND id NOT IN (SELECT contact_id FROM calendar_events WHERE contact_id IS NOT NULL)
+                AND (lifecycle_stage IS NULL OR lifecycle_stage != 'Customer')
+            );
+        """))
+
+        # 4. Nullify contact_id in email_logs if any
+        try:
+            await db.execute(text("""
+                UPDATE email_logs 
+                SET contact_id = NULL 
+                WHERE contact_id IN (
+                    SELECT id FROM contacts 
+                    WHERE (
+                        source = 'WHATSAPP' 
+                        OR source ILIKE '%whatsapp%'
+                        OR (custom_data->>'session_id') IS NOT NULL
+                        OR (custom_data->>'phonebook_name') IS NOT NULL
+                        OR full_name LIKE 'WhatsApp Lead%'
+                    )
+                    AND id NOT IN (SELECT contact_id FROM deals WHERE contact_id IS NOT NULL)
+                    AND id NOT IN (SELECT contact_id FROM tasks WHERE contact_id IS NOT NULL)
+                    AND id NOT IN (SELECT contact_id FROM invoices WHERE contact_id IS NOT NULL)
+                    AND id NOT IN (SELECT contact_id FROM calendar_events WHERE contact_id IS NOT NULL)
+                    AND (lifecycle_stage IS NULL OR lifecycle_stage != 'Customer')
+                );
+            """))
+        except Exception:
+            pass
+
+        # 5. Delete bogus WhatsApp contacts
+        r_c = await db.execute(text("""
+            DELETE FROM contacts 
+            WHERE (
+                source = 'WHATSAPP' 
+                OR source ILIKE '%whatsapp%'
+                OR (custom_data->>'session_id') IS NOT NULL
+                OR (custom_data->>'phonebook_name') IS NOT NULL
+                OR full_name LIKE 'WhatsApp Lead%'
+            )
+            AND id NOT IN (SELECT contact_id FROM deals WHERE contact_id IS NOT NULL)
+            AND id NOT IN (SELECT contact_id FROM tasks WHERE contact_id IS NOT NULL)
+            AND id NOT IN (SELECT contact_id FROM invoices WHERE contact_id IS NOT NULL)
+            AND id NOT IN (SELECT contact_id FROM calendar_events WHERE contact_id IS NOT NULL)
+            AND (lifecycle_stage IS NULL OR lifecycle_stage != 'Customer');
+        """))
+
+        # 6. Delete bogus WhatsApp leads
+        try:
+            await db.execute(text("""
+                UPDATE email_logs 
+                SET lead_id = NULL 
+                WHERE lead_id IN (
+                    SELECT id FROM leads 
+                    WHERE source ILIKE '%whatsapp%'
+                    AND id NOT IN (SELECT lead_id FROM deals WHERE lead_id IS NOT NULL)
+                );
+            """))
+        except Exception:
+            pass
+
+        r_l = await db.execute(text("""
+            DELETE FROM leads 
+            WHERE source ILIKE '%whatsapp%'
+            AND id NOT IN (SELECT lead_id FROM deals WHERE lead_id IS NOT NULL);
+        """))
+
+        await db.commit()
+        logger.info(f"[WHATSAPP CLEANUP] Removed {r_c.rowcount} bogus contacts and {r_l.rowcount} bogus leads.")
+        return {"status": "success", "deleted_contacts": r_c.rowcount, "deleted_leads": r_l.rowcount}
+    except Exception as e:
+        logger.warning(f"[WHATSAPP CLEANUP] Note: {e}")
+        return {"status": "skipped", "error": str(e)}
+
+async def backfill_whatsapp_contacts(db: AsyncSession) -> int:
+    """Legacy alias: points to cleanup_bogus_whatsapp_data"""
+    res = await cleanup_bogus_whatsapp_data(db)
+    return res.get("deleted_contacts", 0)
 
 async def send_welcome_auto_reply(
     phone_number: str,
@@ -600,21 +667,7 @@ async def receive_whatsapp_qr_inbound(
             session_business_phone = owner_u.whatsapp_phone_number
 
     is_new_lead = False
-    if not contact:
-        contact = Contact(
-            organization_id=default_org_id,
-            full_name=display_name,
-            phone=f"+{clean_phone}" if not clean_phone.startswith("+") else clean_phone,
-            source="WHATSAPP",
-            lifecycle_stage="LEAD",
-            assigned_user_id=effective_user_id,
-            owner_id=effective_user_id,
-            custom_data={"whatsapp_name": payload.contact_name.strip()} if payload.contact_name else {}
-        )
-        db.add(contact)
-        await db.flush()
-        is_new_lead = True
-    else:
+    if contact:
         if effective_user_id:
             contact.assigned_user_id = effective_user_id
             contact.owner_id = effective_user_id
@@ -625,20 +678,8 @@ async def receive_whatsapp_qr_inbound(
             if not contact.full_name or is_generic_or_placeholder_name(contact.full_name, clean_phone):
                 contact.full_name = payload.contact_name.strip()
         contact.custom_data = curr_data
-
-    if not lead:
-        lead = Lead(
-            organization_id=default_org_id,
-            full_name=display_name,
-            phone=f"+{clean_phone}" if not clean_phone.startswith("+") else clean_phone,
-            source="WHATSAPP",
-            status="NEW",
-            assigned_user_id=effective_user_id
-        )
-        db.add(lead)
-        await db.flush()
-    elif effective_user_id and not lead.assigned_user_id:
-        lead.assigned_user_id = effective_user_id
+    # If no existing CRM contact, leave contact=None and lead=None
+    # (Incoming WhatsApp messages must NEVER auto-convert to CRM Leads or Contacts)
 
     msg_id = payload.meta_message_id or f"wamid.qr_{uuid.uuid4().hex[:16]}"
     # Deduplicate or update placeholder if retry decrypted it
@@ -705,6 +746,7 @@ async def receive_whatsapp_qr_inbound(
     wa_msg = WhatsAppMessage(
         organization_id=default_org_id,
         contact_id=contact.id if contact else None,
+        contact_name=payload.contact_name or display_name,
         assigned_user_id=effective_user_id,
         business_phone_number_id=clean_session_val or payload.session_id or None,
         session_id=clean_session_val or payload.session_id or None,
@@ -737,25 +779,26 @@ async def receive_whatsapp_qr_inbound(
             .values(status="READ")
         )
 
-    act_notes = (
-        f"💬 WhatsApp Outbound (Web/App): {payload.message_body[:250]}"
-        if msg_direction == "OUTBOUND"
-        else f"💬 WhatsApp Inbound (QR Scan): {payload.message_body[:250]}"
-    )
-    act = Activity(
-        organization_id=default_org_id,
-        contact_id=contact.id if contact else None,
-        lead_id=lead.id if lead else None,
-        type="NOTE",
-        notes=act_notes,
-        status="COMPLETED",
-        created_at=msg_dt
-    )
-    db.add(act)
+    if contact:
+        act_notes = (
+            f"💬 WhatsApp Outbound (Web/App): {payload.message_body[:250]}"
+            if msg_direction == "OUTBOUND"
+            else f"💬 WhatsApp Inbound (QR Scan): {payload.message_body[:250]}"
+        )
+        act = Activity(
+            organization_id=default_org_id,
+            contact_id=contact.id,
+            lead_id=None,
+            type="NOTE",
+            notes=act_notes,
+            status="COMPLETED",
+            created_at=msg_dt
+        )
+        db.add(act)
 
     await db.commit()
     logger.info(f"[QR {msg_direction} PROCESSED] To/From: {clean_phone} ({display_name}) - Msg: {payload.message_body[:40]}")
-    return {"status": "success", "contact_id": contact.id, "is_new_lead": is_new_lead}
+    return {"status": "success", "contact_id": contact.id if contact else None, "is_new_lead": False}
 
 @router.post("/whatsapp/status-update")
 @router.post("/status-update")

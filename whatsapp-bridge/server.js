@@ -1022,39 +1022,6 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
 
       console.log(`[WhatsApp Gateway:${session.id}] Ranked all ${activePhones.length} active direct chatting contacts (WhatsApp Web sync):`, activePhones);
 
-      // Register all active direct chatting contacts into pendingContacts
-      for (const phone of activePhones) {
-        const savedContact = session.contactsStore ? session.contactsStore.get(phone) : null;
-        session.pendingContacts.set(phone, {
-          phone: phone,
-          name: savedContact?.phonebook_name || savedContact?.name || savedContact?.push_name || null,
-          phonebook_name: savedContact?.phonebook_name || null,
-          push_name: savedContact?.push_name || null,
-          jid: `${phone}@s.whatsapp.net`,
-          avatar_url: savedContact?.avatar_url || null
-        });
-      }
-
-      // Also register all other address-book contacts from session.contactsStore
-      if (session.contactsStore) {
-        for (const [phone, c] of session.contactsStore.entries()) {
-          if (!session.pendingContacts.has(phone)) {
-            session.pendingContacts.set(phone, {
-              phone: phone,
-              name: c.phonebook_name || c.name || c.push_name || null,
-              phonebook_name: c.phonebook_name || null,
-              push_name: c.push_name || null,
-              jid: c.jid || `${phone}@s.whatsapp.net`,
-              avatar_url: c.avatar_url || null
-            });
-          }
-        }
-      }
-
-      if (session.pendingContacts.size > 0) {
-        scheduleContactSync(session);
-      }
-
       // 4. Extract real messages for all active chatting conversations
       const validMessages = [];
       for (const phone of activePhones) {
@@ -1149,15 +1116,6 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
               if (existing) {
                 existing.avatar_url = avatarUrl;
               }
-              session.pendingContacts.set(phone, {
-                phone: phone,
-                name: existing?.name || null,
-                phonebook_name: existing?.phonebook_name || null,
-                push_name: existing?.push_name || null,
-                jid: jid,
-                avatar_url: avatarUrl
-              });
-              scheduleContactSync(session);
             }
           } catch (_) {}
           await new Promise(r => setTimeout(r, 100));
@@ -1184,9 +1142,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
           avatar_url: existing?.avatar_url || null
         };
         if (session.contactsStore) session.contactsStore.set(cleanPhone, item);
-        session.pendingContacts.set(cleanPhone, item);
       }
-      if (session.pendingContacts.size > 0) scheduleContactSync(session);
     });
 
     // Chats upsert (Update contactStore names and sync chatting contacts)
@@ -1207,12 +1163,10 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
           avatar_url: existing?.avatar_url || null
         };
         if (session.contactsStore) session.contactsStore.set(cleanPhone, item);
-        session.pendingContacts.set(cleanPhone, item);
-        scheduleContactSync(session);
       }
     });
 
-    // Contacts initial set (Address book names used ONLY for name resolution)
+    // Contacts initial set (Address book names used ONLY for in-memory name resolution)
     session.sock.ev.on('contacts.set', ({ contacts: setContacts }) => {
       if (!Array.isArray(setContacts) || setContacts.length === 0) return;
       console.log(`[WhatsApp Gateway:${session.id}] Stored ${setContacts.length} address book contacts for name resolution.`);
@@ -1237,10 +1191,8 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
             avatar_url: null
           };
           if (session.contactsStore) session.contactsStore.set(clean, item);
-          if (bestName) session.pendingContacts.set(clean, item);
         }
       }
-      if (session.pendingContacts.size > 0) scheduleContactSync(session);
     });
 
     // Contacts upsert (Address book name changes - update local store ONLY)
@@ -1267,10 +1219,8 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
             avatar_url: null
           };
           if (session.contactsStore) session.contactsStore.set(clean, item);
-          if (bestName) session.pendingContacts.set(clean, item);
         }
       }
-      if (session.pendingContacts.size > 0) scheduleContactSync(session);
     });
 
     // Contacts update (Address book name updates - update local store ONLY)
@@ -1297,10 +1247,8 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
             avatar_url: null
           };
           if (session.contactsStore) session.contactsStore.set(clean, item);
-          if (bestName) session.pendingContacts.set(clean, item);
         }
       }
-      if (session.pendingContacts.size > 0) scheduleContactSync(session);
     });
 
     // Messages upsert

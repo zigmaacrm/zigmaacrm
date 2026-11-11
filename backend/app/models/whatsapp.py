@@ -20,6 +20,7 @@ class WhatsAppMessage(TimeStampedBase):
     id = Column(String(36), primary_key=True, default=generate_uuid)
     organization_id = Column(String(36), ForeignKey("organizations.id"), nullable=True, index=True)
     contact_id = Column(String(36), ForeignKey("contacts.id"), nullable=True, index=True)
+    contact_name = Column(String(255), nullable=True)
     assigned_user_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
     business_phone_number_id = Column(String(100), nullable=True, index=True)
     phone_number = Column(String(50), nullable=False, index=True)

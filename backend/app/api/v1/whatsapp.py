@@ -812,6 +812,8 @@ async def get_whatsapp_conversations(
                     contact_name = str(wa_saved_name).strip()
                 elif prof_name and str(prof_name).strip() and not is_generic_or_placeholder_name(str(prof_name), m.phone_number):
                     contact_name = str(prof_name).strip()
+                elif getattr(m, "contact_name", None) and not is_generic_or_placeholder_name(str(m.contact_name), m.phone_number):
+                    contact_name = str(m.contact_name).strip()
                 else:
                     contact_name = format_display_phone(m.phone_number)
 
@@ -1033,44 +1035,9 @@ async def bulk_sync_whatsapp_contacts(
             if item.jid and not curr_data.get("jid"):
                 curr_data["jid"] = item.jid
             contact.custom_data = curr_data
-        else:
-            clean_sess_item = normalize_phone(payload.session_id) if payload.session_id else None
-            c_data = {
-                "whatsapp_name": item.name.strip() if item.name and not is_generic_or_placeholder_name(item.name, clean_phone) else None,
-                "phonebook_name": item.name.strip() if item.name and not is_generic_or_placeholder_name(item.name, clean_phone) else None,
-                "jid": item.jid,
-                "avatar_url": item.avatar_url,
-                "session_id": clean_sess_item
-            }
-
-            contact = Contact(
-                organization_id=default_org_id,
-                full_name=display_name,
-                phone=formatted_phone,
-                source="WHATSAPP",
-                lifecycle_stage="LEAD",
-                status="NEW",
-                assigned_user_id=effective_user_id,
-                owner_id=effective_user_id,
-                custom_data=c_data
-            )
-            db.add(contact)
             synced_count += 1
-
-        l_res = await db.execute(select(Lead).where(Lead.phone.like(f"%{search_suffix}%")).limit(1))
-        lead = l_res.scalar_one_or_none()
-        if not lead and default_org_id:
-            lead = Lead(
-                organization_id=default_org_id,
-                full_name=display_name,
-                phone=formatted_phone,
-                source="WHATSAPP",
-                status="NEW",
-                custom_data={"jid": item.jid} if item.jid else {}
-            )
-            db.add(lead)
-
-        pass
+        # If contact does not exist in CRM, DO NOT auto-create Contact or Lead.
+        # WhatsApp messages and conversations work independently without polluting CRM tables.
 
     await db.commit()
     logger.info(f"[WHATSAPP BULK-SYNC] Upserted {synced_count} direct contacts into CRM")
@@ -1366,24 +1333,14 @@ async def sync_whatsapp_chat_history(
         contact = c_res.scalar_one_or_none()
 
         display_name = item.contact_name.strip() if item.contact_name and item.contact_name.strip() else format_display_phone(clean_phone)
-        if not contact:
-            contact = Contact(
-                organization_id=default_org_id,
-                full_name=display_name,
-                phone=f"+{clean_phone}" if not clean_phone.startswith("+") else clean_phone,
-                source="WHATSAPP",
-                lifecycle_stage="LEAD",
-                custom_data={"phonebook_name": item.contact_name.strip()} if item.contact_name else {}
-            )
-            db.add(contact)
-            await db.flush()
-        else:
+        if contact:
             if item.contact_name and not is_generic_or_placeholder_name(item.contact_name, clean_phone):
                 contact.full_name = item.contact_name.strip()
                 c_data = dict(contact.custom_data or {})
                 c_data["phonebook_name"] = item.contact_name.strip()
                 c_data["whatsapp_name"] = item.contact_name.strip()
                 contact.custom_data = c_data
+        # If no existing CRM contact, leave contact=None (never auto-create Contact/Lead for history)
 
         if item.media_base64 and item.file_name:
             try:
@@ -1411,6 +1368,7 @@ async def sync_whatsapp_chat_history(
         wa_msg = WhatsAppMessage(
             organization_id=default_org_id,
             contact_id=contact.id if contact else None,
+            contact_name=item.contact_name or display_name,
             assigned_user_id=effective_user_id,
             business_phone_number_id=clean_sess or payload.session_id or None,
             session_id=clean_sess or payload.session_id or None,
@@ -1817,18 +1775,6 @@ async def pin_whatsapp_conversation(
         await db.commit()
     else:
         is_pinned = True
-        contact = Contact(
-            organization_id=current_user.organization_id if current_user else None,
-            full_name=format_display_phone(clean),
-            phone=f"+{clean}" if not clean.startswith("+") else clean,
-            source="WHATSAPP",
-            lifecycle_stage="LEAD",
-            assigned_user_id=current_user.id if current_user else None,
-            owner_id=current_user.id if current_user else None,
-            custom_data={"is_pinned": True}
-        )
-        db.add(contact)
-        await db.commit()
     # Reflect pin modification on WhatsApp device
     try:
         g_url = get_gateway_url()
@@ -1871,18 +1817,6 @@ async def archive_whatsapp_conversation(
         await db.commit()
     else:
         is_archived = True
-        contact = Contact(
-            organization_id=current_user.organization_id if current_user else None,
-            full_name=format_display_phone(clean),
-            phone=f"+{clean}" if not clean.startswith("+") else clean,
-            source="WHATSAPP",
-            lifecycle_stage="LEAD",
-            assigned_user_id=current_user.id if current_user else None,
-            owner_id=current_user.id if current_user else None,
-            custom_data={"is_archived": True}
-        )
-        db.add(contact)
-        await db.commit()
     # Reflect archive modification on WhatsApp device
     try:
         g_url = get_gateway_url()

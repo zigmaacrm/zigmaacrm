@@ -213,6 +213,7 @@ async def on_startup():
                 await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS google_token_expiry TIMESTAMP WITHOUT TIME ZONE;"))
                 await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_google_connected BOOLEAN DEFAULT FALSE;"))
                 await conn.execute(text("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS google_event_id VARCHAR(255);"))
+                await conn.execute(text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS contact_name VARCHAR(255);"))
                 await conn.execute(text("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS meet_link VARCHAR(500);"))
                 # WhatsApp Multi-Number Support
                 await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS whatsapp_phone_number VARCHAR(50);"))
@@ -302,11 +303,11 @@ async def on_startup():
         print(f"[STARTUP DB INIT NOTE] Initial schema sync deferred or failed: {e}")
     try:
         from app.core.database import AsyncSessionLocal
-        from app.api.v1.webhooks.whatsapp import backfill_whatsapp_contacts
+        from app.api.v1.webhooks.whatsapp import cleanup_bogus_whatsapp_data
         async with AsyncSessionLocal() as session:
-            await backfill_whatsapp_contacts(session)
+            await cleanup_bogus_whatsapp_data(session)
     except Exception as e:
-        print(f"[STARTUP BACKFILL] WhatsApp backfill skipped or deferred: {e}")
+        print(f"[STARTUP CLEANUP] WhatsApp cleanup skipped or deferred: {e}")
 
     # Background keep-alive task to keep WhatsApp Bridge gateway on Render permanently awake 24/7
     async def keep_bridge_awake():
