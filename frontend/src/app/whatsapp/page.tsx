@@ -1165,19 +1165,15 @@ export default function WhatsAppPage() {
             localStorage.setItem("zigmaa_whatsapp_phone", data.phone);
           } catch (_) {}
           loadConversations(true);
-        } else if ((data as any)?.logged_out === true) {
-          // Explicit logout from device
-          setQrStatus(data.status === "SCAN_QR" ? "SCAN_QR" : "DISCONNECTED");
-          setQrPhone(null);
-          qrPhoneRef.current = null;
+        } else if (data.phone) {
+          // Paired session in reconnecting or background state
+          setQrPhone(data.phone);
+          qrPhoneRef.current = data.phone;
+          if (data.status) setQrStatus(data.status);
           try {
-            localStorage.removeItem("zigmaa_whatsapp_status");
-            localStorage.removeItem("zigmaa_whatsapp_phone");
+            localStorage.setItem("zigmaa_whatsapp_phone", data.phone);
           } catch (_) {}
-          setConversations([]);
-          setActivePhone("");
-          setMessages([]);
-          setLinkedUserAvatar(null);
+          loadConversations(true);
         } else {
           // Transient status (e.g. gateway check or reconnecting): Keep existing session intact!
           if (data.status) {
@@ -1494,28 +1490,16 @@ export default function WhatsAppPage() {
     }
 
     try {
-      const liveSession = qrPhoneRef.current || qrPhone;
-      // Guard: If device is not connected, exit gracefully without blanking loaded contacts
-      if (!liveSession) {
-        if (!isSilent && conversationsRef.current.length === 0) {
-          setIsLoadingConversations(false);
-        }
-        setIsRefreshing(false);
-        return;
-      }
+      const liveSession = qrPhoneRef.current || qrPhone || (typeof window !== "undefined" ? localStorage.getItem("zigmaa_whatsapp_phone") : null) || currentUser?.whatsapp_phone_number;
+      const cleanSession = liveSession ? liveSession.replace(/[^0-9]/g, "") : undefined;
+      const sId = currentUser?.id || api.getCurrentUser()?.id || undefined;
       const activeFilter = repFilter !== undefined ? repFilter : selectedRepFilter;
       const repParam = activeFilter === "ALL" ? undefined : activeFilter;
-      const cleanSession = liveSession.replace(/[^0-9]/g, "");
-      const sId = currentUser?.id || api.getCurrentUser()?.id || undefined;
+
       const data = await api.getWhatsAppConversations(100, repParam, cleanSession, sId);
       if (data && data.status === "success" && Array.isArray(data.conversations)) {
-        if (data.is_connected === false && (!data.conversations || data.conversations.length === 0)) {
-          // If user already has conversations on screen, do not wipe them on a transient query miss
-          if (conversationsRef.current.length === 0) {
-            setConversations([]);
-            setActivePhone("");
-            setMessages([]);
-          }
+        if (data.conversations.length === 0) {
+          // If no conversations returned from server, keep any previously rendered offline conversations
           return;
         }
         const mapped = data.conversations.map(mapBackendConv);
@@ -2562,6 +2546,32 @@ export default function WhatsAppPage() {
                 </div>
               )}
 
+              {/* Reconnecting / Background Sync State */}
+              {qrStatus !== "CONNECTED" && Boolean(qrPhone || currentUser?.whatsapp_phone_number) && (
+                <div className={cn(
+                  "w-full flex items-center justify-between px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all shadow-2xs",
+                  isDark
+                    ? "bg-amber-950/40 border-amber-800/60 text-amber-300"
+                    : "bg-amber-50 border-amber-300 text-amber-800"
+                )}>
+                  <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
+                    <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping shrink-0" />
+                    <span className="font-semibold text-[11px] truncate">
+                      Connecting ({qrPhone || currentUser?.whatsapp_phone_number})...
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleLogoutWhatsApp}
+                    disabled={isLoggingOutWhatsApp}
+                    className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold text-rose-600 hover:text-white bg-rose-50 hover:bg-rose-600 dark:bg-rose-950/50 dark:hover:bg-rose-600 dark:text-rose-300 dark:hover:text-white border border-rose-200 dark:border-rose-800 rounded-lg transition-all cursor-pointer shrink-0"
+                    title="Unlink Phone"
+                  >
+                    Unlink
+                  </button>
+                </div>
+              )}
+
               {/* Search Bar & New Chat Button */}
               <div className="flex items-center gap-2">
                 <div className="relative flex-1">
@@ -2667,7 +2677,7 @@ export default function WhatsAppPage() {
                     </div>
                   ))}
                 </div>
-              ) : (!qrPhone && qrStatus !== "CONNECTED" && conversations.length === 0) ? (
+              ) : (!qrPhone && !currentUser?.whatsapp_phone_number && (typeof window === "undefined" || !localStorage?.getItem("zigmaa_whatsapp_phone")) && qrStatus !== "CONNECTED" && conversations.length === 0) ? (
                 <div className="p-8 text-center flex flex-col items-center justify-center my-auto space-y-3">
                   <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-inner">
                     <QrCode className="w-7 h-7" />
@@ -2828,7 +2838,7 @@ export default function WhatsAppPage() {
             "flex-1 flex flex-col relative min-w-0 transition-colors",
             isDark ? "bg-[#0D0B14]" : "bg-[#F0F2F5]"
           )}>
-            {qrStatus !== "CONNECTED" && conversations.length === 0 ? (
+            {!qrPhone && !currentUser?.whatsapp_phone_number && (typeof window === "undefined" || !localStorage?.getItem("zigmaa_whatsapp_phone")) && qrStatus !== "CONNECTED" && conversations.length === 0 ? (
               <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-4">
                 <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-inner">
                   <ShieldCheck className="w-8 h-8" />

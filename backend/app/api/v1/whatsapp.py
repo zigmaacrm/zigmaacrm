@@ -1140,15 +1140,16 @@ async def get_whatsapp_qr_status(
                     # Strict User WhatsApp Phone Synchronization:
                     # ONLY update current_user phone if the bridge session is verified to belong to this user
                     if current_user and effective_session == current_user.id:
-                        if data.get("status") == "CONNECTED" and data.get("phone") and data.get("session_id") == current_user.id:
+                        if data.get("phone") and (data.get("session_id") == current_user.id or effective_session == current_user.id):
                             if current_user.whatsapp_phone_number != data.get("phone"):
                                 current_user.whatsapp_phone_number = data.get("phone")
                                 await db.commit()
-                        elif data.get("status") != "CONNECTED":
-                            if current_user.whatsapp_phone_number is not None and (data.get("logged_out") or data.get("status") in ("DISCONNECTED", "SCAN_QR")):
+                        elif data.get("logged_out") is True:
+                            if current_user.whatsapp_phone_number is not None:
                                 current_user.whatsapp_phone_number = None
                                 await db.commit()
-                            data["phone"] = None
+                        if not data.get("phone") and current_user.whatsapp_phone_number:
+                            data["phone"] = current_user.whatsapp_phone_number
 
                     return data
         except Exception as e:
@@ -1157,15 +1158,16 @@ async def get_whatsapp_qr_status(
     if user_cache["data"] and user_cache["data"].get("gateway_online") and user_cache["data"].get("status") == "CONNECTED" and (now - user_cache["ts"] < 15.0):
         return user_cache["data"]
 
+    saved_phone = getattr(current_user, "whatsapp_phone_number", None)
     return {
-        "status": "DISCONNECTED",
-        "phone": None,
+        "status": "CONNECTING" if saved_phone else "DISCONNECTED",
+        "phone": saved_phone,
         "name": getattr(current_user, "full_name", None),
         "avatar_url": None,
         "qr": None,
         "gateway_online": False,
         "session_id": effective_session,
-        "logged_out": True
+        "logged_out": False
     }
 
 @router.post("/qr/refresh")

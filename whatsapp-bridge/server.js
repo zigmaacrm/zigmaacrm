@@ -820,45 +820,19 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
           session.qr = null;
           session.isStarting = false;
         } else if (statusCode === DisconnectReason.loggedOut && hasStoredCreds) {
-          // Device unpair from WhatsApp mobile app (Linked Devices -> Log out)
-          // Give one reconnect attempt to ensure it was not a transient WhatsApp token rotation glitch
-          if (!session.loggedOutRetry) {
-            session.loggedOutRetry = true;
-            console.log(`[WhatsApp Gateway:${session.id}] DisconnectReason.loggedOut reported for paired session. Retrying once before clearing...`);
-            session.isStarting = false;
-            if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
-            session.reconnectTimer = setTimeout(() => {
-              session.reconnectTimer = null;
-              initWhatsApp(session.id, false);
-            }, 3000);
-          } else {
-            console.warn(`[WhatsApp Gateway:${session.id}] Confirmed device logout from WhatsApp mobile app. Clearing credentials.`);
-            session.loggedOutRetry = false;
-            session.status = 'DISCONNECTED';
-            session.qr = null;
-            session.phone = null;
-            session.ownerPhone = null;
-            session.name = null;
-            session.avatarUrl = null;
-            session.isStarting = false;
-            try {
-              if (fs.existsSync(session.authDir)) {
-                fs.rmSync(session.authDir, { recursive: true, force: true });
-              }
-            } catch (_) {}
-            deleteSessionBackupFromDatabase(session.id);
-            try {
-              dispatchToBackend('/api/v1/webhooks/whatsapp/status-update', {
-                session_id: session.id,
-                assigned_user_id: session.id !== 'default' ? session.id : null,
-                phone: null,
-                status: 'DISCONNECTED',
-                logged_out: true
-              });
-            } catch (_) {}
-          }
+          // Token rotation, pre-key desync, or network disconnect.
+          // NEVER wipe credentials on socket error! Reconnect automatically.
+          console.log(`[WhatsApp Gateway:${session.id}] DisconnectReason.loggedOut (code 401) for paired session. Keeping credentials and auto-reconnecting in 3s...`);
+          session.status = 'CONNECTING';
+          session.isStarting = false;
+          if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
+          session.reconnectTimer = setTimeout(() => {
+            session.reconnectTimer = null;
+            initWhatsApp(session.id, false);
+          }, 3000);
         } else if (statusCode === DisconnectReason.restartRequired || statusCode === 515) {
           console.log(`[WhatsApp Gateway:${session.id}] WhatsApp QR Scan accepted / restart required (code 515). Reconnecting in 2.5s...`);
+          session.status = 'CONNECTING';
           session.isStarting = false;
           session.loggedOutRetry = false;
           if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
@@ -868,6 +842,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
           }, 2500);
         } else if (statusCode === 440) {
           console.warn(`[WhatsApp Gateway:${session.id}] Status 440 (Conflict). Waiting 3s for clean reconnect...`);
+          session.status = 'CONNECTING';
           session.isStarting = false;
           session.loggedOutRetry = false;
           if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
@@ -877,6 +852,7 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
           }, 3000);
         } else {
           console.log(`[WhatsApp Gateway:${session.id}] Temporary connection drop (code ${statusCode || 'unknown'}). Auto-reconnecting in 3s...`);
+          session.status = hasStoredCreds ? 'CONNECTING' : 'DISCONNECTED';
           session.isStarting = false;
           session.loggedOutRetry = false;
           if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
@@ -1490,13 +1466,15 @@ app.get('/status', async (req, res) => {
     }
   }
 
+  const effectivePhone = session.phone || (session.ownerPhone ? `+${session.ownerPhone}` : null);
   res.json({
     status: session.status,
-    phone: session.status === 'CONNECTED' ? session.phone : null,
-    name: session.status === 'CONNECTED' ? session.name : null,
+    phone: effectivePhone,
+    name: session.name || (effectivePhone ? 'Zigmaa Account' : null),
     avatar_url: session.avatarUrl,
     qr: session.qr,
-    session_id: session.id
+    session_id: session.id,
+    logged_out: false
   });
 });
 
