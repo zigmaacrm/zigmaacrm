@@ -6,6 +6,7 @@ BridgeUnavailable / BridgeRejected so endpoints can report them honestly
 instead of pretending a message was sent.
 """
 import logging
+import re
 from typing import Any, Dict, Optional
 
 import httpx
