@@ -1034,57 +1034,62 @@ async function initWhatsApp(sessionId = 'default', forceClean = false) {
         }
 
         for (const msg of msgs) {
-          let mediaPayload = null;
-          try {
-            mediaPayload = await decryptAndSaveMedia(msg);
-          } catch (_) {}
-
+          const rawM = unwrapMessage(msg.message);
           let body = extractMessageBody(msg.message);
-          if (!body && mediaPayload) {
-            if (mediaPayload.is_voice_note) {
-              const d = mediaPayload.duration || 3;
-              body = `🎤 Voice message (${d}s)`;
-            } else if (mediaPayload.message_type === 'sticker') {
-              body = '[Sticker]';
-            } else if (mediaPayload.message_type === 'gif') {
-              body = mediaPayload.caption || '[GIF]';
-            } else if (mediaPayload.message_type === 'video') {
-              body = mediaPayload.caption || '[Video]';
-            } else if (mediaPayload.message_type === 'image') {
-              body = mediaPayload.caption || '[Photo]';
-            } else {
-              body = mediaPayload.caption || `[${mediaPayload.message_type || 'Attachment'}]`;
-            }
+          let messageType = 'text';
+          let isVoiceNote = false;
+          let fileName = null;
+          let caption = null;
+
+          if (rawM?.imageMessage) {
+            messageType = 'image';
+            caption = rawM.imageMessage.caption || '';
+            body = caption || '[Photo]';
+          } else if (rawM?.videoMessage) {
+            messageType = 'video';
+            caption = rawM.videoMessage.caption || '';
+            body = caption || '[Video]';
+          } else if (rawM?.audioMessage) {
+            messageType = 'audio';
+            isVoiceNote = Boolean(rawM.audioMessage.ptt);
+            const d = rawM.audioMessage.seconds || 3;
+            body = isVoiceNote ? `🎤 Voice message (${d}s)` : '🎵 Audio message';
+          } else if (rawM?.documentMessage) {
+            messageType = 'document';
+            fileName = rawM.documentMessage.fileName || 'document.pdf';
+            body = `📎 ${fileName}`;
+          } else if (rawM?.stickerMessage) {
+            messageType = 'sticker';
+            body = '[Sticker]';
           }
 
           // Skip protocol, receipt, and empty stub packets that have no visible user content
-          if (!body && !mediaPayload) {
+          if (!body) {
             continue;
           }
-          if (!body) body = '[Attachment]';
 
-            const fromMe = Boolean(msg.key?.fromMe);
-            const thisMsgContactName = contactName || msg.pushName || null;
-            const ts = typeof msg.messageTimestamp === 'number'
-              ? msg.messageTimestamp
-              : (msg.messageTimestamp?.low || Math.floor(Date.now() / 1000));
+          const fromMe = Boolean(msg.key?.fromMe);
+          const thisMsgContactName = contactName || msg.pushName || null;
+          const ts = typeof msg.messageTimestamp === 'number'
+            ? msg.messageTimestamp
+            : (msg.messageTimestamp?.low || Math.floor(Date.now() / 1000));
 
-            validMessages.push({
-              phone_number: phone,
-              contact_name: thisMsgContactName,
-              message_body: body,
-              meta_message_id: msg.key?.id,
-              timestamp: ts,
-              direction: fromMe ? 'OUTBOUND' : 'INBOUND',
-              message_type: mediaPayload?.message_type || 'text',
-              media_url: mediaPayload?.media_url || null,
-              file_name: mediaPayload?.file_name || null,
-              caption: mediaPayload?.caption || null,
-              is_voice_note: Boolean(mediaPayload?.is_voice_note),
-              media_base64: mediaPayload?.media_base64 || null,
-              quoted_context: extractQuotedContext(msg.message)
-            });
-          }
+          validMessages.push({
+            phone_number: phone,
+            contact_name: thisMsgContactName,
+            message_body: body,
+            meta_message_id: msg.key?.id,
+            timestamp: ts,
+            direction: fromMe ? 'OUTBOUND' : 'INBOUND',
+            message_type: messageType,
+            media_url: null,
+            file_name: fileName,
+            caption: caption,
+            is_voice_note: isVoiceNote,
+            media_base64: null,
+            quoted_context: extractQuotedContext(msg.message)
+          });
+        }
         }
 
       if (validMessages.length > 0) {
@@ -1439,8 +1444,19 @@ app.get('/status', async (req, res) => {
     initWhatsApp(sId, false);
   }
 
-  // If QR code is being generated, briefly wait up to 4s so the client gets it on the very first request
-  if (!session.qr && session.status !== 'CONNECTED') {
+  // If the session is actively booting or restoring credentials, wait up to 3s for phone identity to be populated
+  if (session.isStarting) {
+    let waited = 0;
+    while (session.isStarting && waited < 3000) {
+      await new Promise(r => setTimeout(r, 200));
+      waited += 200;
+    }
+  }
+
+  const effectivePhone = session.phone || (session.ownerPhone ? `+${session.ownerPhone}` : null);
+
+  // If unauthenticated and QR code is being generated, briefly wait up to 4s so the client gets it on the very first request
+  if (!effectivePhone && !session.qr && session.status !== 'CONNECTED') {
     let waited = 0;
     while (!session.qr && session.status !== 'CONNECTED' && waited < 4000) {
       await new Promise(r => setTimeout(r, 200));
@@ -1466,13 +1482,14 @@ app.get('/status', async (req, res) => {
     }
   }
 
-  const effectivePhone = session.phone || (session.ownerPhone ? `+${session.ownerPhone}` : null);
+  const finalPhone = session.phone || (session.ownerPhone ? `+${session.ownerPhone}` : null);
+  const finalStatus = finalPhone ? (session.status === 'CONNECTED' ? 'CONNECTED' : 'CONNECTING') : session.status;
   res.json({
-    status: session.status,
-    phone: effectivePhone,
-    name: session.name || (effectivePhone ? 'Zigmaa Account' : null),
+    status: finalStatus,
+    phone: finalPhone,
+    name: session.name || (finalPhone ? 'Zigmaa Account' : null),
     avatar_url: session.avatarUrl,
-    qr: session.qr,
+    qr: finalPhone ? null : session.qr,
     session_id: session.id,
     logged_out: false
   });
@@ -1515,6 +1532,29 @@ app.post('/refresh-qr', async (req, res) => {
     // If already connected, return connected status
     if (session.status === 'CONNECTED' && session.phone) {
       return res.json({ success: true, status: 'CONNECTED', phone: session.phone, session_id: session.id });
+    }
+
+    // Check if session has stored credentials on disk or in DB
+    const credsPath = path.join(session.authDir, 'creds.json');
+    let hasStoredCreds = fs.existsSync(credsPath);
+    if (!hasStoredCreds) {
+      const restored = await restoreSessionFromDatabase(session);
+      if (restored) hasStoredCreds = true;
+    }
+
+    // If session has credentials, NEVER forceClean! Simply reconnect!
+    if (hasStoredCreds) {
+      console.log(`[WhatsApp Gateway:${session.id}] refresh-qr requested for paired session. Reconnecting without wiping credentials...`);
+      session.isStarting = false;
+      await initWhatsApp(session.id, false);
+      const effPhone = session.phone || (session.ownerPhone ? `+${session.ownerPhone}` : null);
+      return res.json({
+        success: true,
+        status: session.status || 'CONNECTING',
+        phone: effPhone,
+        session_id: session.id,
+        message: 'Reconnecting existing paired session...'
+      });
     }
 
     // A refresh request indicates user wants a clean, fresh QR pairing
@@ -1988,6 +2028,32 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   } catch (e) {
     console.warn('[WhatsApp Gateway] Error restoring sessions:', e.message);
   }
+
+  // Auto-boot all backed up sessions from PostgreSQL database
+  (async () => {
+    try {
+      const targets = getBackendUrls('/api/v1/whatsapp/session-backups/all');
+      for (const url of targets) {
+        try {
+          const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+          if (res.status === 200) {
+            const data = await res.json();
+            if (data?.sessions && Array.isArray(data.sessions)) {
+              for (const s of data.sessions) {
+                if (s?.session_id) {
+                  console.log(`[WhatsApp Gateway] Auto-booting backed up session from DB: ${s.session_id} (${s.owner_phone || 'unnamed'})`);
+                  initWhatsApp(s.session_id, false);
+                }
+              }
+              break;
+            }
+          }
+        } catch (_) {}
+      }
+    } catch (e) {
+      console.warn('[WhatsApp Gateway] DB session restore query note:', e.message);
+    }
+  })();
 });
 
 server.on('error', (err) => {

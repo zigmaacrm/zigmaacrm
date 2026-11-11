@@ -102,6 +102,7 @@ async def _build_user_out(user: User, db: AsyncSession) -> UserOut:
         email=user.email,
         full_name=user.full_name,
         phone=getattr(user, "phone", None),
+        whatsapp_phone_number=getattr(user, "whatsapp_phone_number", None),
         role=user.role,
         is_active=user.is_active,
         is_super_admin=is_super,

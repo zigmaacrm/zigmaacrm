@@ -22,7 +22,7 @@ interface WhatsAppQRModalProps {
   onClose: () => void;
   initialQR?: string | null;
   sessionId?: string | null;
-  onStatusChange?: (status: "DISCONNECTED" | "SCAN_QR" | "CONNECTED", phone: string | null) => void;
+  onStatusChange?: (status: "DISCONNECTED" | "SCAN_QR" | "CONNECTED" | "CONNECTING", phone: string | null) => void;
 }
 
 export default function WhatsAppQRModal({
@@ -33,7 +33,7 @@ export default function WhatsAppQRModal({
   onStatusChange
 }: WhatsAppQRModalProps) {
   const { toast } = useToast();
-  const [status, setStatus] = useState<"DISCONNECTED" | "SCAN_QR" | "CONNECTED">("DISCONNECTED");
+  const [status, setStatus] = useState<"DISCONNECTED" | "SCAN_QR" | "CONNECTED" | "CONNECTING">("DISCONNECTED");
   const [phone, setPhone] = useState<string | null>(null);
   const [name, setName] = useState<string | null>(null);
   const [qrCode, setQrCode] = useState<string | null>(initialQR || null);
@@ -113,8 +113,8 @@ export default function WhatsAppQRModal({
         setName(data.name);
         setGatewayOnline(data.gateway_online);
 
-        if (data.status === "CONNECTED") {
-          if (onStatusChange) onStatusChange(data.status, data.phone);
+        if (data.status === "CONNECTED" || data.phone) {
+          if (onStatusChange) onStatusChange(data.status || "CONNECTED", data.phone);
           return;
         }
 

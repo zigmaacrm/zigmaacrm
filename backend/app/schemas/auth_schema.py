@@ -41,6 +41,7 @@ class UserOut(BaseModel):
     email: str
     full_name: str
     phone: Optional[str] = None
+    whatsapp_phone_number: Optional[str] = None
     role: str
     is_active: bool
     is_super_admin: Optional[bool] = False

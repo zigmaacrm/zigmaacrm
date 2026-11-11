@@ -655,14 +655,11 @@ async def get_whatsapp_conversations(
 
     # Strict isolation: ONLY messages tagged with this user's active session phone
     if target_session:
-        valid_sessions = [target_session]
-        if session_suffix == "6379816912":
-            valid_sessions.append("82830648669123136365")
         stmt = stmt.where(
             or_(
-                WhatsAppMessage.session_id.in_(valid_sessions),
+                WhatsAppMessage.session_id == target_session,
                 WhatsAppMessage.session_id.like(f"%{session_suffix}%"),
-                WhatsAppMessage.business_phone_number_id.in_(valid_sessions),
+                WhatsAppMessage.business_phone_number_id == target_session,
                 WhatsAppMessage.business_phone_number_id.like(f"%{session_suffix}%")
             )
         )
@@ -1151,6 +1148,27 @@ async def get_whatsapp_qr_status(
                         if not data.get("phone") and current_user.whatsapp_phone_number:
                             data["phone"] = current_user.whatsapp_phone_number
 
+                    # Database Backup Fallback: Check if session has a persistent backup in DB
+                    effective_phone = data.get("phone") or (current_user.whatsapp_phone_number if current_user else None)
+                    if not effective_phone and effective_session and effective_session != "default":
+                        chk_b = await db.execute(
+                            text("SELECT owner_phone FROM whatsapp_session_backups WHERE session_id = :s_id LIMIT 1;"),
+                            {"s_id": effective_session}
+                        )
+                        b_row = chk_b.fetchone()
+                        if b_row and b_row[0]:
+                            raw_p = str(b_row[0]).strip()
+                            effective_phone = f"+{raw_p}" if not raw_p.startswith("+") else raw_p
+                            if current_user and current_user.id == effective_session and not current_user.whatsapp_phone_number:
+                                current_user.whatsapp_phone_number = effective_phone
+                                await db.commit()
+
+                    if effective_phone:
+                        data["phone"] = effective_phone
+                        if data.get("status") != "CONNECTED":
+                            data["status"] = "CONNECTING"
+                            data["qr"] = None
+
                     return data
         except Exception as e:
             logger.debug(f"WhatsApp QR Gateway at {target} not reachable for {effective_session}: {e}")
@@ -1159,6 +1177,19 @@ async def get_whatsapp_qr_status(
         return user_cache["data"]
 
     saved_phone = getattr(current_user, "whatsapp_phone_number", None)
+    if not saved_phone and effective_session and effective_session != "default":
+        chk_b = await db.execute(
+            text("SELECT owner_phone FROM whatsapp_session_backups WHERE session_id = :s_id LIMIT 1;"),
+            {"s_id": effective_session}
+        )
+        b_row = chk_b.fetchone()
+        if b_row and b_row[0]:
+            raw_p = str(b_row[0]).strip()
+            saved_phone = f"+{raw_p}" if not raw_p.startswith("+") else raw_p
+            if current_user and current_user.id == effective_session and not current_user.whatsapp_phone_number:
+                current_user.whatsapp_phone_number = saved_phone
+                await db.commit()
+
     return {
         "status": "CONNECTING" if saved_phone else "DISCONNECTED",
         "phone": saved_phone,
@@ -1967,6 +1998,20 @@ async def delete_whatsapp_session_backup(
     await db.commit()
     return {"status": "success", "deleted": clean_id}
 
+@router.get("/session-backups/all")
+async def get_all_whatsapp_session_backups(
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Returns list of all active session IDs stored in the database for auto-reconnection on boot.
+    """
+    res = await db.execute(text("SELECT session_id, owner_phone FROM whatsapp_session_backups;"))
+    rows = res.fetchall()
+    return {
+        "status": "success",
+        "sessions": [{"session_id": r[0], "owner_phone": r[1]} for r in rows]
+    }
+
 @router.get("/session-restore/{session_id}")
 async def restore_whatsapp_session(
     session_id: str,
@@ -1992,16 +2037,6 @@ async def restore_whatsapp_session(
 
     if not row:
         raise HTTPException(status_code=404, detail="No session backup found")
-
-    auth_data_str = str(row[2] or "")
-    if '"registered":false' in auth_data_str or '"registered": false' in auth_data_str:
-        logger.warning(f"[SESSION RESTORE] Detected dead/deregistered backup for {clean_id}. Purging from DB...")
-        await db.execute(
-            text("DELETE FROM whatsapp_session_backups WHERE session_id = :s_id;"),
-            {"s_id": clean_id}
-        )
-        await db.commit()
-        raise HTTPException(status_code=404, detail="Session backup was deregistered and has been purged")
 
     return {
         "status": "success",

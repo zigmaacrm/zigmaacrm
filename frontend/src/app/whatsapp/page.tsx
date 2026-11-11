@@ -1124,7 +1124,7 @@ export default function WhatsAppPage() {
   // QR WhatsApp State
   const [showQRModal, setShowQRModal] = useState(false);
   const [showNewChatModal, setShowNewChatModal] = useState(false);
-  const [qrStatus, setQrStatus] = useState<"DISCONNECTED" | "SCAN_QR" | "CONNECTED">(() => {
+  const [qrStatus, setQrStatus] = useState<"DISCONNECTED" | "SCAN_QR" | "CONNECTED" | "CONNECTING">(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("zigmaa_whatsapp_status");
       if (saved === "CONNECTED") return "CONNECTED";
@@ -1216,6 +1216,14 @@ export default function WhatsAppPage() {
   const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
   const emojiPickerRef = useRef<HTMLDivElement | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const hasAnyLinkedPhone = Boolean(
+    qrPhone ||
+    currentUser?.whatsapp_phone_number ||
+    (typeof window !== "undefined" && localStorage.getItem("zigmaa_whatsapp_phone"))
+  );
+  const isConnectingState = qrStatus === "CONNECTING" || isLoadingConversations;
+  const isTrulyUnlinked = !hasAnyLinkedPhone && qrStatus !== "CONNECTED" && qrStatus !== "CONNECTING" && conversations.length === 0;
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState("");
@@ -1608,7 +1616,33 @@ export default function WhatsAppPage() {
     const user = api.getCurrentUser();
     if (user) {
       setCurrentUser(user);
+      if (user.whatsapp_phone_number) {
+        setQrPhone(user.whatsapp_phone_number);
+        qrPhoneRef.current = user.whatsapp_phone_number;
+        setQrStatus("CONNECTED");
+        try {
+          localStorage.setItem("zigmaa_whatsapp_phone", user.whatsapp_phone_number);
+          localStorage.setItem("zigmaa_whatsapp_status", "CONNECTED");
+        } catch (_) {}
+      }
     }
+    // Fresh server fetch to sync linked WhatsApp phone across any laptop or browser
+    api.getMe().then((freshUser) => {
+      if (freshUser) {
+        setCurrentUser(freshUser);
+        if (freshUser.whatsapp_phone_number) {
+          setQrPhone(freshUser.whatsapp_phone_number);
+          qrPhoneRef.current = freshUser.whatsapp_phone_number;
+          setQrStatus("CONNECTED");
+          try {
+            localStorage.setItem("zigmaa_whatsapp_phone", freshUser.whatsapp_phone_number);
+            localStorage.setItem("zigmaa_whatsapp_status", "CONNECTED");
+          } catch (_) {}
+          loadConversations(true);
+        }
+      }
+    }).catch(() => {});
+
     api.getTeamMembers()
       .then((members) => {
         if (Array.isArray(members)) setTeamMembers(members);
@@ -2677,7 +2711,7 @@ export default function WhatsAppPage() {
                     </div>
                   ))}
                 </div>
-              ) : (!qrPhone && !currentUser?.whatsapp_phone_number && (typeof window === "undefined" || !localStorage?.getItem("zigmaa_whatsapp_phone")) && qrStatus !== "CONNECTED" && conversations.length === 0) ? (
+              ) : isTrulyUnlinked ? (
                 <div className="p-8 text-center flex flex-col items-center justify-center my-auto space-y-3">
                   <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-inner">
                     <QrCode className="w-7 h-7" />
@@ -2838,14 +2872,14 @@ export default function WhatsAppPage() {
             "flex-1 flex flex-col relative min-w-0 transition-colors",
             isDark ? "bg-[#0D0B14]" : "bg-[#F0F2F5]"
           )}>
-            {!qrPhone && !currentUser?.whatsapp_phone_number && (typeof window === "undefined" || !localStorage?.getItem("zigmaa_whatsapp_phone")) && qrStatus !== "CONNECTED" && conversations.length === 0 ? (
+            {isTrulyUnlinked ? (
               <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-4">
                 <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-inner">
                   <ShieldCheck className="w-8 h-8" />
                 </div>
                 <div className="text-center space-y-1">
                   <h3 className={cn("font-bold text-lg", isDark ? "text-white" : "text-slate-900")}>
-                    WhatsApp Session Logged Out
+                    WhatsApp Device Not Linked
                   </h3>
                   <p className={cn("text-xs text-center max-w-sm leading-relaxed", isDark ? "text-slate-400" : "text-slate-500")}>
                     Your WhatsApp device is not connected. All conversations are hidden for security until you scan your personal QR code.
