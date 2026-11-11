@@ -23,15 +23,15 @@ import {
   downloadIcsFile
 } from "./mockData";
 
-function resolveApiBase(): string {
+function getDynamicApiBase(): string {
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    if (host === "localhost" || host === "127.0.0.1") {
+      return "http://localhost:8000/api/v1";
+    }
+  }
   let raw = (process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || "").trim().replace(/\/+$/, "");
   if (!raw) {
-    if (typeof window !== "undefined") {
-      const host = window.location.hostname;
-      if (host === "localhost" || host === "127.0.0.1") {
-        return "http://localhost:8000/api/v1";
-      }
-    }
     raw = "https://zigmaacrm-backend.onrender.com/api/v1";
   }
   if (!raw.endsWith("/api/v1")) {
@@ -40,7 +40,27 @@ function resolveApiBase(): string {
   return raw;
 }
 
-const API_BASE = resolveApiBase();
+export function resolveApiBase(): string {
+  return getDynamicApiBase();
+}
+
+export const API_BASE: string = ({
+  toString() {
+    return getDynamicApiBase();
+  },
+  valueOf() {
+    return getDynamicApiBase();
+  },
+  replace(pattern: string | RegExp, replacement: string) {
+    return getDynamicApiBase().replace(pattern, replacement);
+  },
+  endsWith(searchString: string, endPosition?: number) {
+    return getDynamicApiBase().endsWith(searchString, endPosition);
+  },
+  startsWith(searchString: string, position?: number) {
+    return getDynamicApiBase().startsWith(searchString, position);
+  }
+} as unknown as string);
 
 export function getBridgeMediaUrl(mediaPath?: string | null): string {
   if (!mediaPath) return "";
