@@ -40,8 +40,10 @@ export default function WhatsAppQRModal({
   const [gatewayOnline, setGatewayOnline] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
+  const [hasTimedOut, setHasTimedOut] = useState(false);
 
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const timeoutTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isCheckingRef = useRef(false);
 
   const getResolvedSessionId = (): string | undefined => {
@@ -56,6 +58,8 @@ export default function WhatsAppQRModal({
   useEffect(() => {
     if (initialQR) {
       setQrCode(initialQR);
+      setHasTimedOut(false);
+      if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
     }
   }, [initialQR, isOpen]);
 
@@ -68,8 +72,12 @@ export default function WhatsAppQRModal({
       setStatus(data.status);
       setPhone(data.phone);
       setName(data.name);
-      if (data.qr) {
-        setQrCode(data.qr);
+      const code = data.qr_code || data.qr;
+      if (code) {
+        setQrCode(code);
+        setGatewayOnline(true);
+        setHasTimedOut(false);
+        if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
       }
       setGatewayOnline(data.gateway_online);
       if (onStatusChange) {
@@ -78,6 +86,7 @@ export default function WhatsAppQRModal({
       if (data.status === "CONNECTED" && pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
+        if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
       }
     } catch (e) {
       console.warn("Failed to check QR status", e);
@@ -89,23 +98,38 @@ export default function WhatsAppQRModal({
   useEffect(() => {
     if (!isOpen) {
       setQrCode(null);
+      setHasTimedOut(false);
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
+      }
+      if (timeoutTimerRef.current) {
+        clearTimeout(timeoutTimerRef.current);
+        timeoutTimerRef.current = null;
       }
       return;
     }
 
     let isMounted = true;
+    setHasTimedOut(false);
     if (initialQR) {
       setQrCode(initialQR);
     } else {
       setQrCode(null);
     }
 
+    // Set 12s timeout for connection/QR generation
+    if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
+    timeoutTimerRef.current = setTimeout(() => {
+      if (isMounted) {
+        setHasTimedOut(true);
+      }
+    }, 12000);
+
     const initQR = async () => {
       try {
         const sId = getResolvedSessionId();
+        // 1. Check if already connected or if a valid QR is cached
         const data = await api.getWhatsAppQRStatus(sId);
         if (!isMounted) return;
         setStatus(data.status);
@@ -114,26 +138,34 @@ export default function WhatsAppQRModal({
         setGatewayOnline(data.gateway_online);
 
         if (data.status === "CONNECTED" || data.phone) {
+          if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
           if (onStatusChange) onStatusChange(data.status || "CONNECTED", data.phone);
           return;
         }
 
-        // If a live QR already exists from status, show it instantly (zero delay)
-        if (data.qr) {
-          setQrCode(data.qr);
+        const validQr = data.qr_code || data.qr;
+        if (validQr) {
+          setQrCode(validQr);
           setStatus(data.status || "SCAN_QR");
-        } else {
-          // Only request a fresh QR generation if none exists yet
-          const res = await api.refreshWhatsAppQR(sId).catch(() => null);
-          if (!isMounted) return;
-          if (res?.qr) {
-            setQrCode(res.qr);
-            setGatewayOnline(true);
-            setStatus(res.status || "SCAN_QR");
-          }
+          setGatewayOnline(true);
+          setHasTimedOut(false);
+          if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
+          return;
         }
-        if (onStatusChange) {
-          onStatusChange(data.status, data.phone);
+
+        // 2. Connect endpoint triggers Baileys and returns QR immediately (0-2s)
+        const res = await api.connectWhatsAppQR(sId).catch(() => null);
+        if (!isMounted) return;
+        const newQr = res?.qr_code || res?.qr;
+        if (newQr) {
+          setQrCode(newQr);
+          setGatewayOnline(true);
+          setStatus((res?.status as any) || "SCAN_QR");
+          setHasTimedOut(false);
+          if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
+        }
+        if (onStatusChange && res?.status) {
+          onStatusChange(res.status as any, res.phone || null);
         }
       } catch (e) {
         console.warn("Init QR error", e);
@@ -141,7 +173,8 @@ export default function WhatsAppQRModal({
     };
 
     initQR();
-    pollIntervalRef.current = setInterval(checkStatus, 2000);
+    // Fast polling fallback: 1.5s
+    pollIntervalRef.current = setInterval(checkStatus, 1500);
 
     return () => {
       isMounted = false;
@@ -149,18 +182,31 @@ export default function WhatsAppQRModal({
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
       }
+      if (timeoutTimerRef.current) {
+        clearTimeout(timeoutTimerRef.current);
+        timeoutTimerRef.current = null;
+      }
     };
   }, [isOpen, sessionId]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
+    setHasTimedOut(false);
+    if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
+    timeoutTimerRef.current = setTimeout(() => {
+      setHasTimedOut(true);
+    }, 12000);
+
     try {
       const sId = getResolvedSessionId();
-      const res = await api.refreshWhatsAppQR(sId);
-      if (res?.qr) {
-        setQrCode(res.qr);
+      const res = await api.connectWhatsAppQR(sId);
+      const code = res?.qr_code || res?.qr;
+      if (code) {
+        setQrCode(code);
         setGatewayOnline(true);
-        setStatus(res.status || "SCAN_QR");
+        setStatus((res.status as any) || "SCAN_QR");
+        setHasTimedOut(false);
+        if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
       }
       toast.success("QR Code Refreshed", "Ready for pairing");
       await checkStatus();
@@ -276,6 +322,40 @@ export default function WhatsAppQRModal({
                 </button>
               </div>
             </div>
+          ) : hasTimedOut && !qrCode ? (
+            /* Cloud Gateway Connection Timeout State with Retry */
+            <div className="text-center py-8 space-y-4">
+              <div className="w-14 h-14 rounded-2xl bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 mx-auto flex items-center justify-center ring-8 ring-amber-50/50 dark:ring-amber-900/10">
+                <AlertTriangle className="w-7 h-7" />
+              </div>
+              <div className="space-y-1">
+                <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                  Gateway Taking Longer to Respond
+                </h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xs mx-auto leading-relaxed">
+                  The WhatsApp Gateway bridge took longer than 12 seconds to generate your pairing code. The cloud container may be performing a cold restart.
+                </p>
+              </div>
+              <div className="flex items-center justify-center gap-2 pt-2">
+                <button
+                  onClick={async () => {
+                    setHasTimedOut(false);
+                    await handleRefresh();
+                  }}
+                  disabled={isRefreshing}
+                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs disabled:opacity-60"
+                >
+                  <RefreshCw className={cn("w-3.5 h-3.5", isRefreshing && "animate-spin")} />
+                  <span>{isRefreshing ? "Connecting to Gateway..." : "Retry Connection"}</span>
+                </button>
+                <button
+                  onClick={onClose}
+                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold inline-flex items-center transition-colors cursor-pointer"
+                >
+                  <span>Close</span>
+                </button>
+              </div>
+            </div>
           ) : !gatewayOnline && !qrCode ? (
             /* Cloud Gateway Connecting / Waking Up State */
             <div className="text-center py-8 space-y-4">
@@ -293,17 +373,7 @@ export default function WhatsAppQRModal({
               <div className="flex items-center justify-center gap-2 pt-2">
                 <button
                   onClick={async () => {
-                    setIsRefreshing(true);
-                    try {
-                      const res = await api.refreshWhatsAppQR(getResolvedSessionId());
-                      if (res?.qr) {
-                        setQrCode(res.qr);
-                        setGatewayOnline(true);
-                        setStatus(res.status || "SCAN_QR");
-                      }
-                    } catch (_) {}
-                    await checkStatus();
-                    setIsRefreshing(false);
+                    await handleRefresh();
                   }}
                   disabled={isRefreshing}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs disabled:opacity-60"

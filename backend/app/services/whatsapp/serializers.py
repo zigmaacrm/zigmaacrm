@@ -240,6 +240,7 @@ def serialize_session(row: Optional[Mapping[str, Any]], *, gateway_online: Optio
             "name": None,
             "avatar_url": None,
             "qr": None,
+            "qr_code": None,
             "qr_expires_at": None,
             "gateway_online": gateway_online,
             "last_disconnect": None,
@@ -261,6 +262,7 @@ def serialize_session(row: Optional[Mapping[str, Any]], *, gateway_online: Optio
             "reason": row.get("last_disconnect_reason"),
             "at": iso_utc(row.get("last_disconnect_at")),
         }
+    qr_val = row.get("qr") if show_qr else None
     return {
         "status": status,
         "linked": linked,
@@ -268,7 +270,8 @@ def serialize_session(row: Optional[Mapping[str, Any]], *, gateway_online: Optio
         "session_id": row.get("phone_number"),
         "name": row.get("push_name"),
         "avatar_url": row.get("avatar_url"),
-        "qr": row.get("qr") if show_qr else None,
+        "qr": qr_val,
+        "qr_code": qr_val,
         "qr_expires_at": iso_utc(row.get("qr_expires_at")) if show_qr else None,
         "gateway_online": (not stale) if gateway_online is None else gateway_online,
         "last_disconnect": last,

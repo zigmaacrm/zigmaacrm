@@ -79,6 +79,14 @@ async def request_qr(session_id: str, organization_id: str, user_id: str) -> Dic
     return await call("POST", f"/sessions/{session_id}/qr", json={"organization_id": organization_id, "user_id": user_id}, timeout=25.0)
 
 
+async def connect_session(session_id: str, organization_id: str, user_id: str) -> Dict[str, Any]:
+    return await call("POST", f"/sessions/{session_id}/connect", json={"organization_id": organization_id, "user_id": user_id}, timeout=25.0)
+
+
+async def get_session_qr(session_id: str) -> Dict[str, Any]:
+    return await call("GET", f"/sessions/{session_id}/qr", timeout=10.0)
+
+
 async def logout_session(session_id: str) -> Dict[str, Any]:
     return await call("POST", f"/sessions/{session_id}/logout", timeout=30.0)
 
@@ -90,6 +98,19 @@ async def health() -> bool:
         return resp.status_code == 200
     except httpx.HTTPError:
         return False
+
+
+async def gateway_status() -> Dict[str, Any]:
+    url = f"{gateway_url()}/status"
+    try:
+        async with httpx.AsyncClient(timeout=5.0, headers=_HEADERS) as client:
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                data = resp.json()
+                return data if isinstance(data, dict) else {"status": "ONLINE", "gateway_online": True}
+    except Exception:
+        pass
+    return {"status": "OFFLINE", "gateway_online": False}
 
 
 # ---- messaging --------------------------------------------------------------- #

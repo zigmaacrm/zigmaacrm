@@ -145,6 +145,67 @@ async def _resolve_active_session_and_phone(
 # 1. Lifecycle & Persistent Sessions
 # --------------------------------------------------------------------------- #
 
+@router.get("/status")
+@router.get("/health")
+async def get_gateway_status():
+    """
+    Lightweight health/warm-up ping. Wakes the Render bridge service if sleeping,
+    so subsequent QR generation has zero cold-start delay.
+    """
+    return await bridge.gateway_status()
+
+
+@router.post("/connect")
+async def connect_whatsapp_session(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Connects to WhatsApp Gateway and immediately returns pre-rendered QR Data URL (0ms if cached, <2s fresh).
+    """
+    sid = _get_user_session_id(current_user)
+    await repository.ensure_user_session(db, current_user.organization_id, current_user.id)
+    try:
+        bridge_resp = await bridge.connect_session(sid, current_user.organization_id, current_user.id)
+    except bridge.BridgeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+    session_row, is_stale = await repository.get_user_session(db, current_user.organization_id, current_user.id)
+    serialized = serializers.serialize_session(session_row, gateway_online=True, stale=is_stale)
+    qr_data = bridge_resp.get("qr_code") or bridge_resp.get("qr") or serialized.get("qr")
+    if qr_data:
+        serialized["qr"] = qr_data
+        serialized["qr_code"] = qr_data
+        serialized["status"] = "SCAN_QR"
+    return serialized
+
+
+@router.get("/qr")
+async def get_whatsapp_qr(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Returns latest cached QR Data URL immediately.
+    """
+    sid = _get_user_session_id(current_user)
+    session_row, is_stale = await repository.get_user_session(db, current_user.organization_id, current_user.id)
+    qr_from_bridge = None
+    try:
+        b_res = await bridge.get_session_qr(sid)
+        qr_from_bridge = b_res.get("qr_code") or b_res.get("qr")
+    except Exception:
+        pass
+
+    serialized = serializers.serialize_session(session_row, gateway_online=True, stale=is_stale)
+    final_qr = qr_from_bridge or serialized.get("qr")
+    if final_qr:
+        serialized["qr"] = final_qr
+        serialized["qr_code"] = final_qr
+        serialized["status"] = "SCAN_QR"
+    return serialized
+
+
 @router.get("/sessions/me")
 @router.get("/qr/status")
 async def get_my_session_status(
@@ -182,7 +243,13 @@ async def refresh_qr_code(
         raise HTTPException(status_code=exc.status_code, detail=exc.message)
 
     session_row, is_stale = await repository.get_user_session(db, current_user.organization_id, current_user.id)
-    return serializers.serialize_session(session_row, gateway_online=True, stale=is_stale)
+    serialized = serializers.serialize_session(session_row, gateway_online=True, stale=is_stale)
+    qr_data = bridge_resp.get("qr_code") or bridge_resp.get("qr") or serialized.get("qr")
+    if qr_data:
+        serialized["qr"] = qr_data
+        serialized["qr_code"] = qr_data
+        serialized["status"] = "SCAN_QR"
+    return serialized
 
 
 @router.post("/sessions/me/logout")

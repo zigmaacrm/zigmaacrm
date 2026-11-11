@@ -129,6 +129,10 @@ export class WASession {
     this.media = null;
 
     this.qr = null;
+    this.latestQrDataUrl = null;
+    this.qrTimestamp = 0;
+    this.qrWaiters = new Set();
+    this.connectingStartedAt = 0;
     this.qrExpiresAt = null;
     this.qrCount = 0;
     this.lastDisconnect = null;
@@ -158,6 +162,7 @@ export class WASession {
   }
 
   snapshot() {
+    const currentQr = this.status === 'SCAN_QR' ? (this.qr || this.latestQrDataUrl) : null;
     return {
       session_id: this.id,
       organization_id: this.organizationId,
@@ -166,8 +171,10 @@ export class WASession {
       phone: this.accountId,
       name: this.pushName,
       avatar_url: this.avatarUrl,
-      qr: this.status === 'SCAN_QR' ? this.qr : null,
+      qr: currentQr,
+      qr_code: currentQr,
       qr_expires_at: this.status === 'SCAN_QR' && this.qrExpiresAt ? new Date(this.qrExpiresAt).toISOString() : null,
+      qr_timestamp: this.qrTimestamp || null,
       paired: this.paired,
       running: Boolean(this.sock || this.reconnectTimer || this.startPromise),
       last_disconnect: this.lastDisconnect,
@@ -300,6 +307,7 @@ export class WASession {
   _closeSocket() {
     const sock = this.sock;
     this.sock = null;
+    this.connectingStartedAt = 0;
     this.generation += 1; // every event from the old socket is now stale
     if (sock) {
       try {
@@ -361,6 +369,7 @@ export class WASession {
 
   async _connect() {
     if (this.stopping || this.removed) return;
+    this.connectingStartedAt = Date.now();
     try {
       if (!(await this._acquireLease())) {
         this.log.info('session is owned by another bridge instance; waiting');
@@ -469,15 +478,23 @@ export class WASession {
       const ttl = this.qrCount === 0 ? this.config.session.qrTtlMs : 20_000;
       this.qrCount += 1;
       this.qr = dataUrl;
+      this.latestQrDataUrl = dataUrl;
+      this.qrTimestamp = Date.now();
       this.qrExpiresAt = Date.now() + ttl;
       await this._setStatus('SCAN_QR', { qr: dataUrl, qr_expires_at: this.qrExpiresAt, desired_state: 'running' });
       this.notifier.ping(this.id);
+      for (const waiter of this.qrWaiters) {
+        try { waiter({ status: 'qr_ready', qr_code: dataUrl, qr: dataUrl }); } catch {}
+      }
+      this.qrWaiters.clear();
     }
 
     if (isNewLogin) {
       // The phone accepted the code. WhatsApp now closes the stream with 515
       // and expects an immediate reconnect with the new credentials.
       this.qr = null;
+      this.latestQrDataUrl = null;
+      this.qrTimestamp = 0;
       this.qrExpiresAt = null;
       if (this.auth.state.creds.me) this._adoptAccount(this.auth.state.creds.me);
       await this._setStatus('CONNECTING', {
@@ -492,7 +509,13 @@ export class WASession {
       this.reconnectAttempts = 0;
       this.unpairedFailures = 0;
       this.qr = null;
+      this.latestQrDataUrl = null;
+      this.qrTimestamp = 0;
       this.qrExpiresAt = null;
+      for (const waiter of this.qrWaiters) {
+        try { waiter({ status: 'connected', qr_code: null, qr: null }); } catch {}
+      }
+      this.qrWaiters.clear();
       this._adoptAccount(sock.user || this.auth.state.creds.me);
       if (this.auth.state.creds.platform) this.platform = String(this.auth.state.creds.platform).slice(0, 64);
       await this._setStatus('CONNECTED', {
@@ -545,8 +568,13 @@ export class WASession {
     const reason = String(error?.message || 'connection closed').slice(0, 255);
 
     this.sock = null;
+    this.connectingStartedAt = 0;
     this._stopHeartbeat();
     this.lastDisconnect = { code, reason, at: new Date().toISOString() };
+    for (const waiter of this.qrWaiters) {
+      try { waiter({ status: 'closed', qr_code: null, qr: null, error: reason }); } catch {}
+    }
+    this.qrWaiters.clear();
     if (this.stopping || this.removed) return;
 
     this.log.info({ code, reason, paired: this.paired }, 'WhatsApp connection closed');
@@ -570,6 +598,8 @@ export class WASession {
 
     if (!this.paired) {
       this.qr = null;
+      this.latestQrDataUrl = null;
+      this.qrTimestamp = 0;
       this.qrExpiresAt = null;
       const qrWasShown = this.qrCount > 0;
       if (!qrWasShown && this.unpairedFailures < 3) {
@@ -624,6 +654,9 @@ export class WASession {
     }
     this.auth = null;
     this.qr = null;
+    this.latestQrDataUrl = null;
+    this.qrTimestamp = 0;
+    this.connectingStartedAt = 0;
     this.qrExpiresAt = null;
     this.removed = true;
     // The row no longer points at a phone number, so the API stops serving
@@ -694,17 +727,98 @@ export class WASession {
   }
 
   /**
+   * Waits for a valid QR code to be available, returning it as quickly as possible.
+   * - If a valid cached QR (< 20s old) exists in memory, returns immediately (0ms).
+   * - Detects stale sockets stuck in CONNECTING >8s without QR and force-restarts them.
+   * - Awaits the Baileys QR event and resolves immediately upon arrival.
+   */
+  async waitForQr(timeoutMs = 10000) {
+    if (this.removed) throw new BridgeError(410, 'This session was unlinked. Start a new one.');
+    if (this.paired || this.status === 'CONNECTED') return this.snapshot();
+
+    // 1. Instant in-memory cache check (< 20s old)
+    if (this.status === 'SCAN_QR' && this.latestQrDataUrl && Date.now() - this.qrTimestamp < 20_000) {
+      const snap = this.snapshot();
+      return {
+        ...snap,
+        status: 'SCAN_QR',
+        qr: this.latestQrDataUrl,
+        qr_code: this.latestQrDataUrl,
+        cached: true
+      };
+    }
+
+    // 2. Stale socket check: stuck in CONNECTING for > 8 seconds without emitting a QR
+    if (
+      this.sock &&
+      this.status === 'CONNECTING' &&
+      this.connectingStartedAt > 0 &&
+      Date.now() - this.connectingStartedAt > 8000 &&
+      !this.latestQrDataUrl
+    ) {
+      this.log.warn('Stale socket detected (>8s in connecting without QR); force-closing and restarting');
+      this._closeSocket();
+      this._clearReconnect();
+    }
+
+    // 3. Ensure socket is running
+    if (!this.sock && !this.startPromise && !this.reconnectTimer) {
+      this.unpairedFailures = 0;
+      this.stopping = false;
+      await this.start();
+    }
+
+    // 4. Return immediately if state transitioned to connected or QR during start()
+    if (this.paired || this.status === 'CONNECTED') return this.snapshot();
+    if (this.latestQrDataUrl && this.status === 'SCAN_QR') {
+      const snap = this.snapshot();
+      return {
+        ...snap,
+        status: 'SCAN_QR',
+        qr: this.latestQrDataUrl,
+        qr_code: this.latestQrDataUrl
+      };
+    }
+
+    // Fast-path for mocked/headless environments without Baileys event emitter
+    if (!this.sock?.ev || timeoutMs <= 0) {
+      return this.snapshot();
+    }
+
+    // 5. Await first QR event or timeout
+    return new Promise((resolve) => {
+      let timer = null;
+      const waiter = (res) => {
+        if (timer) clearTimeout(timer);
+        this.qrWaiters.delete(waiter);
+        const snap = this.snapshot();
+        resolve({
+          ...snap,
+          status: res?.status === 'qr_ready' ? 'SCAN_QR' : snap.status,
+          qr: res?.qr_code || snap.qr,
+          qr_code: res?.qr_code || snap.qr_code || snap.qr
+        });
+      };
+      this.qrWaiters.add(waiter);
+
+      timer = setTimeout(() => {
+        this.qrWaiters.delete(waiter);
+        const snap = this.snapshot();
+        resolve({
+          ...snap,
+          timeout: true
+        });
+      }, timeoutMs);
+    });
+  }
+
+  /**
    * Asks for a fresh QR code. Does nothing while a code is still valid, while
    * the phone is completing the pairing, or once the device is linked, so a
    * UI refresh can never interrupt a login in progress.
    */
-  async requestQr() {
-    if (this.removed) throw new BridgeError(410, 'This session was unlinked. Start a new one.');
-    if (this.paired || this.status === 'CONNECTED') return this.snapshot();
-    if (this.sock || this.startPromise || this.reconnectTimer) return this.snapshot();
-    this.unpairedFailures = 0;
-    this.stopping = false;
-    return this.start();
+  async requestQr(timeoutMs = 10000) {
+    return this.waitForQr(timeoutMs);
   }
 
   // ------------------------------------------------------------------ //

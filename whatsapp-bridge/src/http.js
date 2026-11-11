@@ -71,6 +71,38 @@ export function createHttpApp({ manager, config }) {
     })
   );
 
+  app.get(
+    '/sessions/:id/qr',
+    wrap(async (req, res) => {
+      const session = manager.get(req.params.id);
+      if (!session) return res.json({ session_id: req.params.id, status: 'NOT_RUNNING', running: false, qr: null, qr_code: null });
+      const snap = session.snapshot();
+      res.json({
+        ...snap,
+        qr_code: snap.qr_code || snap.qr
+      });
+    })
+  );
+
+  app.post(
+    '/sessions/:id/connect',
+    wrap(async (req, res) => {
+      const session = await manager.ensure({
+        id: req.params.id,
+        organizationId: req.body?.organization_id,
+        userId: req.body?.user_id
+      });
+      const qrRes = await session.waitForQr(10000);
+      const snap = session.snapshot();
+      res.json({
+        ...snap,
+        status: qrRes?.status === 'qr_ready' ? 'SCAN_QR' : snap.status,
+        qr: qrRes?.qr || snap.qr,
+        qr_code: qrRes?.qr_code || snap.qr_code || snap.qr
+      });
+    })
+  );
+
   app.post(
     '/sessions/:id/qr',
     wrap(async (req, res) => {
@@ -79,8 +111,14 @@ export function createHttpApp({ manager, config }) {
         organizationId: req.body?.organization_id,
         userId: req.body?.user_id
       });
-      await session.requestQr();
-      res.json(session.snapshot());
+      const qrRes = await session.waitForQr(10000);
+      const snap = session.snapshot();
+      res.json({
+        ...snap,
+        status: qrRes?.status === 'qr_ready' ? 'SCAN_QR' : snap.status,
+        qr: qrRes?.qr || snap.qr,
+        qr_code: qrRes?.qr_code || snap.qr_code || snap.qr
+      });
     })
   );
 

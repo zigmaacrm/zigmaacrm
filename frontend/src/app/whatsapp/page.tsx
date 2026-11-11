@@ -1173,6 +1173,9 @@ export default function WhatsAppPage() {
   const [currentUser, setCurrentUser] = useState<any>(null);
 
   useEffect(() => {
+    // Warm up the WhatsApp bridge immediately upon navigating to the WhatsApp Suite
+    api.prewarmWhatsApp().catch(() => {});
+
     const fetchStatus = () => {
       let sId = currentUser?.id || api.getCurrentUser()?.id;
       if (!sId && typeof window !== "undefined") {

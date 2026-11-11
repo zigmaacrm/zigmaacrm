@@ -3688,12 +3688,74 @@ export const zigmaaApi = {
   },
 
   // ===== WHATSAPP QR GATEWAY (LINKED DEVICE) =====
+  async prewarmWhatsApp(): Promise<any> {
+    try {
+      const res = await fetch(`${API_BASE}/whatsapp/status`, {
+        headers: getAuthHeaders(),
+        cache: "no-store",
+      });
+      if (res.ok) return await res.json();
+    } catch (_) {
+      // Best-effort pre-warm
+    }
+    return { status: "OFFLINE", gateway_online: false };
+  },
+
+  async connectWhatsAppQR(sessionId?: string): Promise<{
+    status: string;
+    phone: string | null;
+    name: string | null;
+    avatar_url?: string | null;
+    qr: string | null;
+    qr_code?: string | null;
+    gateway_online: boolean;
+  }> {
+    let sid = sessionId;
+    if (!sid && typeof window !== "undefined") {
+      try {
+        const u = this.getCurrentUser();
+        if (u?.id) sid = u.id;
+      } catch (_) {}
+      if (!sid) {
+        try {
+          const uStr = localStorage.getItem("zigmaa_user") || localStorage.getItem("zigmaa_current_user");
+          if (uStr) {
+            const p = JSON.parse(uStr);
+            sid = p?.id || p?.userId || p?._id || null;
+          }
+        } catch (_) {}
+      }
+    }
+    const query = sid ? `?sessionId=${encodeURIComponent(sid)}` : "";
+    try {
+      const res = await fetch(`${API_BASE}/whatsapp/connect${query}`, {
+        method: "POST",
+        headers: {
+          ...getAuthHeaders(),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ sessionId: sid }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const code = data.qr_code || data.qr || null;
+        return {
+          ...data,
+          qr: code,
+          qr_code: code,
+        };
+      }
+    } catch (_) {}
+    return await this.refreshWhatsAppQR(sid);
+  },
+
   async getWhatsAppQRStatus(sessionId?: string): Promise<{
     status: "DISCONNECTED" | "SCAN_QR" | "CONNECTED";
     phone: string | null;
     name: string | null;
     avatar_url?: string | null;
     qr: string | null;
+    qr_code?: string | null;
     gateway_online: boolean;
   }> {
     try {
@@ -3719,7 +3781,13 @@ export const zigmaaApi = {
         cache: "no-store"
       });
       if (res.ok) {
-        return await res.json();
+        const data = await res.json();
+        const code = data.qr_code || data.qr || null;
+        return {
+          ...data,
+          qr: code,
+          qr_code: code,
+        };
       }
     } catch (e) {
       console.warn("Failed to check WhatsApp QR status", e);
@@ -3729,6 +3797,7 @@ export const zigmaaApi = {
       phone: null,
       name: null,
       qr: null,
+      qr_code: null,
       gateway_online: false
     };
   },
@@ -3763,7 +3832,13 @@ export const zigmaaApi = {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || "Failed to refresh QR code");
     }
-    return await res.json();
+    const data = await res.json();
+    const code = data.qr_code || data.qr || null;
+    return {
+      ...data,
+      qr: code,
+      qr_code: code,
+    };
   },
 
   async disconnectWhatsAppQR(sessionId?: string): Promise<any> {
