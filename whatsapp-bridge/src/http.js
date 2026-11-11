@@ -123,6 +123,35 @@ export function createHttpApp({ manager, config }) {
   );
 
   app.post(
+    '/sessions/:id/pairing-code',
+    wrap(async (req, res) => {
+      const session = await manager.ensure({
+        id: req.params.id,
+        organizationId: req.body?.organization_id,
+        userId: req.body?.user_id
+      });
+      const phone = req.body?.phone || req.body?.phone_number;
+      const result = await session.requestPairingCode(phone);
+      res.json(result);
+    })
+  );
+
+  app.post(
+    '/pairing-code',
+    wrap(async (req, res) => {
+      const sid = req.query.sessionId || req.body?.sessionId || req.body?.session_id || 'default';
+      const session = await manager.ensure({
+        id: sid,
+        organizationId: req.body?.organization_id,
+        userId: req.body?.user_id
+      });
+      const phone = req.body?.phone || req.body?.phone_number;
+      const result = await session.requestPairingCode(phone);
+      res.json(result);
+    })
+  );
+
+  app.post(
     '/sessions/:id/logout',
     wrap(async (req, res) => {
       const result = await manager.logout(req.params.id);

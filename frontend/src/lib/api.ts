@@ -26,11 +26,7 @@ import {
 function resolveApiBase(): string {
   let raw = (process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || "").trim().replace(/\/+$/, "");
   if (!raw) {
-    if (typeof window !== "undefined" && !["localhost", "127.0.0.1"].includes(window.location.hostname)) {
-      raw = "https://zigmaacrm-backend.onrender.com/api/v1";
-    } else {
-      raw = "http://localhost:8000/api/v1";
-    }
+    raw = "https://zigmaacrm-backend.onrender.com/api/v1";
   }
   if (!raw.endsWith("/api/v1")) {
     raw = `${raw}/api/v1`;
@@ -3870,6 +3866,46 @@ export const zigmaaApi = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || "Failed to disconnect WhatsApp QR");
+    }
+    return await res.json();
+  },
+
+  async requestWhatsAppPairingCode(phone: string, sessionId?: string): Promise<{
+    status: string;
+    pairing_code: string;
+    phone: string;
+  }> {
+    let sid = sessionId;
+    if (!sid && typeof window !== "undefined") {
+      try {
+        const u = this.getCurrentUser();
+        if (u?.id) sid = u.id;
+      } catch (_) {}
+    }
+    const clean = phone.replace(/[^0-9]/g, "");
+    const res = await fetch(`${API_BASE}/whatsapp/pairing-code`, {
+      method: "POST",
+      headers: {
+        ...getAuthHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ phone: clean, sessionId: sid }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to generate WhatsApp pairing code");
+    }
+    return await res.json();
+  },
+
+  async purgeLegacyWhatsAppLeads(): Promise<{ status: string; deleted_count: number; message: string }> {
+    const res = await fetch(`${API_BASE}/whatsapp/maintenance/purge-auto-leads`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to purge legacy WhatsApp leads");
     }
     return await res.json();
   },

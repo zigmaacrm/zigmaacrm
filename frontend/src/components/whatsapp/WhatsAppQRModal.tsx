@@ -11,7 +11,10 @@ import {
   Unlink,
   Loader2,
   ShieldCheck,
-  Zap
+  Zap,
+  Phone,
+  Copy,
+  Check
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useToast } from "@/components/common/ToastProvider";
@@ -41,6 +44,11 @@ export default function WhatsAppQRModal({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [hasTimedOut, setHasTimedOut] = useState(false);
+  const [linkMethod, setLinkMethod] = useState<"qr" | "phone">("qr");
+  const [pairingPhone, setPairingPhone] = useState("");
+  const [pairingCode, setPairingCode] = useState<string | null>(null);
+  const [isRequestingCode, setIsRequestingCode] = useState(false);
+  const [hasCopiedCode, setHasCopiedCode] = useState(false);
 
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const timeoutTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -53,6 +61,30 @@ export default function WhatsAppQRModal({
       if (u?.id) return u.id;
     } catch (_) {}
     return undefined;
+  };
+
+  const handleRequestPairingCode = async () => {
+    const clean = pairingPhone.replace(/[^0-9]/g, "");
+    if (!clean || clean.length < 8) {
+      toast.error("Invalid Phone Number", "Please include country code, e.g. 919600471080");
+      return;
+    }
+    setIsRequestingCode(true);
+    try {
+      const sId = getResolvedSessionId();
+      const res = await api.requestWhatsAppPairingCode(clean, sId);
+      if (res?.pairing_code) {
+        setPairingCode(res.pairing_code);
+        toast.success("Pairing Code Ready", "Enter this 8-digit code in WhatsApp on your phone");
+        if (!pollIntervalRef.current) {
+          pollIntervalRef.current = setInterval(checkStatus, 1500);
+        }
+      }
+    } catch (e: any) {
+      toast.error("Pairing Error", e.message || "Failed to generate pairing code. Please try again.");
+    } finally {
+      setIsRequestingCode(false);
+    }
   };
 
   useEffect(() => {
@@ -123,13 +155,13 @@ export default function WhatsAppQRModal({
       setQrCode(null);
     }
 
-    // Set 12s timeout for connection/QR generation
+    // Set 25s timeout for connection/QR generation to allow cloud container cold start
     if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
     timeoutTimerRef.current = setTimeout(() => {
       if (isMounted) {
         setHasTimedOut(true);
       }
-    }, 12000);
+    }, 25000);
 
     const initQR = async () => {
       try {
@@ -276,7 +308,38 @@ export default function WhatsAppQRModal({
         </div>
 
         {/* Body */}
-        <div className="p-6 space-y-5">
+        <div className="p-6 space-y-4">
+          {status !== "CONNECTED" && (
+            <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800/80 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setLinkMethod("qr")}
+                className={cn(
+                  "flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer",
+                  linkMethod === "qr"
+                    ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs"
+                    : "text-slate-500 hover:text-slate-900 dark:hover:text-white"
+                )}
+              >
+                <QrCode className="w-3.5 h-3.5" />
+                <span>Scan QR Code</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setLinkMethod("phone")}
+                className={cn(
+                  "flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer",
+                  linkMethod === "phone"
+                    ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs"
+                    : "text-slate-500 hover:text-slate-900 dark:hover:text-white"
+                )}
+              >
+                <Phone className="w-3.5 h-3.5" />
+                <span>Link with Phone Number</span>
+              </button>
+            </div>
+          )}
+
           {status === "CONNECTED" ? (
             /* Connected State */
             <div className="text-center py-4 space-y-4">
@@ -332,9 +395,109 @@ export default function WhatsAppQRModal({
                 </button>
               </div>
             </div>
+          ) : linkMethod === "phone" ? (
+            /* Link with Phone Number Pairing Code View */
+            <div className="space-y-4 py-1">
+              <div className="text-center space-y-1">
+                <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                  Link with Phone Number Code
+                </h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xs mx-auto">
+                  No camera needed. Enter your phone number below and type the 8-digit code in WhatsApp.
+                </p>
+              </div>
+
+              {!pairingCode ? (
+                <div className="space-y-3 pt-1">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      WhatsApp Phone Number (with Country Code)
+                    </label>
+                    <input
+                      type="tel"
+                      value={pairingPhone}
+                      onChange={(e) => setPairingPhone(e.target.value)}
+                      placeholder="e.g. 919600471080"
+                      className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-medium text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                    />
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      Include country code (e.g. 91 for India) without + or spaces.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleRequestPairingCode}
+                    disabled={isRequestingCode || !pairingPhone.trim()}
+                    className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-xs disabled:opacity-50 cursor-pointer"
+                  >
+                    {isRequestingCode ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Generating Code...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="w-4 h-4" />
+                        <span>Get 8-Digit Pairing Code</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="bg-emerald-50 dark:bg-emerald-950/40 p-4 rounded-2xl border border-emerald-200 dark:border-emerald-800/50 text-center space-y-2">
+                    <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 uppercase tracking-wider block">
+                      Your WhatsApp Pairing Code
+                    </span>
+                    <div className="flex items-center justify-center gap-2.5">
+                      <span className="font-mono text-2xl sm:text-3xl font-black tracking-widest text-slate-900 dark:text-white select-all">
+                        {pairingCode.length === 8 ? `${pairingCode.slice(0, 4)} - ${pairingCode.slice(4)}` : pairingCode}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard?.writeText(pairingCode);
+                          setHasCopiedCode(true);
+                          setTimeout(() => setHasCopiedCode(false), 2000);
+                        }}
+                        className="p-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:text-emerald-600 transition-colors cursor-pointer"
+                        title="Copy code"
+                      >
+                        {hasCopiedCode ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 text-xs text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/40 p-3.5 rounded-xl border border-slate-200 dark:border-slate-700/60">
+                    <p className="font-bold text-slate-800 dark:text-slate-200 text-[11px]">How to link on your phone:</p>
+                    <ol className="list-decimal list-inside space-y-1.5 text-[11px] leading-relaxed">
+                      <li>Open <strong>WhatsApp</strong> on your phone</li>
+                      <li>Tap <strong>Settings (or ⋮) &rarr; Linked Devices &rarr; Link a Device</strong></li>
+                      <li>Tap <strong>Link with phone number instead</strong> at the bottom</li>
+                      <li>Enter the 8-character code shown above</li>
+                    </ol>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setPairingCode(null)}
+                      className="text-xs font-semibold text-slate-500 hover:text-slate-800 dark:hover:text-white transition-colors cursor-pointer"
+                    >
+                      &larr; Change number
+                    </button>
+                    <div className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Waiting for code on phone...</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           ) : hasTimedOut && !qrCode ? (
             /* Cloud Gateway Connection Timeout State with Retry */
-            <div className="text-center py-8 space-y-4">
+            <div className="text-center py-6 space-y-4">
               <div className="w-14 h-14 rounded-2xl bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 mx-auto flex items-center justify-center ring-8 ring-amber-50/50 dark:ring-amber-900/10">
                 <AlertTriangle className="w-7 h-7" />
               </div>
@@ -343,27 +506,40 @@ export default function WhatsAppQRModal({
                   Gateway Taking Longer to Respond
                 </h4>
                 <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xs mx-auto leading-relaxed">
-                  The WhatsApp Gateway bridge took longer than 12 seconds to generate your pairing code. The cloud container may be performing a cold restart.
+                  The cloud bridge may be waking up from sleep. You can retry connection or link via phone number.
                 </p>
               </div>
-              <div className="flex items-center justify-center gap-2 pt-2">
+              <div className="flex flex-col gap-2 pt-2 max-w-xs mx-auto">
                 <button
-                  onClick={async () => {
+                  type="button"
+                  onClick={() => {
                     setHasTimedOut(false);
-                    await handleRefresh();
+                    setLinkMethod("phone");
                   }}
-                  disabled={isRefreshing}
-                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs disabled:opacity-60"
+                  className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-xs"
                 >
-                  <RefreshCw className={cn("w-3.5 h-3.5", isRefreshing && "animate-spin")} />
-                  <span>{isRefreshing ? "Connecting to Gateway..." : "Retry Connection"}</span>
+                  <Phone className="w-3.5 h-3.5" />
+                  <span>Link with Phone Number Code instead</span>
                 </button>
-                <button
-                  onClick={onClose}
-                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold inline-flex items-center transition-colors cursor-pointer"
-                >
-                  <span>Close</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={async () => {
+                      setHasTimedOut(false);
+                      await handleRefresh();
+                    }}
+                    disabled={isRefreshing}
+                    className="flex-1 py-2 px-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-60"
+                  >
+                    <RefreshCw className={cn("w-3.5 h-3.5", isRefreshing && "animate-spin")} />
+                    <span>{isRefreshing ? "Retrying..." : "Retry QR"}</span>
+                  </button>
+                  <button
+                    onClick={onClose}
+                    className="flex-1 py-2 px-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold inline-flex items-center justify-center transition-colors cursor-pointer"
+                  >
+                    <span>Close</span>
+                  </button>
+                </div>
               </div>
             </div>
           ) : !gatewayOnline && !qrCode ? (
@@ -468,7 +644,14 @@ export default function WhatsAppQRModal({
 
               {/* Action buttons */}
               <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
-              
+                <button
+                  type="button"
+                  onClick={() => setLinkMethod("phone")}
+                  className="text-xs text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 font-semibold inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <Phone className="w-3.5 h-3.5" />
+                  <span>Link with phone number instead</span>
+                </button>
                 <button
                   onClick={handleRefresh}
                   disabled={isRefreshing}

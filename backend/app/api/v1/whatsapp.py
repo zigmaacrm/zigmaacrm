@@ -276,6 +276,34 @@ async def refresh_qr_code(
     return serialized
 
 
+class PairingCodeRequest(BaseModel):
+    phone: Optional[str] = None
+    phone_number: Optional[str] = None
+
+
+@router.post("/sessions/me/pairing-code")
+@router.post("/pairing-code")
+async def request_pairing_code_endpoint(
+    payload: PairingCodeRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Generates an 8-character WhatsApp pairing code for linking without scanning a QR code.
+    Matches WhatsApp mobile's 'Link with phone number instead'.
+    """
+    phone = payload.phone or payload.phone_number
+    if not phone:
+        raise HTTPException(status_code=400, detail="Phone number is required for pairing code")
+
+    sid = _get_user_session_id(current_user)
+    await repository.ensure_user_session(db, current_user.organization_id, current_user.id)
+    try:
+        return await bridge.request_pairing_code(sid, phone, current_user.organization_id, current_user.id)
+    except bridge.BridgeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+
 @router.post("/sessions/me/logout")
 @router.post("/qr/disconnect")
 async def logout_whatsapp_session(

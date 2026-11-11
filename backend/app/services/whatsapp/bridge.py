@@ -105,6 +105,19 @@ async def connect_session(session_id: str, organization_id: str, user_id: str) -
         raise
 
 
+async def request_pairing_code(session_id: str, phone: str, organization_id: str, user_id: str) -> Dict[str, Any]:
+    clean = re.sub(r"[^0-9]", "", str(phone or ""))
+    try:
+        return await call("POST", f"/sessions/{session_id}/pairing-code", json={"phone": clean, "organization_id": organization_id, "user_id": user_id}, timeout=25.0)
+    except BridgeError as exc:
+        if exc.status_code in (404, 405):
+            try:
+                return await call("POST", f"/pairing-code?sessionId={session_id}", json={"sessionId": session_id, "phone": clean, "organization_id": organization_id, "user_id": user_id}, timeout=25.0)
+            except Exception:
+                pass
+        raise
+
+
 async def get_session_qr(session_id: str) -> Dict[str, Any]:
     try:
         return await call("GET", f"/sessions/{session_id}/qr", timeout=10.0)

@@ -391,13 +391,20 @@ export class WASession {
       const gen = this.generation;
       this.qrCount = 0;
 
+      if (!fetchedWaVersion) {
+        try {
+          await refreshWaVersion();
+        } catch (_) {}
+      }
+      const waVersion = fetchedWaVersion || [2, 3000, 1054063488];
+
       const sock = makeWASocket({
-        ...(fetchedWaVersion ? { version: fetchedWaVersion } : {}),
+        version: waVersion,
         logger: baileysLog,
         auth: { creds, keys: makeCacheableSignalKeyStore(this.auth.state.keys, baileysLog) },
         // Desktop-class companion => the phone sends the full history.
         // See resolveBrowser() in config.js for why this is not macOS('Desktop').
-        browser: this.config.session.browser || Browsers.ubuntu('Desktop'),
+        browser: this.config.session.browser || Browsers.ubuntu('Chrome'),
         syncFullHistory: this.config.session.syncFullHistory,
         shouldSyncHistoryMessage: () => true,
         // Staying "unavailable" keeps push notifications working on the phone.
@@ -826,6 +833,24 @@ export class WASession {
    */
   async requestQr(timeoutMs = 10000) {
     return this.waitForQr(timeoutMs);
+  }
+
+  async requestPairingCode(phoneNumber) {
+    const clean = String(phoneNumber || '').replace(/[^0-9]/g, '');
+    if (!clean || clean.length < 8) throw new BridgeError(400, 'Invalid phone number for pairing code');
+    if (this.sock?.requestPairingCode && !this.paired) {
+      const code = await this.sock.requestPairingCode(clean);
+      return { status: 'pairing_code', pairing_code: code, phone: clean };
+    }
+    await this.start();
+    let attempts = 0;
+    while (!this.sock?.requestPairingCode && attempts < 24) {
+      await new Promise((r) => setTimeout(r, 250));
+      attempts++;
+    }
+    if (!this.sock?.requestPairingCode) throw new BridgeError(500, 'WhatsApp socket failed to initialize');
+    const code = await this.sock.requestPairingCode(clean);
+    return { status: 'pairing_code', pairing_code: code, phone: clean };
   }
 
   // ------------------------------------------------------------------ //
