@@ -2663,20 +2663,32 @@ export default function WhatsAppPage() {
                     <RefreshCw className={cn("w-3.5 h-3.5", isRefreshing && "animate-spin text-emerald-500")} />
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={handleLogoutWhatsApp}
-                    disabled={isLoggingOutWhatsApp}
-                    className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-rose-600 hover:text-white bg-rose-50 hover:bg-rose-600 dark:bg-rose-950/50 dark:hover:bg-rose-600 dark:text-rose-300 dark:hover:text-white border border-rose-200 dark:border-rose-800 rounded-lg transition-all cursor-pointer shrink-0 shadow-2xs"
-                    title="Logout / Disconnect WhatsApp Session"
-                  >
-                    {isLoggingOutWhatsApp ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <LogOut className="w-3.5 h-3.5" />
-                    )}
-                    <span className="text-[11px] font-bold">Logout</span>
-                  </button>
+                  {(qrStatus === "CONNECTED" || hasAnyLinkedPhone) ? (
+                    <button
+                      type="button"
+                      onClick={handleLogoutWhatsApp}
+                      disabled={isLoggingOutWhatsApp}
+                      className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-rose-600 hover:text-white bg-rose-50 hover:bg-rose-600 dark:bg-rose-950/50 dark:hover:bg-rose-600 dark:text-rose-300 dark:hover:text-white border border-rose-200 dark:border-rose-800 rounded-lg transition-all cursor-pointer shrink-0 shadow-2xs"
+                      title="Logout / Disconnect WhatsApp Session"
+                    >
+                      {isLoggingOutWhatsApp ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <LogOut className="w-3.5 h-3.5" />
+                      )}
+                      <span className="text-[11px] font-bold">Logout</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setShowQRModal(true)}
+                      className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-600 hover:text-white bg-emerald-50 hover:bg-emerald-600 dark:bg-emerald-950/50 dark:hover:bg-emerald-600 dark:text-emerald-300 dark:hover:text-white border border-emerald-200 dark:border-emerald-800 rounded-lg transition-all cursor-pointer shrink-0 shadow-2xs"
+                      title="Link WhatsApp Phone / Scan QR"
+                    >
+                      <QrCode className="w-3.5 h-3.5" />
+                      <span className="text-[11px] font-bold">Link Phone</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -2830,19 +2842,7 @@ export default function WhatsAppPage() {
                 ? "divide-[#1E293B]/40 scrollbar-thumb-slate-800"
                 : "divide-slate-100 scrollbar-thumb-slate-200"
             )}>
-              {isLoadingConversations && conversations.length === 0 ? (
-                <div className="p-6 space-y-4">
-                  {[1, 2, 3, 4].map((i) => (
-                    <div key={i} className="flex items-center gap-3 animate-pulse">
-                      <div className={cn("w-11 h-11 rounded-full", isDark ? "bg-white/5" : "bg-slate-200")} />
-                      <div className="flex-1 space-y-2">
-                        <div className={cn("h-3 w-28 rounded-md", isDark ? "bg-white/5" : "bg-slate-200")} />
-                        <div className={cn("h-2 w-36 rounded-md", isDark ? "bg-white/5" : "bg-slate-100")} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : isTrulyUnlinked ? (
+              {isTrulyUnlinked ? (
                 <div className="p-8 text-center flex flex-col items-center justify-center my-auto space-y-3">
                   <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-inner">
                     <QrCode className="w-7 h-7" />
@@ -2860,6 +2860,18 @@ export default function WhatsAppPage() {
                   >
                     Scan QR Code
                   </button>
+                </div>
+              ) : isLoadingConversations && conversations.length === 0 ? (
+                <div className="p-6 space-y-4">
+                  {[1, 2, 3, 4].map((i) => (
+                    <div key={i} className="flex items-center gap-3 animate-pulse">
+                      <div className={cn("w-11 h-11 rounded-full", isDark ? "bg-white/5" : "bg-slate-200")} />
+                      <div className="flex-1 space-y-2">
+                        <div className={cn("h-3 w-28 rounded-md", isDark ? "bg-white/5" : "bg-slate-200")} />
+                        <div className={cn("h-2 w-36 rounded-md", isDark ? "bg-white/5" : "bg-slate-100")} />
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ) : filteredConversations.length === 0 ? (
                 <div className="p-8 text-center text-slate-400 text-xs">
