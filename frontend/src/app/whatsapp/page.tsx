@@ -1267,7 +1267,7 @@ export default function WhatsAppPage() {
     (qrStatus === "CONNECTED" && currentUser?.whatsapp_phone_number)
   );
   const isConnectingState = qrStatus === "CONNECTING" || isLoadingConversations;
-  const isTrulyUnlinked = !hasAnyLinkedPhone && qrStatus !== "CONNECTED" && qrStatus !== "CONNECTING";
+  const isTrulyUnlinked = !hasAnyLinkedPhone && qrStatus !== "CONNECTED" && qrStatus !== "CONNECTING" && conversations.length === 0;
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState("");
@@ -2985,29 +2985,7 @@ export default function WhatsAppPage() {
             "flex-1 flex flex-col relative min-w-0 transition-colors",
             isDark ? "bg-[#0D0B14]" : "bg-[#F0F2F5]"
           )}>
-            {isTrulyUnlinked ? (
-              <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-4">
-                <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-inner">
-                  <ShieldCheck className="w-8 h-8" />
-                </div>
-                <div className="text-center space-y-1">
-                  <h3 className={cn("font-bold text-lg", isDark ? "text-white" : "text-slate-900")}>
-                    WhatsApp Device Not Linked
-                  </h3>
-                  <p className={cn("text-xs text-center max-w-sm leading-relaxed", isDark ? "text-slate-400" : "text-slate-500")}>
-                    Your WhatsApp device is not connected. All conversations are hidden for security until you scan your personal QR code.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowQRModal(true)}
-                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-md hover:scale-105 active:scale-95 cursor-pointer flex items-center gap-2"
-                >
-                  <QrCode className="w-4 h-4" />
-                  <span>Scan QR Code to Connect</span>
-                </button>
-              </div>
-            ) : activeChat ? (
+            {activeChat ? (
               <>
                 {/* Chat Header */}
                 <div className={cn(
@@ -4371,6 +4349,28 @@ export default function WhatsAppPage() {
                 </div>
                 )}
               </>
+            ) : isTrulyUnlinked ? (
+              <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-4">
+                <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-inner">
+                  <ShieldCheck className="w-8 h-8" />
+                </div>
+                <div className="text-center space-y-1">
+                  <h3 className={cn("font-bold text-lg", isDark ? "text-white" : "text-slate-900")}>
+                    WhatsApp Device Not Linked
+                  </h3>
+                  <p className={cn("text-xs text-center max-w-sm leading-relaxed", isDark ? "text-slate-400" : "text-slate-500")}>
+                    Your WhatsApp device is not connected. All conversations are hidden for security until you scan your personal QR code.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowQRModal(true)}
+                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-md hover:scale-105 active:scale-95 cursor-pointer flex items-center gap-2"
+                >
+                  <QrCode className="w-4 h-4" />
+                  <span>Scan QR Code to Connect</span>
+                </button>
+              </div>
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-3">
                 <MessageSquare className={cn("w-12 h-12 opacity-40", isDark ? "text-slate-600" : "text-slate-400")} />
