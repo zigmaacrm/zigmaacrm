@@ -84,7 +84,13 @@ export default function WhatsAppQRModal({
         }
       }
     } catch (e: any) {
-      toast.error("Pairing Error", e.message || "Failed to generate pairing code. Please try again.");
+      const errMsg = e.message || "";
+      if (errMsg.includes("bridge v2") || errMsg.includes("QR Code") || errMsg.includes("PAIRING_FALLBACK")) {
+        toast.error("Pairing Code Notice", "Cloud bridge requires QR Code linking. Switching to QR scan tab.");
+        setLinkMethod("qr");
+      } else {
+        toast.error("Pairing Error", errMsg || "Failed to generate pairing code. Please try again.");
+      }
     } finally {
       setIsRequestingCode(false);
     }
@@ -674,14 +680,26 @@ export default function WhatsAppQRModal({
                   <Phone className="w-3.5 h-3.5" />
                   <span>Link with phone number instead</span>
                 </button>
-                <button
-                  onClick={handleRefresh}
-                  disabled={isRefreshing}
-                  className="px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg flex items-center gap-1.5 transition-colors font-medium cursor-pointer"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
-                  <span>Refresh QR</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleDisconnect}
+                    disabled={isDisconnecting}
+                    className="px-2.5 py-1.5 text-xs text-rose-600 hover:text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg flex items-center gap-1 transition-colors font-semibold cursor-pointer"
+                    title="Reset or unlink this session"
+                  >
+                    {isDisconnecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Unlink className="w-3.5 h-3.5" />}
+                    <span>Reset</span>
+                  </button>
+                  <button
+                    onClick={handleRefresh}
+                    disabled={isRefreshing}
+                    className="px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg flex items-center gap-1.5 transition-colors font-medium cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
+                    <span>Refresh QR</span>
+                  </button>
+                </div>
               </div>
             </div>
           )}

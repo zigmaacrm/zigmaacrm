@@ -150,11 +150,6 @@ async def _resolve_active_session_and_phone(
                 clean_req_phone = clean_digits
 
     phone = session_row.get("phone_number") or getattr(user, "whatsapp_phone_number", None) or clean_req_phone
-    if not phone and session_row.get("status") == "CONNECTED":
-        # Fallback to existing ingested chats for this organization if the session is connected
-        stmt = text("SELECT session_id FROM whatsapp_chats WHERE organization_id = :org_id ORDER BY last_message_at DESC NULLS LAST LIMIT 1")
-        res = await db.execute(stmt, {"org_id": user.organization_id})
-        phone = res.scalar()
     clean_phone = re.sub(r"[^0-9]", "", str(phone or "")) if phone else None
     return session_row, clean_phone
 
@@ -270,21 +265,22 @@ async def get_my_session_status(
         except Exception:
             pass
 
-    # If session_row is CONNECTED but phone_number is missing, resolve from user profile
-    if session_row and session_row.get("status") == "CONNECTED" and not session_row.get("phone_number"):
-        if current_user.whatsapp_phone_number:
-            session_row = dict(session_row)
-            session_row["phone_number"] = current_user.whatsapp_phone_number
-        else:
+    # If session_row is CONNECTED, ensure phone_number is synced bi-directionally between session and user
+    if session_row and session_row.get("status") == "CONNECTED":
+        sess_phone = session_row.get("phone_number")
+        if sess_phone and not current_user.whatsapp_phone_number:
             try:
-                stmt = text("SELECT session_id FROM whatsapp_chats WHERE organization_id = :org_id ORDER BY last_message_at DESC NULLS LAST LIMIT 1")
-                res = await db.execute(stmt, {"org_id": current_user.organization_id})
-                latest_sess = res.scalar()
-                if latest_sess and re.sub(r"[^0-9]", "", str(latest_sess)).isdigit():
-                    session_row = dict(session_row)
-                    session_row["phone_number"] = latest_sess
+                current_user.whatsapp_phone_number = sess_phone
+                await db.execute(
+                    text("UPDATE users SET whatsapp_phone_number = :p WHERE id = :uid"),
+                    {"p": sess_phone, "uid": current_user.id}
+                )
+                await db.commit()
             except Exception:
                 pass
+        elif not sess_phone and current_user.whatsapp_phone_number:
+            session_row = dict(session_row)
+            session_row["phone_number"] = current_user.whatsapp_phone_number
 
     return serializers.serialize_session(session_row, gateway_online=gateway_online, stale=is_stale)
 
@@ -416,23 +412,26 @@ async def list_user_chats(
 
     session_row, phone = await _resolve_active_session_and_phone(db, current_user, requested_phone=clean_req_phone)
     if not phone:
-        # Fallback to organization's active chat session if any exist in the database
-        stmt = text("SELECT session_id FROM whatsapp_chats WHERE organization_id = :org_id ORDER BY last_message_at DESC NULLS LAST LIMIT 1")
-        res = await db.execute(stmt, {"org_id": current_user.organization_id})
-        phone = res.scalar()
-
-    query_session_id = phone or "ALL"
+        # Strictly multi-tenant & user isolated: User has not linked their WhatsApp device yet.
+        # Never leak other users' conversations or fall back to cross-user sessions.
+        return {
+            "status": "success",
+            "conversations": [],
+            "chats": [],
+            "counts": {"all": 0, "unread": 0, "pinned": 0, "archived": 0},
+            "pagination": {"limit": limit, "offset": offset, "total": 0},
+        }
 
     chats = await repository.list_chats(
         db,
         organization_id=current_user.organization_id,
-        session_id=query_session_id,
+        session_id=phone,
         filter_type=filter,
         search=search,
         limit=limit,
         offset=offset,
     )
-    counts = await repository.get_chat_counts(db, current_user.organization_id, query_session_id)
+    counts = await repository.get_chat_counts(db, current_user.organization_id, phone)
     serialized = [serializers.serialize_chat(c, own_phone=phone) for c in chats]
 
     return {

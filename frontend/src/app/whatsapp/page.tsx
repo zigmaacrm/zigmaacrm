@@ -2650,16 +2650,34 @@ export default function WhatsAppPage() {
                   </h2>
                 </div>
 
-                <button
-                  onClick={() => loadConversations(false)}
-                  className={cn(
-                    "p-1.5 rounded-lg border transition-all cursor-pointer hover:scale-105 active:scale-95",
-                    isDark ? "text-slate-400 hover:text-white border-white/5 hover:bg-white/5" : "text-slate-500 hover:text-slate-900 border-slate-200/80 hover:bg-slate-100"
-                  )}
-                  title="Refresh conversations"
-                >
-                  <RefreshCw className={cn("w-3.5 h-3.5", isRefreshing && "animate-spin text-emerald-500")} />
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => loadConversations(false)}
+                    className={cn(
+                      "p-1.5 rounded-lg border transition-all cursor-pointer hover:scale-105 active:scale-95",
+                      isDark ? "text-slate-400 hover:text-white border-white/5 hover:bg-white/5" : "text-slate-500 hover:text-slate-900 border-slate-200/80 hover:bg-slate-100"
+                    )}
+                    title="Refresh conversations"
+                  >
+                    <RefreshCw className={cn("w-3.5 h-3.5", isRefreshing && "animate-spin text-emerald-500")} />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleLogoutWhatsApp}
+                    disabled={isLoggingOutWhatsApp}
+                    className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-rose-600 hover:text-white bg-rose-50 hover:bg-rose-600 dark:bg-rose-950/50 dark:hover:bg-rose-600 dark:text-rose-300 dark:hover:text-white border border-rose-200 dark:border-rose-800 rounded-lg transition-all cursor-pointer shrink-0 shadow-2xs"
+                    title="Logout / Disconnect WhatsApp Session"
+                  >
+                    {isLoggingOutWhatsApp ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <LogOut className="w-3.5 h-3.5" />
+                    )}
+                    <span className="text-[11px] font-bold">Logout</span>
+                  </button>
+                </div>
               </div>
 
               {/* Linked Device Status & Logout */}

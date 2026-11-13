@@ -839,27 +839,40 @@ export class WASession {
     const clean = String(phoneNumber || '').replace(/[^0-9]/g, '');
     if (!clean || clean.length < 8) throw new BridgeError(400, 'Invalid phone number for pairing code');
 
-    if (!this.sock) {
+    if (!this.sock || !this.sock.ws || this.sock.ws.isClosed) {
       await this.start();
     }
     let attempts = 0;
-    while (!this.sock?.requestPairingCode && attempts < 30) {
+    while (!this.sock?.requestPairingCode && attempts < 40) {
       await new Promise((r) => setTimeout(r, 250));
       attempts++;
     }
     if (!this.sock?.requestPairingCode) throw new BridgeError(500, 'WhatsApp socket failed to initialize');
 
-    // Wait until socket's WebSocket stream is active
+    // Wait until socket's WebSocket stream is fully open and ready
     let wsWait = 0;
-    while (!this.sock?.ws?.isOpen && !this.latestQr && wsWait < 24) {
+    while (!this.sock?.ws?.isOpen && wsWait < 40) {
       await new Promise((r) => setTimeout(r, 250));
       wsWait++;
     }
 
-    const code = await this.sock.requestPairingCode(clean);
-    this.pairingPhone = clean;
-    this.pairingCode = code;
-    return { status: 'pairing_code', pairing_code: code, phone: clean };
+    try {
+      const code = await this.sock.requestPairingCode(clean);
+      this.pairingPhone = clean;
+      this.pairingCode = code;
+      return { status: 'pairing_code', pairing_code: code, phone: clean };
+    } catch (err) {
+      // If first attempt hit a transient handshake reset, wait 1s and retry once
+      log.warn({ err: err.message, phone: clean }, 'initial pairing code attempt failed; retrying once');
+      await new Promise((r) => setTimeout(r, 1000));
+      if (this.sock?.requestPairingCode && this.sock?.ws?.isOpen) {
+        const code = await this.sock.requestPairingCode(clean);
+        this.pairingPhone = clean;
+        this.pairingCode = code;
+        return { status: 'pairing_code', pairing_code: code, phone: clean };
+      }
+      throw new BridgeError(502, `Failed to generate pairing code: ${err.message}. Please use the QR Code scan tab.`, 'PAIRING_FAILED');
+    }
   }
 
   // ------------------------------------------------------------------ //
