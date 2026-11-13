@@ -6,6 +6,7 @@ and zero auto-lead pollution into CRM tables.
 import base64
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -23,6 +24,7 @@ from fastapi import (
 )
 from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_optional_current_user

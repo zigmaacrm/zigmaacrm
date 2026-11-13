@@ -1560,7 +1560,9 @@ export default function WhatsAppPage() {
       const data = await api.getWhatsAppConversations(100, repParam, cleanSession, sId);
       if (data && data.status === "success" && Array.isArray(data.conversations)) {
         if (data.conversations.length === 0) {
-          // If no conversations returned from server, keep any previously rendered offline conversations
+          if (!hasAnyLinkedPhone && qrStatus !== "CONNECTED") {
+            setConversations([]);
+          }
           return;
         }
         const mapped = data.conversations.map(mapBackendConv);
@@ -2016,6 +2018,16 @@ export default function WhatsAppPage() {
       try {
         localStorage.removeItem("zigmaa_whatsapp_status");
         localStorage.removeItem("zigmaa_whatsapp_phone");
+        for (const k of ["zigmaa_user", "zigmaa_current_user"]) {
+          const uStr = localStorage.getItem(k);
+          if (uStr) {
+            const parsed = JSON.parse(uStr);
+            delete parsed.whatsapp_phone_number;
+            delete parsed.whatsapp_phone_number_id;
+            localStorage.setItem(k, JSON.stringify(parsed));
+          }
+        }
+        window.dispatchEvent(new CustomEvent("zigmaa_user_updated"));
       } catch (_) {}
       setCachedQR(null);
       setConversations([]);

@@ -35,3 +35,4 @@ async def test_repository_normalization_and_unlink():
         # Clean up dummy test row
         await db.execute(text("DELETE FROM whatsapp_sessions WHERE user_id = :uid"), {"uid": dummy_user_id})
         await db.commit()
+

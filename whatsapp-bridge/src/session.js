@@ -404,7 +404,7 @@ export class WASession {
         auth: { creds, keys: makeCacheableSignalKeyStore(this.auth.state.keys, baileysLog) },
         // Desktop-class companion => the phone sends the full history.
         // See resolveBrowser() in config.js for why this is not macOS('Desktop').
-        browser: this.config.session.browser || Browsers.ubuntu('Chrome'),
+        browser: this.config.session.browser || ['Zigmaa CRM', 'Chrome', '120.0.0'],
         syncFullHistory: this.config.session.syncFullHistory,
         shouldSyncHistoryMessage: () => true,
         // Staying "unavailable" keeps push notifications working on the phone.
@@ -1128,6 +1128,7 @@ export class WASession {
       { type: this.historyStatus, progress, chats: active.length, messages: records.length },
       'history chunk stored'
     );
+    this.notifier.ping(this.id);
   }
 
   // ------------------------------------------------------------------ //

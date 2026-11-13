@@ -265,6 +265,24 @@ export default function WhatsAppQRModal({
     try {
       const sId = getResolvedSessionId();
       await api.disconnectWhatsAppQR(sId);
+      setStatus("NOT_LINKED");
+      setPhone(null);
+      setQrCode(null);
+      try {
+        localStorage.removeItem("zigmaa_whatsapp_status");
+        localStorage.removeItem("zigmaa_whatsapp_phone");
+        for (const k of ["zigmaa_user", "zigmaa_current_user"]) {
+          const uStr = localStorage.getItem(k);
+          if (uStr) {
+            const parsed = JSON.parse(uStr);
+            delete parsed.whatsapp_phone_number;
+            delete parsed.whatsapp_phone_number_id;
+            localStorage.setItem(k, JSON.stringify(parsed));
+          }
+        }
+        window.dispatchEvent(new CustomEvent("zigmaa_user_updated"));
+      } catch (_) {}
+      if (onStatusChange) onStatusChange("NOT_LINKED", null);
       toast.success("Disconnected", "WhatsApp session logged out successfully.");
       await checkStatus();
     } catch (err: any) {
