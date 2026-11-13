@@ -36,18 +36,69 @@ def _clean_name(value: Optional[str]) -> Optional[str]:
     return name or None
 
 
+def is_valid_contact_name(val: Optional[str]) -> bool:
+    if not val:
+        return False
+    s = val.strip()
+    if not s:
+        return False
+    # If it contains masked characters like ∙ or • or ***
+    if "∙" in s or "•" in s or "***" in s:
+        return False
+    # If it is pure digits
+    digits_only = re.sub(r"[^0-9]", "", s)
+    if digits_only == s:
+        return False
+    # If it is a phone number format like +91 98401 12345 or +919840112345
+    cleaned_symbols = re.sub(r"[\s\+\-\(\)]", "", s)
+    if cleaned_symbols.isdigit():
+        return False
+    # If it looks like a WhatsApp JID or LID
+    if "@s.whatsapp.net" in s or "@lid" in s or "@g.us" in s:
+        return False
+    # It must contain at least one letter or word character (English, Tamil, etc.)
+    if not re.search(r"[a-zA-Z\u0B80-\u0BFF]", s):
+        return False
+    return True
+
+
 def chat_display_name(row: Mapping[str, Any], own_phone: Optional[str] = None) -> str:
     phone = row.get("phone_number")
     if phone and own_phone and digits(phone) == digits(own_phone):
         return "You (Message yourself)"
-    return (
-        _clean_name(row.get("custom_name"))
-        or _clean_name(row.get("name"))
-        or _clean_name(row.get("verified_name"))
-        or _clean_name(row.get("push_name"))
-        or format_phone(phone)
-        or "WhatsApp user"
-    )
+
+    custom_name = _clean_name(row.get("custom_name"))
+    if custom_name and is_valid_contact_name(custom_name):
+        return custom_name
+
+    contact_name = _clean_name(row.get("contact_name"))
+    if contact_name and is_valid_contact_name(contact_name):
+        return contact_name
+
+    lead_name = _clean_name(row.get("lead_name"))
+    if lead_name and is_valid_contact_name(lead_name):
+        return lead_name
+
+    name = _clean_name(row.get("name"))
+    if name and is_valid_contact_name(name):
+        return name
+
+    push_name = _clean_name(row.get("push_name"))
+    if push_name and is_valid_contact_name(push_name):
+        return push_name
+
+    verified_name = _clean_name(row.get("verified_name"))
+    if verified_name and is_valid_contact_name(verified_name):
+        return verified_name
+
+    valid_candidates = [
+        c for c in (custom_name, contact_name, lead_name, name, push_name, verified_name)
+        if c and not ("∙" in c or "•" in c or "***" in c)
+    ]
+    if valid_candidates:
+        return valid_candidates[0]
+
+    return format_phone(phone) or (f"+{phone}" if phone else None) or "WhatsApp user"
 
 
 def message_preview(message_type: Optional[str], text: Optional[str], file_name: Optional[str] = None) -> str:
@@ -91,8 +142,8 @@ def message_preview(message_type: Optional[str], text: Optional[str], file_name:
 
 
 def serialize_chat(row: Mapping[str, Any], own_phone: Optional[str] = None) -> Dict[str, Any]:
-    lead_ok = bool(row.get("lead_id") and row.get("lead_name") is not None)
-    contact_ok = bool(row.get("contact_id") and row.get("contact_name") is not None)
+    lead_ok = bool(row.get("lead_id") or row.get("lead_name"))
+    contact_ok = bool(row.get("contact_id") or row.get("contact_name"))
     phone = row.get("phone_number")
     if not phone and row.get("jid"):
         clean_jid = str(row.get("jid")).split("@")[0]

@@ -1264,10 +1264,10 @@ export default function WhatsAppPage() {
 
   const hasAnyLinkedPhone = Boolean(
     qrPhone ||
-    currentUser?.whatsapp_phone_number
+    (qrStatus === "CONNECTED" && currentUser?.whatsapp_phone_number)
   );
   const isConnectingState = qrStatus === "CONNECTING" || isLoadingConversations;
-  const isTrulyUnlinked = !hasAnyLinkedPhone && qrStatus !== "CONNECTED" && qrStatus !== "CONNECTING" && conversations.length === 0;
+  const isTrulyUnlinked = !hasAnyLinkedPhone && qrStatus !== "CONNECTED" && qrStatus !== "CONNECTING";
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState("");
@@ -1482,7 +1482,30 @@ export default function WhatsAppPage() {
     const formattedPhone = raw.display_phone || (cleanPhoneDigits ? `+${cleanPhoneDigits}` : (rawPhone ? (rawPhone.startsWith("+") ? rawPhone : `+${rawPhone}`) : ""));
     const phoneVal = formattedPhone || (cleanPhoneDigits ? `+${cleanPhoneDigits}` : "") || rawPhone || "Unknown";
 
-    const name = raw.contact_name || raw.name || raw.custom_name || raw.push_name || (phoneVal !== "Unknown" ? `WhatsApp User (${phoneVal})` : "WhatsApp User");
+    const isValidContactName = (val: string | null | undefined): boolean => {
+      if (!val) return false;
+      const s = val.trim();
+      if (!s || s.includes("∙") || s.includes("•") || s.includes("***")) return false;
+      const digitsOnly = s.replace(/[^0-9]/g, "");
+      if (digitsOnly === s) return false;
+      const cleaned = s.replace(/[\s\+\-\(\)]/g, "");
+      if (/^\d+$/.test(cleaned)) return false;
+      if (!/[a-zA-Z\u0B80-\u0BFF]/.test(s)) return false;
+      return true;
+    };
+
+    const nameCandidate = [
+      raw.custom_name,
+      raw.crm?.contact_name,
+      raw.contact_name,
+      raw.crm?.lead_name,
+      raw.lead_name,
+      raw.name,
+      raw.push_name,
+      raw.verified_name
+    ].find((n) => isValidContactName(n));
+
+    const name = nameCandidate || (phoneVal !== "Unknown" ? phoneVal : "WhatsApp User");
     const parts = name.trim().split(" ");
     const initials = ((parts[0]?.[0] || "W") + (parts[1]?.[0] || "")).toUpperCase();
     const grad = AVATAR_GRADIENTS[index % AVATAR_GRADIENTS.length];
@@ -2640,7 +2663,7 @@ export default function WhatsAppPage() {
               </div>
 
               {/* Linked Device Status & Logout */}
-              {(qrStatus === "CONNECTED" || hasAnyLinkedPhone || conversations.length > 0) && (
+              {(qrStatus === "CONNECTED" || hasAnyLinkedPhone) && (
                 <div className={cn(
                   "w-full flex items-center justify-between px-3 py-2 rounded-xl border text-xs font-semibold transition-all shadow-2xs",
                   isDark

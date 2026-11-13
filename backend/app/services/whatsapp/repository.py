@@ -121,9 +121,9 @@ async def unlink_user_session(
                    history_sync_status = NULL,
                    history_sync_progress = NULL,
                    updated_at = {NOW_UTC}
-               WHERE organization_id = :org_id AND user_id = :user_id"""
+               WHERE organization_id = :org_id AND (user_id = :user_id OR id = :sid)"""
         ),
-        {"org_id": organization_id, "user_id": user_id},
+        {"org_id": organization_id, "user_id": user_id, "sid": sid},
     )
     # 2. Delete all Signal authentication keys for this session
     await db.execute(
@@ -156,17 +156,19 @@ async def list_chats(
     clean_sid = re.sub(r"[^0-9]", "", str(session_id or ""))
     conditions = [
         "c.organization_id = :org_id",
-        "(c.session_id = :session_id OR c.session_id = :clean_sid)",
         "c.merged_into IS NULL",
         "(c.jid NOT LIKE '%@lid' OR c.phone_number IS NOT NULL OR c.last_message_at IS NOT NULL)",
     ]
     params: Dict[str, Any] = {
         "org_id": organization_id,
-        "session_id": session_id,
-        "clean_sid": clean_sid or session_id,
         "limit": max(1, min(limit, 100)),
         "offset": max(0, offset),
     }
+
+    if session_id and str(session_id).upper() != "ALL":
+        conditions.append("(c.session_id = :session_id OR c.session_id = :clean_sid)")
+        params["session_id"] = session_id
+        params["clean_sid"] = clean_sid or session_id
 
     if filter_type == "unread":
         conditions.append("c.unread_count > 0")
@@ -182,7 +184,7 @@ async def list_chats(
         term = f"%{search.strip()}%"
         params["search"] = term
         conditions.append(
-            "(c.name ILIKE :search OR c.phone_number ILIKE :search OR c.custom_name ILIKE :search OR c.push_name ILIKE :search OR c.last_message_preview ILIKE :search)"
+            "(c.name ILIKE :search OR c.phone_number ILIKE :search OR c.custom_name ILIKE :search OR c.push_name ILIKE :search OR c.last_message_preview ILIKE :search OR ct.full_name ILIKE :search OR l.full_name ILIKE :search)"
         )
 
     where_clause = " AND ".join(conditions)
@@ -197,8 +199,40 @@ async def list_chats(
                ct.company_name AS contact_company,
                ct.email AS contact_email
         FROM whatsapp_chats c
-        LEFT JOIN leads l ON l.id = c.lead_id AND l.organization_id = c.organization_id
-        LEFT JOIN contacts ct ON ct.id = c.contact_id AND ct.organization_id = c.organization_id
+        LEFT JOIN LATERAL (
+            SELECT id, full_name, company_name, email
+            FROM contacts ct
+            WHERE ct.organization_id = c.organization_id
+              AND (
+                ct.id = c.contact_id
+                OR (
+                    c.phone_number IS NOT NULL 
+                    AND ct.phone IS NOT NULL 
+                    AND LENGTH(REGEXP_REPLACE(c.phone_number, '[^0-9]', '', 'g')) >= 10
+                    AND LENGTH(REGEXP_REPLACE(ct.phone, '[^0-9]', '', 'g')) >= 10
+                    AND RIGHT(REGEXP_REPLACE(ct.phone, '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(c.phone_number, '[^0-9]', '', 'g'), 10)
+                )
+              )
+            ORDER BY (ct.id = c.contact_id) DESC, ct.updated_at DESC
+            LIMIT 1
+        ) ct ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT id, full_name, company_name, email, status
+            FROM leads l
+            WHERE l.organization_id = c.organization_id
+              AND (
+                l.id = c.lead_id
+                OR (
+                    c.phone_number IS NOT NULL 
+                    AND l.phone IS NOT NULL 
+                    AND LENGTH(REGEXP_REPLACE(c.phone_number, '[^0-9]', '', 'g')) >= 10
+                    AND LENGTH(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g')) >= 10
+                    AND RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(c.phone_number, '[^0-9]', '', 'g'), 10)
+                )
+              )
+            ORDER BY (l.id = c.lead_id) DESC, l.updated_at DESC
+            LIMIT 1
+        ) l ON TRUE
         WHERE {where_clause}
         ORDER BY c.is_pinned DESC, c.last_message_at DESC NULLS LAST, c.created_at DESC
         LIMIT :limit OFFSET :offset
@@ -215,19 +249,27 @@ async def get_chat_counts(
     Returns counts for tab badges: all, unread, pinned, archived.
     """
     clean_sid = re.sub(r"[^0-9]", "", str(session_id or ""))
+    where_parts = [
+        "organization_id = :org_id",
+        "merged_into IS NULL",
+        "(jid NOT LIKE '%@lid' OR phone_number IS NOT NULL OR last_message_at IS NOT NULL)",
+    ]
+    params: Dict[str, Any] = {"org_id": organization_id}
+    if session_id and str(session_id).upper() != "ALL":
+        where_parts.append("(session_id = :session_id OR session_id = :clean_sid)")
+        params["session_id"] = session_id
+        params["clean_sid"] = clean_sid or session_id
+    where_sql = " AND ".join(where_parts)
     sql = text(
-        """SELECT
+        f"""SELECT
                COUNT(*) FILTER (WHERE is_archived = FALSE) AS all_count,
                COUNT(*) FILTER (WHERE unread_count > 0 AND is_archived = FALSE) AS unread_count,
                COUNT(*) FILTER (WHERE is_pinned = TRUE) AS pinned_count,
                COUNT(*) FILTER (WHERE is_archived = TRUE) AS archived_count
            FROM whatsapp_chats
-           WHERE organization_id = :org_id 
-             AND (session_id = :session_id OR session_id = :clean_sid)
-             AND merged_into IS NULL
-             AND (jid NOT LIKE '%@lid' OR phone_number IS NOT NULL OR last_message_at IS NOT NULL)"""
+           WHERE {where_sql}"""
     )
-    result = await db.execute(sql, {"org_id": organization_id, "session_id": session_id, "clean_sid": clean_sid or session_id})
+    result = await db.execute(sql, params)
     row = result.mappings().first()
     if not row:
         return {"all": 0, "unread": 0, "pinned": 0, "archived": 0}

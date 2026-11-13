@@ -139,10 +139,20 @@ async def _resolve_active_session_and_phone(
     session_row, is_stale = await repository.get_user_session(db, user.organization_id, user.id)
     if not session_row:
         session_row = await repository.ensure_user_session(db, user.organization_id, user.id)
-    phone = session_row.get("phone_number") or getattr(user, "whatsapp_phone_number", None) or requested_phone
-    if not phone:
-        # Fallback to existing ingested chats for this organization if available
-        stmt = text("SELECT session_id FROM whatsapp_chats WHERE organization_id = :org_id ORDER BY updated_at DESC LIMIT 1")
+
+    # Clean requested phone (only if it is a real phone number, not a user UUID!)
+    clean_req_phone = None
+    if requested_phone:
+        str_req = str(requested_phone).strip()
+        if "-" not in str_req and not str_req.startswith("wa_"):
+            clean_digits = re.sub(r"[^0-9]", "", str_req)
+            if 7 <= len(clean_digits) <= 15:
+                clean_req_phone = clean_digits
+
+    phone = session_row.get("phone_number") or getattr(user, "whatsapp_phone_number", None) or clean_req_phone
+    if not phone and session_row.get("status") == "CONNECTED":
+        # Fallback to existing ingested chats for this organization if the session is connected
+        stmt = text("SELECT session_id FROM whatsapp_chats WHERE organization_id = :org_id ORDER BY last_message_at DESC NULLS LAST LIMIT 1")
         res = await db.execute(stmt, {"org_id": user.organization_id})
         phone = res.scalar()
     clean_phone = re.sub(r"[^0-9]", "", str(phone or "")) if phone else None
@@ -236,6 +246,18 @@ async def get_my_session_status(
     session_row, is_stale = await repository.get_user_session(db, current_user.organization_id, current_user.id)
     gateway_online = await bridge.health()
 
+    status = (session_row.get("status") if session_row else None) or "NOT_LINKED"
+
+    # If the session is explicitly NOT_LINKED or LOGGED_OUT, or has no creds: strictly report as NOT_LINKED / LOGGED_OUT.
+    # Never fabricate a CONNECTED state when the session has been explicitly unlinked!
+    if status in ("NOT_LINKED", "LOGGED_OUT") or not (session_row and session_row.get("creds")):
+        if session_row:
+            session_row = dict(session_row)
+            session_row["phone_number"] = None
+            if status not in ("NOT_LINKED", "LOGGED_OUT", "SCAN_QR", "CONNECTING"):
+                session_row["status"] = "NOT_LINKED"
+        return serializers.serialize_session(session_row, gateway_online=gateway_online, stale=is_stale)
+
     # If the database does not have an active QR yet, check if bridge has one cached
     if (not session_row or not session_row.get("qr")) and not (session_row and session_row.get("phone_number")):
         try:
@@ -248,21 +270,19 @@ async def get_my_session_status(
         except Exception:
             pass
 
-    # If session_row has no phone_number, check if user or active organization chats have one
-    if session_row and not session_row.get("phone_number"):
+    # If session_row is CONNECTED but phone_number is missing, resolve from user profile
+    if session_row and session_row.get("status") == "CONNECTED" and not session_row.get("phone_number"):
         if current_user.whatsapp_phone_number:
             session_row = dict(session_row)
             session_row["phone_number"] = current_user.whatsapp_phone_number
-            session_row["status"] = "CONNECTED"
         else:
             try:
-                stmt = text("SELECT session_id FROM whatsapp_chats WHERE organization_id = :org_id ORDER BY updated_at DESC LIMIT 1")
+                stmt = text("SELECT session_id FROM whatsapp_chats WHERE organization_id = :org_id ORDER BY last_message_at DESC NULLS LAST LIMIT 1")
                 res = await db.execute(stmt, {"org_id": current_user.organization_id})
                 latest_sess = res.scalar()
                 if latest_sess and re.sub(r"[^0-9]", "", str(latest_sess)).isdigit():
                     session_row = dict(session_row)
                     session_row["phone_number"] = latest_sess
-                    session_row["status"] = "CONNECTED"
             except Exception:
                 pass
 
@@ -386,21 +406,33 @@ async def list_user_chats(
     Excludes groups (@g.us) and broadcast status.
     Strictly isolated: never mixes with CRM leads unless explicitly converted.
     """
-    requested_phone = active_session_phone or session_id
-    session_row, phone = await _resolve_active_session_and_phone(db, current_user, requested_phone=requested_phone)
+    clean_req_phone = None
+    for cand in (active_session_phone, session_id):
+        if cand and "-" not in str(cand) and not str(cand).startswith("wa_"):
+            clean_digits = re.sub(r"[^0-9]", "", str(cand))
+            if 7 <= len(clean_digits) <= 15:
+                clean_req_phone = clean_digits
+                break
+
+    session_row, phone = await _resolve_active_session_and_phone(db, current_user, requested_phone=clean_req_phone)
     if not phone:
-        return {"status": "success", "conversations": [], "chats": [], "counts": {"all": 0, "unread": 0, "pinned": 0, "archived": 0}}
+        # Fallback to organization's active chat session if any exist in the database
+        stmt = text("SELECT session_id FROM whatsapp_chats WHERE organization_id = :org_id ORDER BY last_message_at DESC NULLS LAST LIMIT 1")
+        res = await db.execute(stmt, {"org_id": current_user.organization_id})
+        phone = res.scalar()
+
+    query_session_id = phone or "ALL"
 
     chats = await repository.list_chats(
         db,
         organization_id=current_user.organization_id,
-        session_id=phone,
+        session_id=query_session_id,
         filter_type=filter,
         search=search,
         limit=limit,
         offset=offset,
     )
-    counts = await repository.get_chat_counts(db, current_user.organization_id, phone)
+    counts = await repository.get_chat_counts(db, current_user.organization_id, query_session_id)
     serialized = [serializers.serialize_chat(c, own_phone=phone) for c in chats]
 
     return {

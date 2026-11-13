@@ -3336,7 +3336,7 @@ export const zigmaaApi = {
       if (active_session_phone) {
         url += `&active_session_phone=${encodeURIComponent(active_session_phone.replace(/[^0-9]/g, ''))}`;
       }
-      if (sid) {
+      if (sid && !sid.includes("-")) {
         url += `&session_id=${encodeURIComponent(sid)}`;
       }
       const res = await fetch(url, {
