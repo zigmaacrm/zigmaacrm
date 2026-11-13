@@ -248,6 +248,24 @@ async def get_my_session_status(
         except Exception:
             pass
 
+    # If session_row has no phone_number, check if user or active organization chats have one
+    if session_row and not session_row.get("phone_number"):
+        if current_user.whatsapp_phone_number:
+            session_row = dict(session_row)
+            session_row["phone_number"] = current_user.whatsapp_phone_number
+            session_row["status"] = "CONNECTED"
+        else:
+            try:
+                stmt = text("SELECT session_id FROM whatsapp_chats WHERE organization_id = :org_id ORDER BY updated_at DESC LIMIT 1")
+                res = await db.execute(stmt, {"org_id": current_user.organization_id})
+                latest_sess = res.scalar()
+                if latest_sess and re.sub(r"[^0-9]", "", str(latest_sess)).isdigit():
+                    session_row = dict(session_row)
+                    session_row["phone_number"] = latest_sess
+                    session_row["status"] = "CONNECTED"
+            except Exception:
+                pass
+
     return serializers.serialize_session(session_row, gateway_online=gateway_online, stale=is_stale)
 
 
@@ -537,43 +555,68 @@ async def convert_chat_to_lead_endpoint(
 @router.get("/messages")
 async def list_chat_messages(
     chat_id: Optional[str] = None,
+    chat_id_query: Optional[str] = Query(None, alias="chat_id"),
     phone_number: Optional[str] = Query(None),
     phone: Optional[str] = Query(None),
     contact_id: Optional[str] = Query(None),
+    active_session_phone: Optional[str] = Query(None),
+    session_id: Optional[str] = Query(None),
     before_seq: Optional[int] = Query(None),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(100, ge=1, le=200),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    session_row, own_phone = await _resolve_active_session_and_phone(db, current_user)
-    if not own_phone:
-        return {"status": "success", "messages": [], "count": 0}
+    requested_phone = active_session_phone or session_id
+    session_row, own_phone = await _resolve_active_session_and_phone(db, current_user, requested_phone=requested_phone)
 
-    target_chat_id = chat_id
+    target_chat_id = chat_id or chat_id_query
     search_num = phone_number or phone
-    if not target_chat_id and search_num:
-        # Resolve chat_id by phone number
-        clean_p = search_num.replace("+", "").replace(" ", "").replace("-", "")
+    clean_p = re.sub(r"[^0-9]", "", str(search_num or "")) if search_num else None
+
+    if not target_chat_id and clean_p:
+        # 1. Resolve chat_id by phone number in chats table
+        clean_10 = clean_p[-10:] if len(clean_p) >= 10 else clean_p
         chats = await repository.list_chats(
             db,
             organization_id=current_user.organization_id,
-            session_id=own_phone,
-            search=clean_p,
+            session_id=own_phone or clean_p,
+            search=clean_10,
             limit=5,
         )
         if chats:
             target_chat_id = chats[0]["id"]
+        else:
+            # 2. Lookup in whatsapp_messages directly
+            stmt = text(
+                """SELECT chat_id FROM whatsapp_messages
+                   WHERE organization_id = :org_id AND (phone_number LIKE :p10 OR phone_number = :clean_p)
+                   ORDER BY seq DESC NULLS LAST, created_at DESC LIMIT 1"""
+            )
+            res = await db.execute(stmt, {"org_id": current_user.organization_id, "p10": f"%{clean_10}%", "clean_p": clean_p})
+            target_chat_id = res.scalar()
 
-    if not target_chat_id:
-        return {"status": "success", "messages": [], "count": 0}
+    rows: List[Dict[str, Any]] = []
+    if target_chat_id:
+        rows = await repository.list_messages(
+            db,
+            organization_id=current_user.organization_id,
+            chat_id=target_chat_id,
+            before_seq=before_seq,
+            limit=limit,
+        )
+    elif clean_p:
+        clean_10 = clean_p[-10:] if len(clean_p) >= 10 else clean_p
+        stmt = text(
+            """SELECT m.*
+               FROM whatsapp_messages m
+               WHERE m.organization_id = :org_id AND (m.phone_number LIKE :p10 OR m.phone_number = :clean_p)
+               ORDER BY m.seq DESC NULLS LAST, m.created_at DESC
+               LIMIT :limit"""
+        )
+        res = await db.execute(stmt, {"org_id": current_user.organization_id, "p10": f"%{clean_10}%", "clean_p": clean_p, "limit": limit})
+        rows = [dict(r._mapping) for r in res.fetchall()]
+        rows.reverse()
 
-    rows = await repository.list_messages(
-        db,
-        organization_id=current_user.organization_id,
-        chat_id=target_chat_id,
-        before_seq=before_seq,
-        limit=limit,
-    )
     serialized = [serializers.serialize_message(r, current_user.organization_id) for r in rows]
 
     return {

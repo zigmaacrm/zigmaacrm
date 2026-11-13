@@ -1725,8 +1725,19 @@ export default function WhatsAppPage() {
     }
 
     try {
-      const liveSession = qrPhoneRef.current || qrPhone;
-      const data = await api.getWhatsAppMessages({ phone_number: clean, active_session_phone: liveSession });
+      const liveSession = qrPhoneRef.current || qrPhone || (typeof window !== "undefined" ? localStorage.getItem("zigmaa_whatsapp_phone") : null) || currentUser?.whatsapp_phone_number;
+      // Resolve direct chat UUID from active conversation
+      const currentConv = conversationsRef.current.find((c) => {
+        const cClean = c.phone.replace(/[^0-9]/g, "");
+        return cClean === clean || (cClean.length >= 10 && clean.endsWith(cClean)) || (clean.length >= 10 && cClean.endsWith(clean));
+      });
+      const targetChatId = currentConv?.id && !currentConv.id.startsWith("nav_") && !currentConv.id.startsWith("conv-") ? currentConv.id : undefined;
+
+      const data = await api.getWhatsAppMessages({
+        chat_id: targetChatId,
+        phone_number: clean,
+        active_session_phone: liveSession
+      });
 
       // Guard: Ignore response if user switched to another contact in the meantime
       if (activePhoneRef.current && activePhoneRef.current !== clean) {
@@ -1735,19 +1746,19 @@ export default function WhatsAppPage() {
 
       if (data && data.status === "success" && Array.isArray(data.messages)) {
         const mappedMsgs: WhatsAppMessage[] = data.messages.map((m: any) => {
-          const rawMedia = m.media_url || (m.file_name ? `/media/whatsapp/${m.file_name}` : null);
+          const rawMedia = m.media?.url || m.media_url || (m.file_name ? `/media/whatsapp/${m.file_name}` : null);
           const mediaFullUrl = api.getMediaUrl(rawMedia);
           const rawB64 = m.media_base64 || null;
 
           let attachment: WhatsAppMessage["attachment"] = undefined;
-          const mType = (m.message_type || "").toLowerCase();
+          const mType = (m.type || m.message_type || "").toLowerCase();
           const lowerUrl = (mediaFullUrl || "").toLowerCase();
-          const lowerFileName = (m.file_name || "").toLowerCase();
-          const isVoice = m.is_voice_note || mType === "ptt" || mType === "audio" || lowerUrl.includes(".ogg") || lowerUrl.includes(".opus") || lowerUrl.includes(".mp3") || lowerFileName.includes(".ogg") || lowerFileName.includes(".opus");
+          const lowerFileName = (m.file_name || m.media?.file_name || "").toLowerCase();
+          const isVoice = m.is_voice_note || m.media?.is_voice_note || mType === "ptt" || mType === "audio" || lowerUrl.includes(".ogg") || lowerUrl.includes(".opus") || lowerUrl.includes(".mp3") || lowerFileName.includes(".ogg") || lowerFileName.includes(".opus");
           const isImg = mType === "image" || lowerUrl.includes(".jpg") || lowerUrl.includes(".jpeg") || lowerUrl.includes(".png") || lowerFileName.includes(".jpg") || lowerFileName.includes(".jpeg") || lowerFileName.includes(".png");
-          const isGif = mType === "gif" || lowerFileName.startsWith("gif_") || lowerUrl.includes("gif_") || lowerUrl.endsWith(".gif") || (m.message_body || "").toLowerCase() === "[gif]";
+          const isGif = mType === "gif" || lowerFileName.startsWith("gif_") || lowerUrl.includes("gif_") || lowerUrl.endsWith(".gif") || ((m.text || m.message_body || "").toLowerCase() === "[gif]");
           const isVideo = !isGif && (mType === "video" || lowerUrl.includes(".mp4") || lowerUrl.includes(".mov") || lowerUrl.includes(".webm") || lowerFileName.includes(".mp4") || lowerFileName.includes(".mov"));
-          const isSticker = mType === "sticker" || lowerUrl.includes(".webp") || lowerFileName.startsWith("sticker_") || lowerFileName.endsWith(".webp") || ((m.message_body || "").toLowerCase() === "[sticker]");
+          const isSticker = mType === "sticker" || lowerUrl.includes(".webp") || lowerFileName.startsWith("sticker_") || lowerFileName.endsWith(".webp") || ((m.text || m.message_body || "").toLowerCase() === "[sticker]");
           const isDoc = mType === "document" || (!isImg && !isVideo && !isGif && !isVoice && !isSticker && !!mediaFullUrl);
 
           const base64DataUrl = rawB64
@@ -1758,60 +1769,64 @@ export default function WhatsAppPage() {
           if (isImg) {
             attachment = {
               type: "image",
-              name: m.file_name || "Photo",
+              name: m.file_name || m.media?.file_name || "Photo",
               url: effectiveUrl
             };
           } else if (isGif) {
             attachment = {
               type: "gif",
-              name: m.file_name || "GIF",
+              name: m.file_name || m.media?.file_name || "GIF",
               url: effectiveUrl
             };
           } else if (isVideo) {
             attachment = {
               type: "video",
-              name: m.file_name || "Video",
+              name: m.file_name || m.media?.file_name || "Video",
               url: effectiveUrl
             };
           } else if (isSticker) {
             attachment = {
               type: "sticker",
-              name: m.file_name || "Sticker",
+              name: m.file_name || m.media?.file_name || "Sticker",
               url: effectiveUrl
             };
           } else if (isVoice) {
             attachment = {
               type: "audio",
-              name: m.file_name || "Voice note",
+              name: m.file_name || m.media?.file_name || "Voice note",
               url: effectiveUrl
             };
           } else if (isDoc) {
             attachment = {
               type: "pdf",
-              name: m.file_name || "Document",
+              name: m.file_name || m.media?.file_name || "Document",
               size: "Document",
               url: effectiveUrl
             };
           }
 
+          const fromMe = m.from_me !== undefined ? Boolean(m.from_me) : (m.direction === "OUTBOUND");
+          const textVal = m.text !== undefined ? m.text : (m.message_body || "");
+          const timeVal = m.timestamp || m.created_at || "Today";
+
           return {
             id: m.id,
-            sender: m.direction === "INBOUND" ? "inbound" : "outbound",
-            text: m.message_body,
-            timestamp: m.created_at || "Today",
-            timeLabel: formatTime(m.created_at),
+            sender: fromMe ? "outbound" : "inbound",
+            text: textVal,
+            timestamp: timeVal,
+            timeLabel: formatTime(timeVal),
             dateGroup: "Today",
             status: m.status || "DELIVERED",
-            messageType: m.message_type || "text",
+            messageType: mType || "text",
             mediaUrl: effectiveUrl || null,
             mediaBase64: rawB64,
-            fileName: m.file_name,
+            fileName: m.file_name || m.media?.file_name,
             caption: m.caption,
             isVoiceNote: isVoice,
             reaction: m.reaction || null,
             isDeleted: Boolean(m.is_deleted),
-            metaMessageId: m.meta_message_id || null,
-            quotedContext: m.quoted_context || null,
+            metaMessageId: m.wa_message_id || m.meta_message_id || null,
+            quotedContext: m.quoted || m.quoted_context || null,
             attachment
           };
         });
@@ -2625,7 +2640,7 @@ export default function WhatsAppPage() {
               </div>
 
               {/* Linked Device Status & Logout */}
-              {qrStatus === "CONNECTED" && Boolean(qrPhone) && (
+              {(qrStatus === "CONNECTED" || hasAnyLinkedPhone || conversations.length > 0) && (
                 <div className={cn(
                   "w-full flex items-center justify-between px-3 py-2 rounded-xl border text-xs font-semibold transition-all shadow-2xs",
                   isDark
@@ -2635,7 +2650,7 @@ export default function WhatsAppPage() {
                   <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
                     <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
                     <span className="font-semibold truncate">
-                      Linked: {qrPhone ? (qrPhone.startsWith("+") ? qrPhone : `+${qrPhone}`) : "Connected"}
+                      Linked: {qrPhone ? (qrPhone.startsWith("+") ? qrPhone : `+${qrPhone}`) : (currentUser?.whatsapp_phone_number || (conversations.length > 0 && conversations[0]?.phone !== "Unknown" ? conversations[0]?.phone : "Connected"))}
                     </span>
                   </div>
                   <button

@@ -849,14 +849,16 @@ export class WASession {
     }
     if (!this.sock?.requestPairingCode) throw new BridgeError(500, 'WhatsApp socket failed to initialize');
 
-    // Wait until QR is emitted (which confirms companion registration is active on WhatsApp)
-    let qrWait = 0;
-    while (!this.latestQr && qrWait < 24) {
+    // Wait until socket's WebSocket stream is active
+    let wsWait = 0;
+    while (!this.sock?.ws?.isOpen && !this.latestQr && wsWait < 24) {
       await new Promise((r) => setTimeout(r, 250));
-      qrWait++;
+      wsWait++;
     }
 
     const code = await this.sock.requestPairingCode(clean);
+    this.pairingPhone = clean;
+    this.pairingCode = code;
     return { status: 'pairing_code', pairing_code: code, phone: clean };
   }
 

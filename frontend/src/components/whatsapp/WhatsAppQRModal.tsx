@@ -496,6 +496,9 @@ export default function WhatsAppQRModal({
                       <li>Tap <strong>Link with phone number instead</strong> at the bottom</li>
                       <li>Enter the 8-character code shown above</li>
                     </ol>
+                    <div className="mt-2 p-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/50 text-[10px] text-amber-800 dark:text-amber-300">
+                      <strong>Important:</strong> Enter this code on the exact phone running WhatsApp with this number ({pairingPhone}). Codes expire in 60s.
+                    </div>
                   </div>
 
                   <div className="flex items-center justify-between pt-1">

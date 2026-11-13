@@ -213,23 +213,37 @@ def serialize_message(row: Mapping[str, Any], organization_id: str) -> Dict[str,
     deleted = bool(row.get("is_deleted"))
     kind = "revoked" if deleted else (row.get("message_type") or "text")
     reactions = _parse_json(row.get("reactions"))
+    media_obj = None if deleted else _media(row, organization_id)
+    text_content = "" if deleted else (row.get("message_body") or "")
+    time_iso = iso_utc(row.get("timestamp") or row.get("created_at"))
+    wa_id = row.get("meta_message_id")
+    quoted_obj = None if deleted else _quoted(row)
     return {
         "id": row["id"],
         "chat_id": row.get("chat_id"),
-        "wa_message_id": row.get("meta_message_id"),
+        "wa_message_id": wa_id,
+        "meta_message_id": wa_id,
         "from_me": bool(from_me),
+        "direction": "OUTBOUND" if from_me else "INBOUND",
         "type": kind,
-        "text": "" if deleted else (row.get("message_body") or ""),
+        "message_type": kind,
+        "text": text_content,
+        "message_body": text_content,
         "caption": None if deleted else row.get("caption"),
-        "timestamp": iso_utc(row.get("timestamp") or row.get("created_at")),
+        "timestamp": time_iso,
+        "created_at": time_iso,
         "seq": row.get("seq"),
         "status": row.get("status"),
         "is_deleted": deleted,
         "is_edited": bool(row.get("is_edited")),
         "reaction": None if deleted else row.get("reaction"),
         "my_reaction": (reactions or {}).get("me") if isinstance(reactions, dict) and not deleted else None,
-        "quoted": None if deleted else _quoted(row),
-        "media": None if deleted else _media(row, organization_id),
+        "quoted": quoted_obj,
+        "quoted_context": quoted_obj,
+        "media": media_obj,
+        "media_url": (media_obj.get("url") if media_obj else None) or row.get("media_url"),
+        "file_name": (media_obj.get("file_name") if media_obj else None) or row.get("file_name"),
+        "is_voice_note": bool((media_obj.get("is_voice_note") if media_obj else None) or row.get("is_voice_note")),
         "payload": None if deleted else _parse_json(row.get("payload")),
         "source": row.get("source"),
         "client_ref": row.get("client_ref"),

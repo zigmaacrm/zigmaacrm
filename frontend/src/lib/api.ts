@@ -3264,6 +3264,7 @@ export const zigmaaApi = {
   },
 
   async getWhatsAppMessages(params: {
+    chat_id?: string;
     phone_number?: string;
     contact_id?: string;
     limit?: number;
@@ -3272,6 +3273,7 @@ export const zigmaaApi = {
   }): Promise<any> {
     try {
       const query = new URLSearchParams();
+      if (params.chat_id) query.set("chat_id", params.chat_id);
       if (params.phone_number) query.set("phone_number", params.phone_number);
       if (params.contact_id) query.set("contact_id", params.contact_id);
       if (params.active_session_phone) query.set("active_session_phone", params.active_session_phone.replace(/[^0-9]/g, ''));
