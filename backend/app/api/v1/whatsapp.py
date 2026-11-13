@@ -635,7 +635,7 @@ async def list_chat_messages(
             before_seq=before_seq,
             limit=limit,
         )
-    elif clean_p:
+    if not rows and clean_p:
         clean_10 = clean_p[-10:] if len(clean_p) >= 10 else clean_p
         stmt = text(
             """SELECT m.*

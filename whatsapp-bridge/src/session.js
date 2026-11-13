@@ -158,7 +158,8 @@ export class WASession {
   // ------------------------------------------------------------------ //
 
   get paired() {
-    return Boolean(this.auth?.state.creds.me?.id);
+    const creds = this.auth?.state?.creds;
+    return Boolean((creds?.registered || creds?.account) && creds?.me?.id);
   }
 
   snapshot() {
@@ -597,7 +598,8 @@ export class WASession {
     // WARNING: Baileys wraps stream conflicts in 401 ("Stream Errored (conflict)").
     // True logouts happen only when the user explicitly unlinks the device.
     // Stream collisions or restarts must NEVER destroy the stored pairing!
-    if (code === DisconnectReason.loggedOut && !isConflict && !isRestart) {
+    // NEVER unpair or wipe credentials during an unconfirmed pairing attempt.
+    if (this.paired && code === DisconnectReason.loggedOut && !isConflict && !isRestart) {
       await this._becomeLoggedOut(record);
       return;
     }
@@ -616,8 +618,8 @@ export class WASession {
       this.qrTimestamp = 0;
       this.qrExpiresAt = null;
       const qrWasShown = this.qrCount > 0;
-      if (isConflict || isRestart || (!qrWasShown && this.unpairedFailures < 3)) {
-        // Never got as far as a QR code or transient stream collision: try again shortly.
+      if (this.pairingCode || isConflict || isRestart || (!qrWasShown && this.unpairedFailures < 5)) {
+        // Pairing code in progress, transient stream collision, or initial connect: keep session alive.
         this.unpairedFailures += 1;
         await this._setStatus('CONNECTING', record);
         this._scheduleReconnect(1500 * this.unpairedFailures, { count: false });
@@ -856,6 +858,13 @@ export class WASession {
       wsWait++;
     }
 
+    if (!this.paired && this.auth?.state?.creds) {
+      delete this.auth.state.creds.pairingCode;
+      if (!this.auth.state.creds.registered && !this.auth.state.creds.account) {
+        delete this.auth.state.creds.me;
+      }
+    }
+
     try {
       const code = await this.sock.requestPairingCode(clean);
       this.pairingPhone = clean;
@@ -863,7 +872,7 @@ export class WASession {
       return { status: 'pairing_code', pairing_code: code, phone: clean };
     } catch (err) {
       // If first attempt hit a transient handshake reset, wait 1s and retry once
-      log.warn({ err: err.message, phone: clean }, 'initial pairing code attempt failed; retrying once');
+      this.log.warn({ err: err.message, phone: clean }, 'initial pairing code attempt failed; retrying once');
       await new Promise((r) => setTimeout(r, 1000));
       if (this.sock?.requestPairingCode && this.sock?.ws?.isOpen) {
         const code = await this.sock.requestPairingCode(clean);

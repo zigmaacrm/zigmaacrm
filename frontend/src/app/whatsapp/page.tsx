@@ -1263,8 +1263,7 @@ export default function WhatsAppPage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const hasAnyLinkedPhone = Boolean(
-    qrPhone ||
-    (qrStatus === "CONNECTED" && currentUser?.whatsapp_phone_number)
+    qrStatus === "CONNECTED" && (qrPhone || currentUser?.whatsapp_phone_number)
   );
   const isConnectingState = qrStatus === "CONNECTING" || isLoadingConversations;
   const isTrulyUnlinked = !hasAnyLinkedPhone && qrStatus !== "CONNECTED" && qrStatus !== "CONNECTING" && conversations.length === 0;
@@ -2663,7 +2662,7 @@ export default function WhatsAppPage() {
                     <RefreshCw className={cn("w-3.5 h-3.5", isRefreshing && "animate-spin text-emerald-500")} />
                   </button>
 
-                  {(qrStatus === "CONNECTED" || hasAnyLinkedPhone) ? (
+                  {qrStatus === "CONNECTED" ? (
                     <button
                       type="button"
                       onClick={handleLogoutWhatsApp}
@@ -2693,7 +2692,7 @@ export default function WhatsAppPage() {
               </div>
 
               {/* Linked Device Status & Logout */}
-              {(qrStatus === "CONNECTED" || hasAnyLinkedPhone) && (
+              {qrStatus === "CONNECTED" && (
                 <div className={cn(
                   "w-full flex items-center justify-between px-3 py-2 rounded-xl border text-xs font-semibold transition-all shadow-2xs",
                   isDark
