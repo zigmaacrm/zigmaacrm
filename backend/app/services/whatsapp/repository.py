@@ -6,6 +6,7 @@ and whatsapp_messages. Conversion to CRM only happens via explicit call to conve
 """
 import datetime
 import logging
+import re
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -89,6 +90,55 @@ async def update_user_session_qr(
     await db.commit()
 
 
+async def unlink_user_session(
+    db: AsyncSession, organization_id: str, user_id: str
+) -> None:
+    """
+    Completely unlinks a user's WhatsApp session:
+    - Sets whatsapp_sessions status to NOT_LINKED, clears phone_number, credentials, qr, and heartbeats.
+    - Deletes all Signal key pairs from whatsapp_session_keys so old cryptographic state is completely purged.
+    - Clears whatsapp_phone_number and whatsapp_phone_number_id on the users table.
+    """
+    sid = f"wa_{str(user_id).replace('-', '')[:24]}"
+    # 1. Reset whatsapp_sessions row
+    await db.execute(
+        text(
+            f"""UPDATE whatsapp_sessions
+               SET status = 'NOT_LINKED',
+                   desired_state = 'stopped',
+                   phone_number = NULL,
+                   lid = NULL,
+                   push_name = NULL,
+                   avatar_url = NULL,
+                   creds = NULL,
+                   qr = NULL,
+                   qr_expires_at = NULL,
+                   owner_instance = NULL,
+                   heartbeat_at = NULL,
+                   last_disconnect_reason = 'Unlinked by user',
+                   last_disconnect_code = 401,
+                   last_disconnect_at = {NOW_UTC},
+                   history_sync_status = NULL,
+                   history_sync_progress = NULL,
+                   updated_at = {NOW_UTC}
+               WHERE organization_id = :org_id AND user_id = :user_id"""
+        ),
+        {"org_id": organization_id, "user_id": user_id},
+    )
+    # 2. Delete all Signal authentication keys for this session
+    await db.execute(
+        text("DELETE FROM whatsapp_session_keys WHERE session_id = :sid"),
+        {"sid": sid},
+    )
+    # 3. Clear user's phone linkage
+    await db.execute(
+        text("UPDATE users SET whatsapp_phone_number = NULL, whatsapp_phone_number_id = NULL WHERE id = :user_id"),
+        {"user_id": user_id},
+    )
+    await db.commit()
+    logger.info("Successfully unlinked WhatsApp session for user %s (org %s)", user_id, organization_id)
+
+
 async def list_chats(
     db: AsyncSession,
     *,
@@ -103,15 +153,17 @@ async def list_chats(
     Lists 1-to-1 WhatsApp chats scoped to organization_id and session_id (the connected phone number).
     Left joins CRM leads and contacts to surface linkage metadata if converted.
     """
+    clean_sid = re.sub(r"[^0-9]", "", str(session_id or ""))
     conditions = [
         "c.organization_id = :org_id",
-        "c.session_id = :session_id",
+        "(c.session_id = :session_id OR c.session_id = :clean_sid)",
         "c.merged_into IS NULL",
         "(c.jid NOT LIKE '%@lid' OR c.phone_number IS NOT NULL OR c.last_message_at IS NOT NULL)",
     ]
     params: Dict[str, Any] = {
         "org_id": organization_id,
         "session_id": session_id,
+        "clean_sid": clean_sid or session_id,
         "limit": max(1, min(limit, 100)),
         "offset": max(0, offset),
     }
@@ -162,6 +214,7 @@ async def get_chat_counts(
     """
     Returns counts for tab badges: all, unread, pinned, archived.
     """
+    clean_sid = re.sub(r"[^0-9]", "", str(session_id or ""))
     sql = text(
         """SELECT
                COUNT(*) FILTER (WHERE is_archived = FALSE) AS all_count,
@@ -170,11 +223,11 @@ async def get_chat_counts(
                COUNT(*) FILTER (WHERE is_archived = TRUE) AS archived_count
            FROM whatsapp_chats
            WHERE organization_id = :org_id 
-             AND session_id = :session_id 
+             AND (session_id = :session_id OR session_id = :clean_sid)
              AND merged_into IS NULL
              AND (jid NOT LIKE '%@lid' OR phone_number IS NOT NULL OR last_message_at IS NOT NULL)"""
     )
-    result = await db.execute(sql, {"org_id": organization_id, "session_id": session_id})
+    result = await db.execute(sql, {"org_id": organization_id, "session_id": session_id, "clean_sid": clean_sid or session_id})
     row = result.mappings().first()
     if not row:
         return {"all": 0, "unread": 0, "pinned": 0, "archived": 0}
@@ -192,6 +245,7 @@ async def get_chat(
     """
     Retrieves a single chat by id, resolving tombstones (merged_into) if applicable.
     """
+    clean_sid = re.sub(r"[^0-9]", "", str(session_id or ""))
     sql = text(
         """SELECT c.*,
                   l.full_name AS lead_name,
@@ -204,9 +258,9 @@ async def get_chat(
            FROM whatsapp_chats c
            LEFT JOIN leads l ON l.id = c.lead_id AND l.organization_id = c.organization_id
            LEFT JOIN contacts ct ON ct.id = c.contact_id AND ct.organization_id = c.organization_id
-           WHERE c.id = :chat_id AND c.organization_id = :org_id AND c.session_id = :session_id"""
+           WHERE c.id = :chat_id AND c.organization_id = :org_id AND (c.session_id = :session_id OR c.session_id = :clean_sid)"""
     )
-    result = await db.execute(sql, {"chat_id": chat_id, "org_id": organization_id, "session_id": session_id})
+    result = await db.execute(sql, {"chat_id": chat_id, "org_id": organization_id, "session_id": session_id, "clean_sid": clean_sid or session_id})
     row = result.mappings().first()
     if not row:
         return None
@@ -233,11 +287,13 @@ async def update_chat_flags(
     """
     Updates UI flags or custom name on a chat.
     """
+    clean_sid = re.sub(r"[^0-9]", "", str(session_id or ""))
     updates = [f"updated_at = {NOW_UTC}"]
     params: Dict[str, Any] = {
         "chat_id": chat_id,
         "org_id": organization_id,
         "session_id": session_id,
+        "clean_sid": clean_sid or session_id,
     }
 
     if is_pinned is not None:
@@ -264,7 +320,7 @@ async def update_chat_flags(
     sql = f"""
         UPDATE whatsapp_chats
         SET {', '.join(updates)}
-        WHERE id = :chat_id AND organization_id = :org_id AND session_id = :session_id
+        WHERE id = :chat_id AND organization_id = :org_id AND (session_id = :session_id OR session_id = :clean_sid)
         RETURNING id
     """
     res = await db.execute(text(sql), params)
@@ -280,13 +336,14 @@ async def mark_chat_read(
     """
     Clears unread count and marks inbound messages as READ.
     """
+    clean_sid = re.sub(r"[^0-9]", "", str(session_id or ""))
     await db.execute(
         text(
             f"""UPDATE whatsapp_chats
                SET unread_count = 0, updated_at = {NOW_UTC}
-               WHERE id = :chat_id AND organization_id = :org_id AND session_id = :session_id"""
+               WHERE id = :chat_id AND organization_id = :org_id AND (session_id = :session_id OR session_id = :clean_sid)"""
         ),
-        {"chat_id": chat_id, "org_id": organization_id, "session_id": session_id},
+        {"chat_id": chat_id, "org_id": organization_id, "session_id": session_id, "clean_sid": clean_sid or session_id},
     )
     await db.execute(
         text(
@@ -424,12 +481,13 @@ async def convert_chat_to_lead(
         )
 
     # 3. Update WhatsApp chat with link pointers
+    clean_sid = re.sub(r"[^0-9]", "", str(session_id or ""))
     await db.execute(
         text(
             f"""UPDATE whatsapp_chats
                SET contact_id = :cid, lead_id = :lid, converted_at = {NOW_UTC},
                    converted_by = :uid, updated_at = {NOW_UTC}
-               WHERE id = :chat_id AND organization_id = :org_id AND session_id = :session_id"""
+               WHERE id = :chat_id AND organization_id = :org_id AND (session_id = :session_id OR session_id = :clean_sid)"""
         ),
         {
             "cid": contact_id,
@@ -438,6 +496,7 @@ async def convert_chat_to_lead(
             "chat_id": chat_id,
             "org_id": organization_id,
             "session_id": session_id,
+            "clean_sid": clean_sid or session_id,
         },
     )
     await db.commit()

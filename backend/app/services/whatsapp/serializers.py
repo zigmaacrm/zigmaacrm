@@ -254,12 +254,12 @@ def serialize_session(row: Optional[Mapping[str, Any]], *, gateway_online: Optio
         }
     status = row.get("status") or "DISCONNECTED"
     linked = bool(row.get("phone_number"))
-    if stale and linked and status in ("CONNECTED", "CONNECTING"):
+    if not linked:
+        status = "SCAN_QR" if row.get("qr") else "NOT_LINKED"
+    elif stale and status in ("CONNECTED", "CONNECTING"):
         # The bridge has stopped sending heartbeats (restart / cold start).
         # The pairing is intact, so this is "reconnecting", never "logged out".
         status = "CONNECTING"
-    if not linked and status in ("CONNECTED", "DISCONNECTED"):
-        status = "SCAN_QR" if row.get("qr") else "NOT_LINKED"
     show_qr = bool(row.get("qr")) and not linked
     if show_qr:
         status = "SCAN_QR"
@@ -271,11 +271,13 @@ def serialize_session(row: Optional[Mapping[str, Any]], *, gateway_online: Optio
             "at": iso_utc(row.get("last_disconnect_at")),
         }
     qr_val = row.get("qr") if show_qr else None
+    raw_phone = row.get("phone_number")
+    clean_phone_digits = digits(raw_phone) if raw_phone else None
     return {
         "status": status,
         "linked": linked,
-        "phone": format_phone(row.get("phone_number")),
-        "session_id": row.get("phone_number"),
+        "phone": format_phone(raw_phone) if raw_phone else None,
+        "session_id": clean_phone_digits,
         "name": row.get("push_name"),
         "avatar_url": row.get("avatar_url"),
         "qr": qr_val,

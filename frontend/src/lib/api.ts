@@ -3775,7 +3775,7 @@ export const zigmaaApi = {
   },
 
   async getWhatsAppQRStatus(sessionId?: string): Promise<{
-    status: "DISCONNECTED" | "SCAN_QR" | "CONNECTED";
+    status: "DISCONNECTED" | "SCAN_QR" | "CONNECTED" | "CONNECTING" | "NOT_LINKED" | "LOGGED_OUT" | "QR_EXPIRED";
     phone: string | null;
     name: string | null;
     avatar_url?: string | null;

@@ -132,13 +132,19 @@ def _get_user_session_id(user: User) -> str:
 
 
 async def _resolve_active_session_and_phone(
-    db: AsyncSession, user: User
+    db: AsyncSession, user: User, requested_phone: Optional[str] = None
 ) -> Tuple[Dict[str, Any], Optional[str]]:
     session_row, is_stale = await repository.get_user_session(db, user.organization_id, user.id)
     if not session_row:
         session_row = await repository.ensure_user_session(db, user.organization_id, user.id)
-    phone = session_row.get("phone_number")
-    return session_row, phone
+    phone = session_row.get("phone_number") or getattr(user, "whatsapp_phone_number", None) or requested_phone
+    if not phone:
+        # Fallback to existing ingested chats for this organization if available
+        stmt = text("SELECT session_id FROM whatsapp_chats WHERE organization_id = :org_id ORDER BY updated_at DESC LIMIT 1")
+        res = await db.execute(stmt, {"org_id": user.organization_id})
+        phone = res.scalar()
+    clean_phone = re.sub(r"[^0-9]", "", str(phone or "")) if phone else None
+    return session_row, clean_phone
 
 
 # --------------------------------------------------------------------------- #
@@ -296,10 +302,16 @@ async def request_pairing_code_endpoint(
     if not phone:
         raise HTTPException(status_code=400, detail="Phone number is required for pairing code")
 
+    clean = re.sub(r"[^0-9]", "", str(phone or ""))
+    if len(clean) == 10 and clean[0] in "6789":
+        clean = f"91{clean}"
+    if len(clean) < 8:
+        raise HTTPException(status_code=400, detail="Please include country code, e.g. 919600471080")
+
     sid = _get_user_session_id(current_user)
     await repository.ensure_user_session(db, current_user.organization_id, current_user.id)
     try:
-        return await bridge.request_pairing_code(sid, phone, current_user.organization_id, current_user.id)
+        return await bridge.request_pairing_code(sid, clean, current_user.organization_id, current_user.id)
     except bridge.BridgeError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message)
 
@@ -319,8 +331,18 @@ async def logout_whatsapp_session(
     except Exception as exc:
         logger.warning("Bridge logout notification returned: %s", exc)
 
+    # Completely wipe database session row, Signal keys, and user whatsapp_phone_number
+    await repository.unlink_user_session(db, current_user.organization_id, current_user.id)
+    current_user.whatsapp_phone_number = None
+
+    try:
+        from app.api.v1.webhooks.whatsapp import _qr_status_cache
+        _qr_status_cache.pop(current_user.id, None)
+    except Exception:
+        pass
+
     hub.notify(sid)
-    return {"status": "LOGGED_OUT", "message": "WhatsApp device unlinked successfully."}
+    return {"status": "NOT_LINKED", "message": "WhatsApp device unlinked successfully."}
 
 
 # --------------------------------------------------------------------------- #
@@ -334,6 +356,8 @@ async def list_user_chats(
     search: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    active_session_phone: Optional[str] = Query(None),
+    session_id: Optional[str] = Query(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -342,9 +366,10 @@ async def list_user_chats(
     Excludes groups (@g.us) and broadcast status.
     Strictly isolated: never mixes with CRM leads unless explicitly converted.
     """
-    session_row, phone = await _resolve_active_session_and_phone(db, current_user)
+    requested_phone = active_session_phone or session_id
+    session_row, phone = await _resolve_active_session_and_phone(db, current_user, requested_phone=requested_phone)
     if not phone:
-        return {"status": "success", "conversations": [], "counts": {"all": 0, "unread": 0, "pinned": 0, "archived": 0}}
+        return {"status": "success", "conversations": [], "chats": [], "counts": {"all": 0, "unread": 0, "pinned": 0, "archived": 0}}
 
     chats = await repository.list_chats(
         db,

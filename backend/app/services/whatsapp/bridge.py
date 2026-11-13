@@ -108,6 +108,8 @@ async def connect_session(session_id: str, organization_id: str, user_id: str) -
 
 async def request_pairing_code(session_id: str, phone: str, organization_id: str, user_id: str) -> Dict[str, Any]:
     clean = re.sub(r"[^0-9]", "", str(phone or ""))
+    if len(clean) == 10 and clean[0] in "6789":
+        clean = f"91{clean}"
     try:
         return await call("POST", f"/sessions/{session_id}/pairing-code", json={"phone": clean, "organization_id": organization_id, "user_id": user_id}, timeout=25.0)
     except BridgeError as exc:
@@ -149,16 +151,16 @@ async def logout_session(session_id: str) -> Dict[str, Any]:
 async def health() -> bool:
     try:
         async with httpx.AsyncClient(timeout=6.0, headers=_HEADERS) as client:
-            try:
-                resp = await client.get(f"{gateway_url()}/health")
-                if resp.status_code == 200:
-                    return True
-            except Exception:
-                pass
-            resp2 = await client.get(f"{gateway_url()}/status")
-            return resp2.status_code == 200
+            for path in ("/status", "/health"):
+                try:
+                    resp = await client.get(f"{gateway_url()}{path}")
+                    if resp.status_code == 200:
+                        return True
+                except Exception:
+                    pass
     except Exception:
-        return False
+        pass
+    return False
 
 
 async def gateway_status() -> Dict[str, Any]:
