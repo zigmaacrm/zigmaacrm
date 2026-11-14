@@ -385,7 +385,7 @@ export class WASession {
       }
       const creds = this.auth.state.creds;
       // Strip provisional/unregistered `me` so Baileys does not attempt bogus stream reconnects
-      if (!this.paired && creds.me && !this.pairingPhone) {
+      if (!this.paired && creds.me) {
         delete creds.me;
         delete creds.pairingCode;
         this.accountId = null;
@@ -604,13 +604,19 @@ export class WASession {
 
     const isConflict = /conflict|replaced/i.test(reason);
     const isRestart = /restart/i.test(reason);
+    const isDeviceRemoved =
+      error?.fullErrorNode?.content?.[0]?.attrs?.type === 'device_removed' ||
+      error?.reasonNode?.attrs?.type === 'device_removed' ||
+      /device_removed/i.test(reason) ||
+      /device_removed/i.test(JSON.stringify(error || {}));
 
     // 401: WhatsApp says this device is no longer linked.
+    // If device was unlinked by user on phone (device_removed), immediately mark as logged out.
     // WARNING: Baileys wraps stream conflicts in 401 ("Stream Errored (conflict)").
     // True logouts happen only when the user explicitly unlinks the device.
     // Stream collisions or restarts must NEVER destroy the stored pairing!
     // NEVER unpair or wipe credentials during an unconfirmed pairing attempt.
-    if (this.paired && code === DisconnectReason.loggedOut && !isConflict && !isRestart) {
+    if (this.paired && (isDeviceRemoved || (code === DisconnectReason.loggedOut && !isConflict && !isRestart))) {
       await this._becomeLoggedOut(record);
       return;
     }
@@ -628,9 +634,11 @@ export class WASession {
       this.latestQrDataUrl = null;
       this.qrTimestamp = 0;
       this.qrExpiresAt = null;
+      this.pairingCode = null;
+      this.pairingPhone = null;
       const qrWasShown = this.qrCount > 0;
-      if (this.pairingCode || isConflict || isRestart || (!qrWasShown && this.unpairedFailures < 5)) {
-        // Pairing code in progress, transient stream collision, or initial connect: keep session alive.
+      if (isConflict || isRestart || (!qrWasShown && this.unpairedFailures < 5)) {
+        // Transient stream collision, restart or initial connect: keep session alive.
         this.unpairedFailures += 1;
         await this._setStatus('CONNECTING', record);
         this._scheduleReconnect(1500 * this.unpairedFailures, { count: false });
@@ -764,12 +772,16 @@ export class WASession {
     if (this.paired || this.status === 'CONNECTED') return this.snapshot();
 
     // If not paired, clear any dangling unconfirmed credentials so Baileys emits a fresh QR
-    if (!this.paired && this.auth?.state?.creds?.me) {
-      delete this.auth.state.creds.me;
-      delete this.auth.state.creds.pairingCode;
+    if (!this.paired && (this.auth?.state?.creds?.me || this.pairingCode)) {
+      if (this.auth?.state?.creds) {
+        delete this.auth.state.creds.me;
+        delete this.auth.state.creds.pairingCode;
+        await this.auth.saveCreds().catch(() => {});
+      }
       this.accountId = null;
       this.lid = null;
-      await this.auth.saveCreds().catch(() => {});
+      this.pairingPhone = null;
+      this.pairingCode = null;
       if (this.sock) {
         this._closeSocket();
         this._clearReconnect();
@@ -865,9 +877,27 @@ export class WASession {
     const clean = String(phoneNumber || '').replace(/[^0-9]/g, '');
     if (!clean || clean.length < 8) throw new BridgeError(400, 'Invalid phone number for pairing code');
 
-    if (!this.sock || !this.sock.ws || this.sock.ws.isClosed) {
-      await this.start();
+    if (this.paired) {
+      return { status: 'connected', phone: this.accountId };
     }
+
+    // Ensure session is in clean unpaired state before requesting pairing code
+    if (!this.paired && this.auth?.state?.creds) {
+      delete this.auth.state.creds.pairingCode;
+      if (!this.auth.state.creds.registered && !this.auth.state.creds.account) {
+        delete this.auth.state.creds.me;
+      }
+      await this.auth.saveCreds().catch(() => {});
+    }
+
+    // 1. Ensure the socket is active and has completed the initial Noise registration handshake.
+    // Calling requestPairingCode before the socket finishes validateConnection causes WhatsApp
+    // server to close the stream with 428 (Connection Terminated).
+    // waitForQr guarantees the socket is fully established and in the registration stage.
+    if (!this.sock || !this.sock.ws || this.sock.ws.isClosed || this.status !== 'SCAN_QR') {
+      await this.waitForQr(10000);
+    }
+
     let attempts = 0;
     while (!this.sock?.requestPairingCode && attempts < 40) {
       await new Promise((r) => setTimeout(r, 250));
@@ -875,33 +905,28 @@ export class WASession {
     }
     if (!this.sock?.requestPairingCode) throw new BridgeError(500, 'WhatsApp socket failed to initialize');
 
-    // Wait until socket's WebSocket stream is fully open and ready
-    let wsWait = 0;
-    while (!this.sock?.ws?.isOpen && wsWait < 40) {
-      await new Promise((r) => setTimeout(r, 250));
-      wsWait++;
-    }
-
-    if (!this.paired && this.auth?.state?.creds) {
-      delete this.auth.state.creds.pairingCode;
-      if (!this.auth.state.creds.registered && !this.auth.state.creds.account) {
-        delete this.auth.state.creds.me;
-      }
-    }
+    // Give a brief 300ms pause to ensure registration frame exchange is stable
+    await new Promise((r) => setTimeout(r, 300));
 
     try {
       const code = await this.sock.requestPairingCode(clean);
       this.pairingPhone = clean;
       this.pairingCode = code;
+      // Mark desired state running and status CONNECTING (waiting for code on phone)
+      await this._setStatus('CONNECTING', { desired_state: 'running' });
+      this.log.info({ phone: clean, code }, 'WhatsApp pairing code generated successfully');
       return { status: 'pairing_code', pairing_code: code, phone: clean };
     } catch (err) {
-      // If first attempt hit a transient handshake reset, wait 1s and retry once
-      this.log.warn({ err: err.message, phone: clean }, 'initial pairing code attempt failed; retrying once');
-      await new Promise((r) => setTimeout(r, 1000));
-      if (this.sock?.requestPairingCode && this.sock?.ws?.isOpen) {
+      this.log.warn({ err: err.message, phone: clean }, 'initial pairing code attempt failed; retrying once with fresh socket');
+      this._closeSocket();
+      this._clearReconnect();
+      await this.waitForQr(10000);
+      await new Promise((r) => setTimeout(r, 500));
+      if (this.sock?.requestPairingCode) {
         const code = await this.sock.requestPairingCode(clean);
         this.pairingPhone = clean;
         this.pairingCode = code;
+        await this._setStatus('CONNECTING', { desired_state: 'running' });
         return { status: 'pairing_code', pairing_code: code, phone: clean };
       }
       throw new BridgeError(502, `Failed to generate pairing code: ${err.message}. Please use the QR Code scan tab.`, 'PAIRING_FAILED');
