@@ -242,6 +242,13 @@ def _media(row: Mapping[str, Any], organization_id: str) -> Optional[Dict[str, A
         url = signed_media_path("m", row["media_id"], organization_id)
     elif status == "legacy":
         url = signed_media_path("l", row["id"], organization_id)
+    elif row.get("id"):
+        # For remote, pending, or ready rows where media_id was not explicitly joined:
+        # Generate a signed path for this message so the backend streams or downloads it!
+        if row.get("media_id"):
+            url = signed_media_path("m", row["media_id"], organization_id)
+        else:
+            url = signed_media_path("msg", row["id"], organization_id)
 
     mime = row.get("mime_type")
     return {
@@ -252,7 +259,7 @@ def _media(row: Mapping[str, Any], organization_id: str) -> Optional[Dict[str, A
         "file_name": row.get("file_name"),
         "size": row.get("media_size"),
         "duration": row.get("media_duration"),
-        "is_voice_note": bool(row.get("is_voice_note")) or kind == "ptt",
+        "is_voice_note": bool(row.get("is_voice_note")) or kind in ("ptt", "audio"),
         "error": row.get("media_error"),
     }
 
@@ -318,16 +325,34 @@ def serialize_session(row: Optional[Mapping[str, Any]], *, gateway_online: Optio
             "history_sync": None,
         }
     status = row.get("status") or "DISCONNECTED"
-    linked = bool(row.get("phone_number"))
-    if not linked:
-        status = "SCAN_QR" if row.get("qr") else "NOT_LINKED"
-    elif stale and status in ("CONNECTED", "CONNECTING"):
-        # The bridge has stopped sending heartbeats (restart / cold start).
-        # The pairing is intact, so this is "reconnecting", never "logged out".
-        status = "CONNECTING"
-    show_qr = bool(row.get("qr")) and not linked
-    if show_qr:
-        status = "SCAN_QR"
+    raw_phone = row.get("phone_number")
+    clean_phone_digits = digits(raw_phone) if raw_phone else None
+
+    # If phone_number is not populated in the column, attempt to extract it from creds.me.id
+    if not clean_phone_digits and row.get("creds"):
+        try:
+            creds_data = json.loads(row["creds"]) if isinstance(row["creds"], str) else row["creds"]
+            me_id = (creds_data.get("me") or {}).get("id") or ""
+            clean_phone_digits = digits(me_id.split("@")[0]) if me_id else None
+            if clean_phone_digits:
+                raw_phone = clean_phone_digits
+        except Exception:
+            pass
+
+    linked = bool(clean_phone_digits) or status == "CONNECTED"
+    if status == "CONNECTED":
+        show_qr = False
+        qr_val = None
+    elif not linked:
+        show_qr = bool(row.get("qr"))
+        status = "SCAN_QR" if show_qr else ("NOT_LINKED" if status in ("DISCONNECTED", "NOT_LINKED", "LOGGED_OUT") else status)
+        qr_val = row.get("qr") if show_qr else None
+    else:
+        if stale and status in ("CONNECTED", "CONNECTING"):
+            status = "CONNECTING"
+        show_qr = bool(row.get("qr")) and not linked
+        qr_val = row.get("qr") if show_qr else None
+
     last = None
     if row.get("last_disconnect_at") is not None and status != "CONNECTED":
         last = {
@@ -335,13 +360,11 @@ def serialize_session(row: Optional[Mapping[str, Any]], *, gateway_online: Optio
             "reason": row.get("last_disconnect_reason"),
             "at": iso_utc(row.get("last_disconnect_at")),
         }
-    qr_val = row.get("qr") if show_qr else None
-    raw_phone = row.get("phone_number")
-    clean_phone_digits = digits(raw_phone) if raw_phone else None
+
     return {
         "status": status,
         "linked": linked,
-        "phone": format_phone(raw_phone) if raw_phone else None,
+        "phone": format_phone(raw_phone) if raw_phone else (format_phone(clean_phone_digits) if clean_phone_digits else None),
         "session_id": clean_phone_digits,
         "name": row.get("push_name"),
         "avatar_url": row.get("avatar_url"),

@@ -185,12 +185,14 @@ export default function WhatsAppQRModal({
         setName(data.name);
         setGatewayOnline(data.gateway_online);
 
-        if (data.status === "CONNECTED" && data.phone) {
+        if (data.status === "CONNECTED") {
           if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
           if (onStatusChange) onStatusChange("CONNECTED", data.phone);
+          const cleanP = data.phone ? `+${data.phone.replace(/[^0-9]/g, "")}` : "device";
+          toast.success("WhatsApp Connected!", `Successfully linked ${cleanP}. All conversations and messages are now synced.`);
           setTimeout(() => {
             if (isMounted) onClose();
-          }, 1000);
+          }, 1200);
           return;
         }
 

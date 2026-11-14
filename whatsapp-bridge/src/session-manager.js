@@ -29,7 +29,15 @@ export class SessionManager {
   }
 
   get(id) {
-    const session = this.sessions.get(id);
+    let session = this.sessions.get(id);
+    if (!session) {
+      for (const s of this.sessions.values()) {
+        if (s.id === id || s.accountId === id || s.userId === id) {
+          session = s;
+          break;
+        }
+      }
+    }
     return session && !session.removed ? session : null;
   }
 

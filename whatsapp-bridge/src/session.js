@@ -1,5 +1,6 @@
 import makeWASocket, {
   Browsers,
+  Curve,
   DisconnectReason,
   fetchLatestWaWebVersion,
   generateMessageIDV2,
@@ -365,6 +366,7 @@ export class WASession {
     this.meUsers = new Set([pn, this.lid].filter(Boolean));
     if (lid) this.store.learnMapping(lid, pn);
     if (me.name && me.name !== '~') this.pushName = String(me.name).slice(0, 255);
+    this._persist({ phone_number: pn }).catch(() => {});
     return true;
   }
 
@@ -421,6 +423,7 @@ export class WASession {
         connectTimeoutMs: 30_000,
         defaultQueryTimeoutMs: 60_000,
         keepAliveIntervalMs: 25_000,
+        qrTimeout: 180_000,
         generateHighQualityLinkPreview: false,
         // Groups, status, channels and broadcasts are dropped before decryption.
         shouldIgnoreJid: (jid) => isIgnoredJid(jid),
@@ -488,6 +491,10 @@ export class WASession {
     const { connection, lastDisconnect, qr, isNewLogin } = update;
 
     if (qr) {
+      if (this.pairingCode) {
+        // Pairing code is active; do not overwrite pairing code state with QR
+        return;
+      }
       const dataUrl = await QRCode.toDataURL(qr, { width: 320, margin: 2 });
       if (gen !== this.generation) return;
       // Baileys keeps the first code for 60 s and every later one for 20 s.
@@ -569,6 +576,24 @@ export class WASession {
            AND updated_at < ${NOW_UTC} - interval '3 minutes'`,
         [this.organizationId, this.accountId]
       );
+    }
+    if (this.media) {
+      try {
+        const recentRes = await this.db.query(
+          `SELECT id, raw_message, chat_id, meta_message_id FROM whatsapp_messages
+           WHERE organization_id = $1 AND (session_id = $2 OR session_id = $3)
+             AND media_status IN ('remote', 'pending')
+             AND raw_message IS NOT NULL
+           ORDER BY created_at DESC LIMIT 60`,
+          [this.organizationId, this.accountId, this.id]
+        );
+        for (const row of recentRes.rows) {
+          const wam = waMessageFromRow(row);
+          if (wam) this.media.enqueue(row.id, wam, { priority: false }).catch(() => {});
+        }
+      } catch (mErr) {
+        this.log.debug({ err: mErr.message }, 'failed to auto-enqueue recent media');
+      }
     }
     try {
       const url = await sock.profilePictureUrl(pnJid(this.accountId), 'image', 10_000);
@@ -884,6 +909,9 @@ export class WASession {
     // Ensure session is in clean unpaired state before requesting pairing code
     if (!this.paired && this.auth?.state?.creds) {
       delete this.auth.state.creds.pairingCode;
+      try {
+        this.auth.state.creds.pairingEphemeralKeyPair = Curve.generateKeyPair();
+      } catch (_) {}
       if (!this.auth.state.creds.registered && !this.auth.state.creds.account) {
         delete this.auth.state.creds.me;
       }
@@ -1442,7 +1470,7 @@ export class WASession {
     this._requireSocket();
     const row = await this.store.getMessageRow(messageId);
     if (!row) throw new BridgeError(404, 'Message not found.');
-    if (row.media_status === 'ready' && row.media_id) return { status: 'ready' };
+    if (row.media_status === 'ready' && row.media_id) return { status: 'ready', mediaId: row.media_id, media_id: row.media_id };
     const waMessage = waMessageFromRow(row);
     if (!waMessage) {
       await this.store.setMediaResult(row.id, { status: 'unavailable', error: 'No download information was stored for this file' });
@@ -1455,9 +1483,17 @@ export class WASession {
     }
     await this.store.setMediaResult(row.id, { status: 'pending' });
     this.notifier.ping(this.id);
-    // Not awaited: the row flips to 'ready' (or 'failed') on the realtime feed.
-    this.media.enqueue(row.id, waMessage, { priority: true }).catch(() => {});
-    return { status: 'pending' };
+    try {
+      await this.media.enqueue(row.id, waMessage, { priority: true });
+    } catch (err) {
+      this.log.warn({ err: err?.message, messageId }, 'downloadMedia failed');
+    }
+    const updated = await this.store.getMessageRow(messageId);
+    return {
+      status: updated?.media_status || 'ready',
+      mediaId: updated?.media_id || null,
+      media_id: updated?.media_id || null
+    };
   }
 
   /** Refreshes a chat's profile picture (WhatsApp's URLs expire after a while). */

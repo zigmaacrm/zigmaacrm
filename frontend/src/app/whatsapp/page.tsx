@@ -1194,14 +1194,16 @@ export default function WhatsAppPage() {
         } catch (_) {}
       }
       api.getWhatsAppQRStatus(sId || undefined).then((data) => {
-        if (data.status === "CONNECTED" && data.phone) {
+        if (data.status === "CONNECTED") {
           setQrStatus("CONNECTED");
-          setQrPhone(data.phone);
-          qrPhoneRef.current = data.phone;
-          try {
-            localStorage.setItem("zigmaa_whatsapp_status", "CONNECTED");
-            localStorage.setItem("zigmaa_whatsapp_phone", data.phone);
-          } catch (_) {}
+          if (data.phone) {
+            setQrPhone(data.phone);
+            qrPhoneRef.current = data.phone;
+            try {
+              localStorage.setItem("zigmaa_whatsapp_status", "CONNECTED");
+              localStorage.setItem("zigmaa_whatsapp_phone", data.phone);
+            } catch (_) {}
+          }
           loadConversations(true);
         } else if (data.status === "CONNECTING" && data.phone) {
           // Paired session in reconnecting or background state
@@ -1212,7 +1214,7 @@ export default function WhatsAppPage() {
             localStorage.setItem("zigmaa_whatsapp_phone", data.phone);
           } catch (_) {}
           loadConversations(true);
-        } else if (data.status === "NOT_LINKED" || data.status === "DISCONNECTED" || data.status === "LOGGED_OUT" || data.status === "QR_EXPIRED" || !data.phone) {
+        } else if (data.status === "NOT_LINKED" || data.status === "DISCONNECTED" || data.status === "LOGGED_OUT" || data.status === "QR_EXPIRED") {
           setQrStatus((data.status as any) || "NOT_LINKED");
           setQrPhone(null);
           qrPhoneRef.current = null;
@@ -1716,15 +1718,6 @@ export default function WhatsAppPage() {
             localStorage.setItem("zigmaa_whatsapp_status", "CONNECTED");
           } catch (_) {}
           loadConversations(true);
-        } else {
-          // If server reports user has no linked WhatsApp phone, clear phone state cleanly
-          setQrPhone(null);
-          qrPhoneRef.current = null;
-          setQrStatus("NOT_LINKED");
-          try {
-            localStorage.removeItem("zigmaa_whatsapp_phone");
-            localStorage.removeItem("zigmaa_whatsapp_status");
-          } catch (_) {}
         }
       }
     }).catch(() => {});

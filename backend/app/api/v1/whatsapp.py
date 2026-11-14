@@ -827,7 +827,44 @@ async def serve_media(
         if not e or not s or not media.verify_signature(kind, ident, target_org, e, s):
             raise HTTPException(status_code=403, detail="Invalid or expired media signature.")
 
-    meta = await media.load_media_meta(db, ident, target_org)
+    target_media_id = ident
+    if kind == "msg":
+        # Resolve message and its media (or trigger on-demand download from bridge)
+        msg_stmt = text(
+            "SELECT id, organization_id, session_id, message_type, mime_type, file_name, media_status, media_id, "
+            "       (raw_message IS NOT NULL) AS has_raw "
+            "FROM whatsapp_messages WHERE id = :mid AND organization_id = :org"
+        )
+        msg_res = await db.execute(msg_stmt, {"mid": ident, "org": target_org})
+        msg_row = msg_res.mappings().first()
+        if not msg_row:
+            raise HTTPException(status_code=404, detail="Message not found.")
+
+        if msg_row.get("media_id"):
+            target_media_id = msg_row["media_id"]
+        elif msg_row.get("has_raw"):
+            # Trigger download via bridge
+            sid = msg_row.get("session_id")
+            if not sid or sid == "None":
+                sess_row = (await db.execute(
+                    text("SELECT id FROM whatsapp_sessions WHERE organization_id = :org AND status = 'CONNECTED' LIMIT 1"),
+                    {"org": target_org}
+                )).mappings().first()
+                if sess_row:
+                    sid = sess_row["id"]
+            if sid:
+                try:
+                    bridge_res = await bridge.download_media(sid, ident)
+                    if bridge_res.get("mediaId") or bridge_res.get("media_id"):
+                        target_media_id = bridge_res.get("mediaId") or bridge_res.get("media_id")
+                    else:
+                        refreshed = (await db.execute(msg_stmt, {"mid": ident, "org": target_org})).mappings().first()
+                        if refreshed and refreshed.get("media_id"):
+                            target_media_id = refreshed["media_id"]
+                except Exception as dl_err:
+                    logger.warning("On-demand media download error: %s", dl_err)
+
+    meta = await media.load_media_meta(db, target_media_id, target_org)
     if not meta:
         raise HTTPException(status_code=404, detail="Media not found.")
 
@@ -841,7 +878,7 @@ async def serve_media(
 
     if byte_range:
         start, end = byte_range
-        chunk = await media.read_media_bytes(db, ident, target_org, start, end)
+        chunk = await media.read_media_bytes(db, target_media_id, target_org, start, end)
         headers = {
             "Content-Range": f"bytes {start}-{end}/{total_size}",
             "Accept-Ranges": "bytes",
@@ -850,7 +887,7 @@ async def serve_media(
         }
         return Response(content=chunk, status_code=206, headers=headers)
 
-    full_bytes = await media.read_media_bytes(db, ident, target_org)
+    full_bytes = await media.read_media_bytes(db, target_media_id, target_org)
     headers = {
         "Accept-Ranges": "bytes",
         "Content-Length": str(len(full_bytes)),

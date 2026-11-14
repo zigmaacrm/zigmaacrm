@@ -1,6 +1,6 @@
-// Post-install patch for Baileys: always include a fresh pre-key bundle in the
-// first retry receipt, so a contact whose signal session with us is broken can
-// re-establish it on the first attempt instead of the second.
+// Post-install patch for Baileys:
+// 1. Always include a fresh pre-key bundle in the first retry receipt.
+// 2. Prevent QR ref timeout (408) from terminating the socket while waiting for phone pairing code.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,3 +19,17 @@ if (fs.existsSync(targetFile)) {
 } else {
   console.log('[patch-baileys] Baileys is not installed yet; nothing to do.');
 }
+
+const socketFile = path.join(here, 'node_modules', '@whiskeysockets', 'baileys', 'lib', 'Socket', 'socket.js');
+if (fs.existsSync(socketFile)) {
+  let sockContent = fs.readFileSync(socketFile, 'utf8');
+  if (sockContent.includes('const genPairQR = () => {') && !sockContent.includes('if (creds.pairingCode) return;')) {
+    sockContent = sockContent.replace(
+      'const genPairQR = () => {',
+      'const genPairQR = () => {\n            if (creds.pairingCode) return;'
+    );
+    fs.writeFileSync(socketFile, sockContent, 'utf8');
+    console.log('[patch-baileys] socket genPairQR patched to respect pairingCode.');
+  }
+}
+
