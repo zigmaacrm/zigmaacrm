@@ -162,7 +162,7 @@ async def list_chats(
     ]
     params: Dict[str, Any] = {
         "org_id": organization_id,
-        "limit": max(1, min(limit, 100)),
+        "limit": max(1, min(limit, 500)),
         "offset": max(0, offset),
     }
 
@@ -190,54 +190,135 @@ async def list_chats(
 
     where_clause = " AND ".join(conditions)
 
-    sql = f"""
-        SELECT c.*,
-               l.full_name AS lead_name,
-               l.status AS lead_status,
-               l.company_name AS lead_company,
-               l.email AS lead_email,
-               ct.full_name AS contact_name,
-               ct.company_name AS contact_company,
-               ct.email AS contact_email
-        FROM whatsapp_chats c
-        LEFT JOIN LATERAL (
-            SELECT id, full_name, company_name, email
-            FROM contacts ct
-            WHERE ct.organization_id = c.organization_id
-              AND (
-                ct.id = c.contact_id
-                OR (
-                    c.phone_number IS NOT NULL 
-                    AND ct.phone IS NOT NULL 
-                    AND LENGTH(REGEXP_REPLACE(c.phone_number, '[^0-9]', '', 'g')) >= 10
-                    AND LENGTH(REGEXP_REPLACE(ct.phone, '[^0-9]', '', 'g')) >= 10
-                    AND RIGHT(REGEXP_REPLACE(ct.phone, '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(c.phone_number, '[^0-9]', '', 'g'), 10)
-                )
-              )
-            ORDER BY (ct.id = c.contact_id) DESC, ct.updated_at DESC
-            LIMIT 1
-        ) ct ON TRUE
-        LEFT JOIN LATERAL (
-            SELECT id, full_name, company_name, email, status
-            FROM leads l
-            WHERE l.organization_id = c.organization_id
-              AND (
-                l.id = c.lead_id
-                OR (
-                    c.phone_number IS NOT NULL 
-                    AND l.phone IS NOT NULL 
-                    AND LENGTH(REGEXP_REPLACE(c.phone_number, '[^0-9]', '', 'g')) >= 10
-                    AND LENGTH(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g')) >= 10
-                    AND RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(c.phone_number, '[^0-9]', '', 'g'), 10)
-                )
-              )
-            ORDER BY (l.id = c.lead_id) DESC, l.updated_at DESC
-            LIMIT 1
-        ) l ON TRUE
-        WHERE {where_clause}
-        ORDER BY c.is_pinned DESC, c.last_message_at DESC NULLS LAST, c.created_at DESC
-        LIMIT :limit OFFSET :offset
-    """
+    if not (search and search.strip()):
+        sql = f"""
+            WITH page_chats AS (
+                SELECT c.*
+                FROM whatsapp_chats c
+                WHERE {where_clause}
+                ORDER BY c.is_pinned DESC, c.last_message_at DESC NULLS LAST, c.created_at DESC
+                LIMIT :limit OFFSET :offset
+            )
+            SELECT c.*,
+                   l.full_name AS lead_name,
+                   l.status AS lead_status,
+                   l.company_name AS lead_company,
+                   l.email AS lead_email,
+                   ct.full_name AS contact_name,
+                   ct.company_name AS contact_company,
+                   ct.email AS contact_email,
+                   msg_c.msg_contact_name
+            FROM page_chats c
+            LEFT JOIN LATERAL (
+                SELECT contact_name AS msg_contact_name
+                FROM whatsapp_messages m
+                WHERE m.organization_id = c.organization_id
+                  AND (m.chat_id = c.id OR m.phone_number = c.phone_number)
+                  AND m.contact_name IS NOT NULL
+                  AND m.contact_name != ''
+                  AND m.contact_name NOT LIKE '%∙%'
+                  AND m.contact_name NOT LIKE '+%'
+                ORDER BY m.timestamp DESC
+                LIMIT 1
+            ) msg_c ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT id, full_name, company_name, email
+                FROM contacts ct
+                WHERE ct.organization_id = c.organization_id
+                  AND (
+                    ct.id = c.contact_id
+                    OR (
+                        c.phone_number IS NOT NULL 
+                        AND ct.phone IS NOT NULL 
+                        AND LENGTH(REGEXP_REPLACE(c.phone_number, '[^0-9]', '', 'g')) >= 10
+                        AND LENGTH(REGEXP_REPLACE(ct.phone, '[^0-9]', '', 'g')) >= 10
+                        AND RIGHT(REGEXP_REPLACE(ct.phone, '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(c.phone_number, '[^0-9]', '', 'g'), 10)
+                    )
+                  )
+                ORDER BY (ct.id = c.contact_id) DESC, ct.updated_at DESC
+                LIMIT 1
+            ) ct ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT id, full_name, company_name, email, status
+                FROM leads l
+                WHERE l.organization_id = c.organization_id
+                  AND (
+                    l.id = c.lead_id
+                    OR (
+                        c.phone_number IS NOT NULL 
+                        AND l.phone IS NOT NULL 
+                        AND LENGTH(REGEXP_REPLACE(c.phone_number, '[^0-9]', '', 'g')) >= 10
+                        AND LENGTH(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g')) >= 10
+                        AND RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(c.phone_number, '[^0-9]', '', 'g'), 10)
+                    )
+                  )
+                ORDER BY (l.id = c.lead_id) DESC, l.updated_at DESC
+                LIMIT 1
+            ) l ON TRUE
+            ORDER BY c.is_pinned DESC, c.last_message_at DESC NULLS LAST, c.created_at DESC
+        """
+    else:
+        sql = f"""
+            SELECT c.*,
+                   l.full_name AS lead_name,
+                   l.status AS lead_status,
+                   l.company_name AS lead_company,
+                   l.email AS lead_email,
+                   ct.full_name AS contact_name,
+                   ct.company_name AS contact_company,
+                   ct.email AS contact_email,
+                   msg_c.msg_contact_name
+            FROM whatsapp_chats c
+            LEFT JOIN LATERAL (
+                SELECT contact_name AS msg_contact_name
+                FROM whatsapp_messages m
+                WHERE m.organization_id = c.organization_id
+                  AND (m.chat_id = c.id OR m.phone_number = c.phone_number)
+                  AND m.contact_name IS NOT NULL
+                  AND m.contact_name != ''
+                  AND m.contact_name NOT LIKE '%∙%'
+                  AND m.contact_name NOT LIKE '+%'
+                ORDER BY m.timestamp DESC
+                LIMIT 1
+            ) msg_c ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT id, full_name, company_name, email
+                FROM contacts ct
+                WHERE ct.organization_id = c.organization_id
+                  AND (
+                    ct.id = c.contact_id
+                    OR (
+                        c.phone_number IS NOT NULL 
+                        AND ct.phone IS NOT NULL 
+                        AND LENGTH(REGEXP_REPLACE(c.phone_number, '[^0-9]', '', 'g')) >= 10
+                        AND LENGTH(REGEXP_REPLACE(ct.phone, '[^0-9]', '', 'g')) >= 10
+                        AND RIGHT(REGEXP_REPLACE(ct.phone, '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(c.phone_number, '[^0-9]', '', 'g'), 10)
+                    )
+                  )
+                ORDER BY (ct.id = c.contact_id) DESC, ct.updated_at DESC
+                LIMIT 1
+            ) ct ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT id, full_name, company_name, email, status
+                FROM leads l
+                WHERE l.organization_id = c.organization_id
+                  AND (
+                    l.id = c.lead_id
+                    OR (
+                        c.phone_number IS NOT NULL 
+                        AND l.phone IS NOT NULL 
+                        AND LENGTH(REGEXP_REPLACE(c.phone_number, '[^0-9]', '', 'g')) >= 10
+                        AND LENGTH(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g')) >= 10
+                        AND RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(c.phone_number, '[^0-9]', '', 'g'), 10)
+                    )
+                  )
+                ORDER BY (l.id = c.lead_id) DESC, l.updated_at DESC
+                LIMIT 1
+            ) l ON TRUE
+            WHERE {where_clause}
+            ORDER BY c.is_pinned DESC, c.last_message_at DESC NULLS LAST, c.created_at DESC
+            LIMIT :limit OFFSET :offset
+        """
 
     result = await db.execute(text(sql), params)
     return [dict(row) for row in result.mappings().all()]

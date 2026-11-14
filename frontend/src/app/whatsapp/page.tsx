@@ -948,6 +948,7 @@ export default function WhatsAppPage() {
   const [messages, setMessages] = useState<WhatsAppMessage[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterTab, setFilterTab] = useState<"All" | "Unread" | "Pinned" | "Archived">("All");
+  const [serverCounts, setServerCounts] = useState<{ all: number; unread: number; pinned: number; archived: number } | null>(null);
   const [isLoggingOutWhatsApp, setIsLoggingOutWhatsApp] = useState(false);
   const [isSearchInChatOpen, setIsSearchInChatOpen] = useState(false);
   const [chatSearchQuery, setChatSearchQuery] = useState("");
@@ -1581,8 +1582,11 @@ export default function WhatsAppPage() {
       const activeFilter = repFilter !== undefined ? repFilter : selectedRepFilter;
       const repParam = activeFilter === "ALL" ? undefined : activeFilter;
 
-      const data = await api.getWhatsAppConversations(100, repParam, cleanSession, sId);
+      const data = await api.getWhatsAppConversations(250, repParam, cleanSession, sId);
       if (data && data.status === "success" && Array.isArray(data.conversations)) {
+        if (data.counts) {
+          setServerCounts(data.counts);
+        }
         if (data.conversations.length === 0) {
           if (!hasAnyLinkedPhone && qrStatus !== "CONNECTED") {
             setConversations([]);
@@ -2655,22 +2659,7 @@ export default function WhatsAppPage() {
                     <RefreshCw className={cn("w-3.5 h-3.5", isRefreshing && "animate-spin text-emerald-500")} />
                   </button>
 
-                  {qrStatus === "CONNECTED" ? (
-                    <button
-                      type="button"
-                      onClick={handleLogoutWhatsApp}
-                      disabled={isLoggingOutWhatsApp}
-                      className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-rose-600 hover:text-white bg-rose-50 hover:bg-rose-600 dark:bg-rose-950/50 dark:hover:bg-rose-600 dark:text-rose-300 dark:hover:text-white border border-rose-200 dark:border-rose-800 rounded-lg transition-all cursor-pointer shrink-0 shadow-2xs"
-                      title="Logout / Disconnect WhatsApp Session"
-                    >
-                      {isLoggingOutWhatsApp ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <LogOut className="w-3.5 h-3.5" />
-                      )}
-                      <span className="text-[11px] font-bold">Logout</span>
-                    </button>
-                  ) : (
+                  {qrStatus !== "CONNECTED" && (
                     <button
                       type="button"
                       onClick={() => setShowQRModal(true)}
@@ -2788,12 +2777,12 @@ export default function WhatsAppPage() {
                     !hasConversations && !qrPhone
                       ? 0
                       : tab === "All"
-                      ? conversations.filter(c => !c.is_archived).length
+                      ? (serverCounts?.all ?? conversations.filter(c => !c.is_archived).length)
                       : tab === "Unread"
-                      ? conversations.filter(c => c.unreadCount > 0 && !c.is_archived).length
+                      ? (serverCounts?.unread ?? conversations.filter(c => c.unreadCount > 0 && !c.is_archived).length)
                       : tab === "Pinned"
-                      ? conversations.filter(c => c.is_pinned).length
-                      : conversations.filter(c => c.is_archived).length;
+                      ? (serverCounts?.pinned ?? conversations.filter(c => c.is_pinned).length)
+                      : (serverCounts?.archived ?? conversations.filter(c => c.is_archived).length);
 
                   return (
                     <button

@@ -1183,6 +1183,7 @@ export class WASession {
       if (name) names.push({ pn: ci.ref.pn, lid: ci.ref.lid, name });
     }
     if (names.length) await store.applyNames(names);
+    if (contacts.length) await this._ingestContacts(contacts);
 
     if (records.length) {
       await store.saveMessages(records, { source: 'history', live: false });

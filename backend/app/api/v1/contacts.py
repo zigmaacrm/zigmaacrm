@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_, func, delete
+from sqlalchemy import select, or_, func, delete, case
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 from datetime import datetime
@@ -60,11 +60,8 @@ async def get_contacts(
     current_user: User = Depends(get_current_user)
 ):
     query = select(Contact).order_by(Contact.created_at.desc())
-    # Exclude raw WhatsApp phonebook sync contacts from CRM contacts list
-    query = query.where(
-        Contact.source.not_ilike("%whatsapp%"),
-        Contact.full_name.not_ilike("WhatsApp Lead%")
-    )
+    # Exclude old generic placeholder rows without real names
+    query = query.where(Contact.full_name.not_ilike("WhatsApp Lead +%"))
     user_role = (current_user.role or "").strip().upper().replace(" ", "_")
     if user_role in ("SALES_REP", "REP", "MEMBER"):
         query = query.where(
@@ -95,23 +92,28 @@ async def get_contacts(
     result = await db.execute(query)
     contacts = result.scalars().all()
 
-    # Calculate total deals and lifetime value for each contact
+    # Pre-fetch deal counts and lifetime values in a single grouped query to avoid N+1 queries
+    deal_stats: Dict[str, tuple] = {}
+    if contacts:
+        contact_ids = [c.id for c in contacts]
+        # Chunk contact_ids in batches of 1000 for safety with SQL in_ clause
+        for i in range(0, len(contact_ids), 1000):
+            batch_ids = contact_ids[i:i+1000]
+            deals_q = await db.execute(
+                select(
+                    Deal.contact_id,
+                    func.count(Deal.id),
+                    func.sum(case((Deal.status.ilike("%WON%"), Deal.deal_value), else_=0))
+                )
+                .where(Deal.contact_id.in_(batch_ids))
+                .group_by(Deal.contact_id)
+            )
+            for row in deals_q.all():
+                deal_stats[row[0]] = (row[1] or 0, float(row[2] or 0.0))
+
     out_list = []
     for c in contacts:
-        deal_count_res = await db.execute(
-            select(func.count(Deal.id)).where(Deal.contact_id == c.id)
-        )
-        deal_count = deal_count_res.scalar() or 0
-
-        # Calculate sum of won deals
-        ltv_res = await db.execute(
-            select(func.sum(Deal.deal_value)).where(
-                Deal.contact_id == c.id,
-                Deal.status.ilike("%WON%")
-            )
-        )
-        lifetime_value = ltv_res.scalar() or 0.0
-
+        deal_count, lifetime_value = deal_stats.get(c.id, (0, 0.0))
         c_dict = {
             "id": c.id,
             "organization_id": c.organization_id,
@@ -134,7 +136,7 @@ async def get_contacts(
             "created_at": c.created_at,
             "updated_at": c.updated_at,
             "total_deals": deal_count,
-            "lifetime_value": float(lifetime_value)
+            "lifetime_value": lifetime_value
         }
         out_list.append(c_dict)
 

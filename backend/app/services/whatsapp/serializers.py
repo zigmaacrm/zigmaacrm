@@ -83,6 +83,10 @@ def chat_display_name(row: Mapping[str, Any], own_phone: Optional[str] = None) -
     if name and is_valid_contact_name(name):
         return name
 
+    msg_contact_name = _clean_name(row.get("msg_contact_name"))
+    if msg_contact_name and is_valid_contact_name(msg_contact_name):
+        return msg_contact_name
+
     push_name = _clean_name(row.get("push_name"))
     if push_name and is_valid_contact_name(push_name):
         return push_name
@@ -92,7 +96,7 @@ def chat_display_name(row: Mapping[str, Any], own_phone: Optional[str] = None) -
         return verified_name
 
     valid_candidates = [
-        c for c in (custom_name, contact_name, lead_name, name, push_name, verified_name)
+        c for c in (custom_name, contact_name, lead_name, name, msg_contact_name, push_name, verified_name)
         if c and not ("∙" in c or "•" in c or "***" in c)
     ]
     if valid_candidates:

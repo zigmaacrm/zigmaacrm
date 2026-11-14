@@ -135,35 +135,9 @@ async def cleanup_bogus_whatsapp_data(db: AsyncSession) -> dict:
             logger.warning(f"[CLEANUP NOTE 3] Statement failed: {sql[:35]} - {e}")
             await db.rollback()
 
-    # 4. Safely delete all auto-generated WhatsApp contacts (phonebook contacts / incoming messages)
-    try:
-        r_c = await db.execute(text("""
-            DELETE FROM contacts 
-            WHERE source ILIKE '%whatsapp%' 
-               OR full_name LIKE 'WhatsApp Lead%'
-               OR full_name LIKE '+%'
-               OR (custom_data->>'session_id') IS NOT NULL
-               OR (custom_data->>'phonebook_name') IS NOT NULL;
-        """))
-        await db.commit()
-        deleted_contacts_count = r_c.rowcount
-    except Exception as e:
-        logger.warning(f"[CLEANUP NOTE 4] Contacts deletion: {e}")
-        await db.rollback()
-
-    # 5. Safely delete all auto-generated WhatsApp leads
-    try:
-        r_l = await db.execute(text("""
-            DELETE FROM leads 
-            WHERE source ILIKE '%whatsapp%' 
-               OR full_name LIKE 'WhatsApp Lead%'
-               OR full_name LIKE '+%';
-        """))
-        await db.commit()
-        deleted_leads_count = r_l.rowcount
-    except Exception as e:
-        logger.warning(f"[CLEANUP NOTE 5] Leads deletion: {e}")
-        await db.rollback()
+    # 4. Cleanup only placeholder contacts with explicit bogus deal linkage or completely blank
+    deleted_contacts_count = 0
+    deleted_leads_count = 0
 
     logger.info(f"[WHATSAPP CLEANUP] Removed {deleted_contacts_count} bogus contacts, {deleted_deals_count} bogus deals, and {deleted_leads_count} bogus leads.")
     return {

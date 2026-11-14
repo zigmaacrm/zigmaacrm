@@ -391,7 +391,7 @@ async def logout_whatsapp_session(
 async def list_user_chats(
     filter: str = Query("all", alias="filter_type"),
     search: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     active_session_phone: Optional[str] = Query(None),
     session_id: Optional[str] = Query(None),

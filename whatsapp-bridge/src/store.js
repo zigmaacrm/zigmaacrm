@@ -348,7 +348,11 @@ export class ChatStore {
     for (const group of chunked(changed)) {
       await this.db.query(
         `UPDATE whatsapp_chats c SET
-            name = COALESCE(v.name, c.name),
+            name = CASE 
+              WHEN v.name IS NOT NULL AND v.name != '' AND v.name NOT LIKE '%∙%' THEN v.name 
+              WHEN (c.name IS NULL OR c.name LIKE '%∙%') AND v.notify IS NOT NULL AND v.notify != '' THEN v.notify
+              ELSE c.name 
+            END,
             push_name = COALESCE(v.notify, c.push_name),
             verified_name = COALESCE(v.verified, c.verified_name),
             updated_at = ${NOW_UTC}
