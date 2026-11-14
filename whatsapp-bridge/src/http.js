@@ -30,6 +30,7 @@ export function createHttpApp({ manager, config }) {
   const health = (_req, res) => {
     res.json({ status: 'ONLINE', gateway_online: true, uptime: Math.round(process.uptime()), sessions: manager.list().length });
   };
+  app.get('/', health);
   app.get('/health', health);
   // Keep-alive pings from older deployments still hit /status; it reveals nothing.
   app.get('/status', health);
