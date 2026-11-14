@@ -486,22 +486,36 @@ async def list_messages(
     db: AsyncSession,
     *,
     organization_id: str,
-    chat_id: str,
+    chat_id: Optional[str] = None,
+    phone_number: Optional[str] = None,
     before_seq: Optional[int] = None,
-    limit: int = 50,
+    limit: int = 100,
 ) -> List[Dict[str, Any]]:
     """
-    Fetches message history for a chat, ordered oldest to newest.
+    Fetches message history for a chat or phone number, ordered oldest to newest.
+    Matches messages across both chat_id and phone_number so no inbound or outbound messages are missed.
     """
-    conditions = [
-        "m.organization_id = :org_id",
-        "m.chat_id = :chat_id",
-    ]
+    clean_p = re.sub(r"[^0-9]", "", str(phone_number or "")) if phone_number else None
+    clean_10 = f"%{clean_p[-10:]}%" if clean_p and len(clean_p) >= 10 else f"%{clean_p}%" if clean_p else None
+
+    conditions = ["m.organization_id = :org_id"]
     params: Dict[str, Any] = {
         "org_id": organization_id,
-        "chat_id": chat_id,
-        "limit": max(1, min(limit, 100)),
+        "limit": max(1, min(limit, 200)),
     }
+
+    if chat_id and clean_p:
+        conditions.append("(m.chat_id = :chat_id OR (m.phone_number IS NOT NULL AND (m.phone_number = :clean_p OR m.phone_number LIKE :p10)))")
+        params["chat_id"] = chat_id
+        params["clean_p"] = clean_p
+        params["p10"] = clean_10
+    elif chat_id:
+        conditions.append("m.chat_id = :chat_id")
+        params["chat_id"] = chat_id
+    elif clean_p:
+        conditions.append("(m.phone_number = :clean_p OR m.phone_number LIKE :p10)")
+        params["clean_p"] = clean_p
+        params["p10"] = clean_10
 
     if before_seq is not None:
         conditions.append("m.seq < :before_seq")

@@ -137,13 +137,15 @@ export function describeContent(content) {
     }
     if (kind === 'videoMessage' && m.gifPlayback) type = 'gif';
     const caption = typeof m.caption === 'string' && m.caption.trim() ? clip(m.caption) : null;
+    const mimeType = typeof m.mimetype === 'string' ? m.mimetype.slice(0, 127) : (type === 'sticker' ? 'image/webp' : null);
+    const fileName = kind === 'documentMessage' ? clip(m.fileName || m.title || 'document', 255) : (type === 'sticker' ? 'sticker.webp' : null);
     return {
       ...base,
       type,
-      body: caption || '',
+      body: caption || (type === 'sticker' ? '[sticker]' : ''),
       caption,
-      mimeType: typeof m.mimetype === 'string' ? m.mimetype.slice(0, 127) : null,
-      fileName: kind === 'documentMessage' ? clip(m.fileName || m.title || 'document', 255) : null,
+      mimeType,
+      fileName,
       fileSize: toNum(m.fileLength) || null,
       duration: toNum(m.seconds) || null,
       isVoiceNote,

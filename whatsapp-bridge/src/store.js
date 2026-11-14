@@ -130,7 +130,7 @@ export class ChatStore {
       const pns = [...new Set(group.map((r) => r.pn).filter(Boolean))];
       const lids = [...new Set(group.map((r) => r.lid).filter(Boolean))];
       const existing = await this.db.query(
-        `SELECT id, jid, phone_number, lid FROM whatsapp_chats
+        `SELECT id, jid, phone_number, lid, name, push_name, verified_name FROM whatsapp_chats
          WHERE organization_id = $1 AND session_id = $2 AND merged_into IS NULL
            AND (phone_number = ANY($3::text[]) OR lid = ANY($4::text[]))`,
         [this.org, this.account, pns, lids]
@@ -140,6 +140,12 @@ export class ChatStore {
       for (const row of existing.rows) {
         if (row.phone_number) rowByPn.set(row.phone_number, row);
         if (row.lid) rowByLid.set(row.lid, row);
+        if (row.phone_number && row.lid) this.learnMapping(row.lid, row.phone_number);
+        if (row.name || row.push_name || row.verified_name) {
+          const patch = { name: row.name, notify: row.push_name, verified: row.verified_name };
+          if (row.phone_number) this._rememberName(`pn:${row.phone_number}`, patch);
+          if (row.lid) this._rememberName(`lid:${row.lid}`, patch);
+        }
       }
 
       const toCreate = [];
@@ -201,6 +207,12 @@ export class ChatStore {
            ON CONFLICT (organization_id, session_id, jid) DO UPDATE
              SET lid = COALESCE(whatsapp_chats.lid, EXCLUDED.lid),
                  phone_number = COALESCE(whatsapp_chats.phone_number, EXCLUDED.phone_number),
+                 name = CASE 
+                   WHEN EXCLUDED.name IS NOT NULL AND EXCLUDED.name != '' AND EXCLUDED.name NOT LIKE '%∙%' THEN EXCLUDED.name
+                   ELSE COALESCE(whatsapp_chats.name, EXCLUDED.name)
+                 END,
+                 push_name = COALESCE(EXCLUDED.push_name, whatsapp_chats.push_name),
+                 verified_name = COALESCE(EXCLUDED.verified_name, whatsapp_chats.verified_name),
                  updated_at = ${NOW_UTC}
            RETURNING id, jid, phone_number, lid`,
           [this.org, this.account, JSON.stringify(rows)]
@@ -340,10 +352,9 @@ export class ChatStore {
       if (!ref.pn && !ref.lid) continue;
       const patch = { name: cleanName(e.name), notify: cleanName(e.notify), verified: cleanName(e.verified) };
       if (!patch.name && !patch.notify && !patch.verified) continue;
-      let any = false;
-      if (ref.pn) any = this._rememberName(`pn:${ref.pn}`, patch) || any;
-      if (ref.lid) any = this._rememberName(`lid:${ref.lid}`, patch) || any;
-      if (any) changed.push({ pn: ref.pn, lid: ref.lid, ...patch });
+      if (ref.pn) this._rememberName(`pn:${ref.pn}`, patch);
+      if (ref.lid) this._rememberName(`lid:${ref.lid}`, patch);
+      changed.push({ pn: ref.pn, lid: ref.lid, ...patch });
     }
     for (const group of chunked(changed)) {
       await this.db.query(

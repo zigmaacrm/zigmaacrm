@@ -180,12 +180,13 @@ export class MediaDownloader {
         const content = waMessage.message || {};
         const inner =
           content.imageMessage || content.videoMessage || content.ptvMessage || content.audioMessage || content.documentMessage || content.stickerMessage || {};
+        const isSticker = Boolean(content.stickerMessage);
         const stored = await this.storage.put({
           organizationId: this.org,
           accountId: this.account,
           buffer,
-          mimeType: inner.mimetype || null,
-          fileName: inner.fileName || null
+          mimeType: inner.mimetype || (isSticker ? 'image/webp' : null),
+          fileName: inner.fileName || (isSticker ? 'sticker.webp' : null)
         });
         await this.store.setMediaResult(messageId, {
           status: 'ready',

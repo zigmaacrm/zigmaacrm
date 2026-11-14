@@ -1488,7 +1488,7 @@ export default function WhatsAppPage() {
       if (digitsOnly === s) return false;
       const cleaned = s.replace(/[\s\+\-\(\)]/g, "");
       if (/^\d+$/.test(cleaned)) return false;
-      if (!/[a-zA-Z\u0B80-\u0BFF]/.test(s)) return false;
+      if (!/[a-zA-Z\u0080-\uFFFF]/.test(s)) return false;
       return true;
     };
 
@@ -3468,7 +3468,16 @@ export default function WhatsAppPage() {
                                               return;
                                             }
                                           }
-                                          img.style.display = "none";
+                                          const parent = img.parentElement;
+                                          if (parent) {
+                                            img.style.display = "none";
+                                            if (!parent.querySelector(".sticker-fallback")) {
+                                              const fallbackBadge = document.createElement("div");
+                                              fallbackBadge.className = "sticker-fallback flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-black/5 dark:bg-white/10 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 shadow-2xs";
+                                              fallbackBadge.innerHTML = "<span>🎨 Sticker</span>";
+                                              parent.appendChild(fallbackBadge);
+                                            }
+                                          }
                                         }}
                                       />
                                     </div>
@@ -3870,7 +3879,16 @@ export default function WhatsAppPage() {
                                               return;
                                             }
                                           }
-                                          img.style.display = "none";
+                                          const parent = img.parentElement;
+                                          if (parent) {
+                                            img.style.display = "none";
+                                            if (!parent.querySelector(".sticker-fallback")) {
+                                              const fallbackBadge = document.createElement("div");
+                                              fallbackBadge.className = "sticker-fallback flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-black/5 dark:bg-white/10 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 shadow-2xs";
+                                              fallbackBadge.innerHTML = "<span>🎨 Sticker</span>";
+                                              parent.appendChild(fallbackBadge);
+                                            }
+                                          }
                                         }}
                                       />
                                     </div>

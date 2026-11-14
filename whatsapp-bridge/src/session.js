@@ -1026,8 +1026,11 @@ export class WASession {
       const ref = chatRefFromJids(c?.id, c?.lid, c?.phoneNumber);
       if (!ref) continue;
       if (ref.pn && ref.lid) mappings.push({ pn: pnJid(ref.pn), lid: lidJid(ref.lid) });
-      if (c.name || c.notify || c.verifiedName) {
-        entries.push({ pn: ref.pn, lid: ref.lid, name: c.name, notify: c.notify, verified: c.verifiedName });
+      const name = c?.name || c?.displayName || null;
+      const notify = c?.notify || null;
+      const verified = c?.verifiedName || null;
+      if (name || notify || verified) {
+        entries.push({ pn: ref.pn, lid: ref.lid, name, notify, verified });
       }
     }
     if (mappings.length) await this._learnMappings(mappings);
@@ -1116,7 +1119,10 @@ export class WASession {
 
     const names = records
       .filter((r) => !r.fromMe && (r.pushName || r.verifiedName))
-      .map((r) => ({ pn: r.ref.pn, lid: r.ref.lid, notify: r.pushName, verified: r.verifiedName }));
+      .map((r) => {
+        const hint = this.store.names.get(`pn:${r.ref.pn}`) || (r.ref.lid ? this.store.names.get(`lid:${r.ref.lid}`) : null) || {};
+        return { pn: r.ref.pn, lid: r.ref.lid, name: hint.name || null, notify: r.pushName, verified: r.verifiedName };
+      });
     if (names.length) await this.store.applyNames(names);
 
     const extras = new Map();
