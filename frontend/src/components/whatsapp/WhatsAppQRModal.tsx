@@ -129,7 +129,7 @@ export default function WhatsAppQRModal({
       if (onStatusChange) {
         onStatusChange(data.status, data.phone);
       }
-      if (data.status === "CONNECTED" || (data as any).linked) {
+      if (data.status === "CONNECTED") {
         setStatus("CONNECTED");
         if (pollIntervalRef.current) {
           clearInterval(pollIntervalRef.current);

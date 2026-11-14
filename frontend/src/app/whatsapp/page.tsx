@@ -1195,7 +1195,7 @@ export default function WhatsAppPage() {
         } catch (_) {}
       }
       api.getWhatsAppQRStatus(sId || undefined).then((data) => {
-        if (data.status === "CONNECTED" || (data as any).linked) {
+        if (data.status === "CONNECTED") {
           setQrStatus("CONNECTED");
           if (data.phone) {
             setQrPhone(data.phone);
@@ -1206,7 +1206,7 @@ export default function WhatsAppPage() {
             } catch (_) {}
           }
           loadConversations(true);
-        } else if (data.status === "CONNECTING" && data.phone) {
+        } else if (data.status === "CONNECTING" && data.phone && qrStatus === "CONNECTED") {
           // Paired session in reconnecting or background state
           setQrPhone(data.phone);
           qrPhoneRef.current = data.phone;
@@ -1702,11 +1702,6 @@ export default function WhatsAppPage() {
       if (user.whatsapp_phone_number) {
         setQrPhone(user.whatsapp_phone_number);
         qrPhoneRef.current = user.whatsapp_phone_number;
-        setQrStatus("CONNECTED");
-        try {
-          localStorage.setItem("zigmaa_whatsapp_phone", user.whatsapp_phone_number);
-          localStorage.setItem("zigmaa_whatsapp_status", "CONNECTED");
-        } catch (_) {}
       }
     }
     // Fresh server fetch to sync linked WhatsApp phone across any laptop or browser
@@ -1716,12 +1711,6 @@ export default function WhatsAppPage() {
         if (freshUser.whatsapp_phone_number) {
           setQrPhone(freshUser.whatsapp_phone_number);
           qrPhoneRef.current = freshUser.whatsapp_phone_number;
-          setQrStatus("CONNECTED");
-          try {
-            localStorage.setItem("zigmaa_whatsapp_phone", freshUser.whatsapp_phone_number);
-            localStorage.setItem("zigmaa_whatsapp_status", "CONNECTED");
-          } catch (_) {}
-          loadConversations(true);
         }
       }
     }).catch(() => {});

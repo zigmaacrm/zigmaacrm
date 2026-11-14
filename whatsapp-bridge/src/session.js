@@ -477,6 +477,7 @@ export class WASession {
       events['messages.reaction'] ||
       events['chats.upsert'] ||
       events['chats.update'] ||
+      events['contacts.set'] ||
       events['contacts.upsert'] ||
       events['contacts.update'] ||
       events['lid-mapping.update'] ||
@@ -902,10 +903,10 @@ export class WASession {
     const clean = String(phoneNumber || '').replace(/[^0-9]/g, '');
     if (!clean || clean.length < 8) throw new BridgeError(400, 'Invalid phone number for pairing code');
 
-    if (this.paired) {
-      return { status: 'connected', phone: this.accountId };
-    }
-
+    this.accountId = null;
+    this.lid = null;
+    this.pushName = null;
+    this.avatarUrl = null;
     this.pairingPhone = clean;
     this.pairingCode = null;
 
@@ -913,7 +914,7 @@ export class WASession {
     this._closeSocket();
     this._clearReconnect();
     await this.db.query('DELETE FROM whatsapp_session_keys WHERE session_id = $1', [this.id]);
-    await this.db.query("UPDATE whatsapp_sessions SET creds = NULL, qr = NULL, status = 'CONNECTING' WHERE id = $1", [this.id]);
+    await this.db.query("UPDATE whatsapp_sessions SET creds = NULL, qr = NULL, status = 'CONNECTING', phone_number = NULL, owner_instance = $2, heartbeat_at = NOW() WHERE id = $1", [this.id, this.config.instanceId]);
     this.auth = null;
 
     // 2. Connect fresh socket with standard browser identity
@@ -962,9 +963,10 @@ export class WASession {
       await this._ingestHistory(events['messaging-history.set']);
       touched = true;
     }
-    for (const name of ['contacts.upsert', 'contacts.update']) {
-      if (events[name]?.length) {
-        touched = (await this._ingestContacts(events[name])) || touched;
+    for (const name of ['contacts.set', 'contacts.upsert', 'contacts.update']) {
+      const cList = Array.isArray(events[name]) ? events[name] : events[name]?.contacts;
+      if (cList?.length) {
+        touched = (await this._ingestContacts(cList)) || touched;
       }
     }
     for (const name of ['chats.upsert', 'chats.update']) {

@@ -326,6 +326,57 @@ async def on_startup():
     import asyncio
     asyncio.create_task(keep_bridge_awake())
 
+    # Background task: Ensure WhatsApp contacts are synchronized into CRM database table
+    async def auto_sync_wa_contacts():
+        await asyncio.sleep(5)
+        try:
+            from app.core.database import AsyncSessionLocal
+            from sqlalchemy import text
+            async with AsyncSessionLocal() as session:
+                q_chats = await session.execute(text("SELECT count(*) FROM whatsapp_chats WHERE phone_number IS NOT NULL AND length(phone_number) >= 8"))
+                num_chats = q_chats.scalar() or 0
+                q_cts = await session.execute(text("SELECT count(*) FROM contacts WHERE source = 'WhatsApp'"))
+                num_cts = q_cts.scalar() or 0
+                if num_chats > 0 and num_cts < (num_chats // 2):
+                    logger.info(f"[AUTO-SYNC] Syncing {num_chats} WhatsApp chats to CRM contacts (current: {num_cts})...")
+                    await session.execute(text("""
+                        INSERT INTO contacts (
+                            id, organization_id, full_name, phone, source,
+                            status, lifecycle_stage, created_at, updated_at
+                        )
+                        SELECT 
+                            gen_random_uuid()::varchar,
+                            c.organization_id,
+                            COALESCE(
+                                NULLIF(NULLIF(c.name, ''), '+%'),
+                                NULLIF(NULLIF(c.push_name, ''), '+%'),
+                                NULLIF(NULLIF(c.verified_name, ''), '+%'),
+                                '+' || regexp_replace(c.phone_number, '[^0-9]', '', 'g')
+                            ),
+                            '+' || regexp_replace(c.phone_number, '[^0-9]', '', 'g'),
+                            'WhatsApp',
+                            'Active',
+                            'Lead',
+                            NOW(),
+                            NOW()
+                        FROM whatsapp_chats c
+                        WHERE c.phone_number IS NOT NULL 
+                          AND length(regexp_replace(c.phone_number, '[^0-9]', '', 'g')) >= 8
+                          AND NOT EXISTS (
+                              SELECT 1 FROM contacts ct 
+                              WHERE ct.organization_id = c.organization_id 
+                                AND regexp_replace(ct.phone, '[^0-9]', '', 'g') = regexp_replace(c.phone_number, '[^0-9]', '', 'g')
+                          )
+                        GROUP BY c.organization_id, c.phone_number, c.name, c.push_name, c.verified_name
+                        ON CONFLICT DO NOTHING;
+                    """))
+                    await session.commit()
+                    logger.info("[AUTO-SYNC] WhatsApp contacts successfully populated in CRM database.")
+        except Exception as e:
+            logger.warning(f"[AUTO-SYNC] WhatsApp contacts sync note: {e}")
+
+    asyncio.create_task(auto_sync_wa_contacts())
+
 @app.get("/")
 async def root():
     return {

@@ -331,7 +331,7 @@ export default function ContactsPage() {
   };
 
   useEffect(() => {
-    loadContacts();
+    loadContacts(true);
     loadDeals();
     loadCustomFields();
     try {

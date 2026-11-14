@@ -343,7 +343,7 @@ def serialize_session(row: Optional[Mapping[str, Any]], *, gateway_online: Optio
         except Exception:
             pass
 
-    linked = bool(clean_phone_digits) or status == "CONNECTED"
+    linked = (status == "CONNECTED") and bool(clean_phone_digits)
     if status == "CONNECTED":
         show_qr = False
         qr_val = None
