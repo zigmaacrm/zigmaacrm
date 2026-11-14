@@ -90,12 +90,7 @@ export default function WhatsAppQRModal({
       }
     } catch (e: any) {
       const errMsg = e.message || "";
-      if (errMsg.includes("bridge v2") || errMsg.includes("QR Code") || errMsg.includes("PAIRING_FALLBACK")) {
-        toast.error("Pairing Code Notice", "Cloud bridge requires QR Code linking. Switching to QR scan tab.");
-        setLinkMethod("qr");
-      } else {
-        toast.error("Pairing Error", errMsg || "Failed to generate pairing code. Please try again.");
-      }
+      toast.error("Pairing Error", errMsg || "Failed to generate pairing code. Please try again.");
     } finally {
       setIsRequestingCode(false);
     }

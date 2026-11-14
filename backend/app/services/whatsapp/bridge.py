@@ -40,11 +40,23 @@ _HEADERS = {"User-Agent": "ZigmaaCRM-API"}
 
 async def call(method: str, path: str, *, json: Optional[Dict[str, Any]] = None, timeout: float = 20.0) -> Dict[str, Any]:
     url = f"{gateway_url()}{path}"
+    token = bridge_token()
+    headers = {
+        **_HEADERS,
+        "Authorization": f"Bearer {token}",
+        "X-Bridge-Token": token,
+    }
     try:
         # A client per call keeps this safe across event loops (workers, tests);
         # bridge calls are infrequent because status and reads come from the database.
-        async with httpx.AsyncClient(timeout=timeout, headers=_HEADERS) as client:
-            resp = await client.request(method, url, json=json, headers={"Authorization": f"Bearer {bridge_token()}"})
+        async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
+            resp = await client.request(method, url, json=json)
+            # Automatic fallback: if the bridge rejects with 401, retry once with alternate derived token
+            if resp.status_code == 401:
+                alt_token = _derive("zigmaa-whatsapp-bridge-v1")
+                if alt_token != token:
+                    alt_headers = {**headers, "Authorization": f"Bearer {alt_token}", "X-Bridge-Token": alt_token}
+                    resp = await client.request(method, url, json=json, headers=alt_headers)
     except httpx.HTTPError as exc:
         logger.warning("bridge %s %s unreachable: %s", method, path, exc.__class__.__name__)
         raise BridgeUnavailable() from exc
