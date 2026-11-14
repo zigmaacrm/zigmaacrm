@@ -415,7 +415,7 @@ export class WASession {
         auth: { creds, keys: makeCacheableSignalKeyStore(this.auth.state.keys, baileysLog) },
         // Desktop-class companion => the phone sends the full history.
         // See resolveBrowser() in config.js for why this is not macOS('Desktop').
-        browser: this.config.session.browser || ['Zigmaa CRM', 'Chrome', '120.0.0'],
+        browser: this.config.session.browser || ['Ubuntu', 'Chrome', '22.04.4'],
         syncFullHistory: this.config.session.syncFullHistory,
         shouldSyncHistoryMessage: () => true,
         // Staying "unavailable" keeps push notifications working on the phone.
@@ -491,7 +491,7 @@ export class WASession {
     const { connection, lastDisconnect, qr, isNewLogin } = update;
 
     if (qr) {
-      if (this.pairingCode) {
+      if (this.pairingCode || this.pairingPhone) {
         // Pairing code is active; do not overwrite pairing code state with QR
         return;
       }
@@ -906,57 +906,41 @@ export class WASession {
       return { status: 'connected', phone: this.accountId };
     }
 
-    // Ensure session is in clean unpaired state before requesting pairing code
-    if (!this.paired && this.auth?.state?.creds) {
-      delete this.auth.state.creds.pairingCode;
-      try {
-        this.auth.state.creds.pairingEphemeralKeyPair = Curve.generateKeyPair();
-      } catch (_) {}
-      if (!this.auth.state.creds.registered && !this.auth.state.creds.account) {
-        delete this.auth.state.creds.me;
-      }
-      await this.auth.saveCreds().catch(() => {});
-    }
+    this.pairingPhone = clean;
+    this.pairingCode = null;
 
-    // 1. Ensure the socket is active and has completed the initial Noise registration handshake.
-    // Calling requestPairingCode before the socket finishes validateConnection causes WhatsApp
-    // server to close the stream with 428 (Connection Terminated).
-    // waitForQr guarantees the socket is fully established and in the registration stage.
-    if (!this.sock || !this.sock.ws || this.sock.ws.isClosed || this.status !== 'SCAN_QR') {
-      await this.waitForQr(10000);
-    }
+    // 1. Wipe any stale unpaired state to start completely clean
+    this._closeSocket();
+    this._clearReconnect();
+    await this.db.query('DELETE FROM whatsapp_session_keys WHERE session_id = $1', [this.id]);
+    await this.db.query("UPDATE whatsapp_sessions SET creds = NULL, qr = NULL, status = 'CONNECTING' WHERE id = $1", [this.id]);
+    this.auth = null;
 
+    // 2. Connect fresh socket with standard browser identity
+    this.startPromise = this._connect();
+    await this.startPromise;
+    this.startPromise = null;
+
+    // 3. Wait until socket WS is open and requestPairingCode is ready
     let attempts = 0;
-    while (!this.sock?.requestPairingCode && attempts < 40) {
+    while ((!this.sock?.ws || this.sock.ws.isClosed || !this.sock.requestPairingCode) && attempts < 40) {
       await new Promise((r) => setTimeout(r, 250));
       attempts++;
     }
     if (!this.sock?.requestPairingCode) throw new BridgeError(500, 'WhatsApp socket failed to initialize');
 
-    // Give a brief 300ms pause to ensure registration frame exchange is stable
-    await new Promise((r) => setTimeout(r, 300));
+    // Brief stabilization pause
+    await new Promise((r) => setTimeout(r, 500));
 
     try {
       const code = await this.sock.requestPairingCode(clean);
       this.pairingPhone = clean;
       this.pairingCode = code;
-      // Mark desired state running and status CONNECTING (waiting for code on phone)
-      await this._setStatus('CONNECTING', { desired_state: 'running' });
+      await this._setStatus('CONNECTING', { desired_state: 'running', phone_number: clean });
       this.log.info({ phone: clean, code }, 'WhatsApp pairing code generated successfully');
       return { status: 'pairing_code', pairing_code: code, phone: clean };
     } catch (err) {
-      this.log.warn({ err: err.message, phone: clean }, 'initial pairing code attempt failed; retrying once with fresh socket');
-      this._closeSocket();
-      this._clearReconnect();
-      await this.waitForQr(10000);
-      await new Promise((r) => setTimeout(r, 500));
-      if (this.sock?.requestPairingCode) {
-        const code = await this.sock.requestPairingCode(clean);
-        this.pairingPhone = clean;
-        this.pairingCode = code;
-        await this._setStatus('CONNECTING', { desired_state: 'running' });
-        return { status: 'pairing_code', pairing_code: code, phone: clean };
-      }
+      this.log.error({ err: err.message, phone: clean }, 'Pairing code generation error');
       throw new BridgeError(502, `Failed to generate pairing code: ${err.message}. Please use the QR Code scan tab.`, 'PAIRING_FAILED');
     }
   }

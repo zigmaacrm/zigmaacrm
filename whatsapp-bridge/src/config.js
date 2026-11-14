@@ -205,7 +205,7 @@ export function resolveBrowser(env = process.env) {
     const parts = raw.split(',').map((s) => s.trim());
     if (parts.length === 3 && parts.every(Boolean)) return parts;
   }
-  return ['Zigmaa CRM', 'Chrome', '120.0.0'];
+  return ['Ubuntu', 'Chrome', '22.04.4'];
 }
 
 /** True for an identity WhatsApp currently refuses at registration. */
