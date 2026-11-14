@@ -78,6 +78,11 @@ export default function WhatsAppQRModal({
       const res = await api.requestWhatsAppPairingCode(clean, sId);
       if (res?.pairing_code) {
         setPairingCode(res.pairing_code);
+        setHasTimedOut(false);
+        if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
+        timeoutTimerRef.current = setTimeout(() => {
+          setHasTimedOut(true);
+        }, 120000);
         toast.success("Pairing Code Ready", "Enter this 8-digit code in WhatsApp on your phone");
         if (!pollIntervalRef.current) {
           pollIntervalRef.current = setInterval(checkStatus, 1500);
@@ -124,12 +129,16 @@ export default function WhatsAppQRModal({
       if (onStatusChange) {
         onStatusChange(data.status, data.phone);
       }
-      if (data.status === "CONNECTED") {
+      if (data.status === "CONNECTED" || (data as any).linked) {
+        setStatus("CONNECTED");
         if (pollIntervalRef.current) {
           clearInterval(pollIntervalRef.current);
           pollIntervalRef.current = null;
         }
-        if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
+        if (timeoutTimerRef.current) {
+          clearTimeout(timeoutTimerRef.current);
+          timeoutTimerRef.current = null;
+        }
         const cleanP = data.phone ? `+${data.phone.replace(/[^0-9]/g, "")}` : "device";
         toast.success("WhatsApp Connected!", `Successfully linked ${cleanP}. All conversations and messages are now synced.`);
         setTimeout(() => {

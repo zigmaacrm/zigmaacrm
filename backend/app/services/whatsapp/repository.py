@@ -31,7 +31,8 @@ async def get_user_session(
                   avatar_url, status, desired_state, qr, qr_expires_at, owner_instance,
                   heartbeat_at, last_connected_at, last_disconnect_code, last_disconnect_reason,
                   last_disconnect_at, history_sync_status, history_sync_progress,
-                  created_at, updated_at
+                  created_at, updated_at,
+                  (creds IS NOT NULL) AS has_creds
            FROM whatsapp_sessions
            WHERE organization_id = :org_id AND user_id = :user_id"""
     )

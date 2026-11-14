@@ -242,10 +242,11 @@ async def get_my_session_status(
     gateway_online = await bridge.health()
 
     status = (session_row.get("status") if session_row else None) or "NOT_LINKED"
+    has_creds = bool(session_row.get("has_creds") or session_row.get("creds"))
+    has_phone = bool(session_row.get("phone_number") or current_user.whatsapp_phone_number)
 
-    # If the session is explicitly NOT_LINKED or LOGGED_OUT, or has no creds: strictly report as NOT_LINKED / LOGGED_OUT.
-    # Never fabricate a CONNECTED state when the session has been explicitly unlinked!
-    if status in ("NOT_LINKED", "LOGGED_OUT") or not (session_row and session_row.get("creds")):
+    # If the session is explicitly NOT_LINKED or LOGGED_OUT, or if it claims to be connected without creds/phone:
+    if status in ("NOT_LINKED", "LOGGED_OUT") or (status == "CONNECTED" and not has_creds and not has_phone):
         if session_row:
             session_row = dict(session_row)
             session_row["phone_number"] = None

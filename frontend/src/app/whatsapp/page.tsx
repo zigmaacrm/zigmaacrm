@@ -1194,7 +1194,7 @@ export default function WhatsAppPage() {
         } catch (_) {}
       }
       api.getWhatsAppQRStatus(sId || undefined).then((data) => {
-        if (data.status === "CONNECTED") {
+        if (data.status === "CONNECTED" || (data as any).linked) {
           setQrStatus("CONNECTED");
           if (data.phone) {
             setQrPhone(data.phone);
@@ -4870,8 +4870,11 @@ export default function WhatsAppPage() {
             setQrPhone(phone);
             qrPhoneRef.current = phone;
           }
-          if (status === "CONNECTED" && phone) {
+          if (status === "CONNECTED") {
             loadConversations(false);
+            setTimeout(() => {
+              setShowQRModal(false);
+            }, 1000);
           }
         }}
       />
