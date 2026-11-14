@@ -750,22 +750,23 @@ async def bulk_delete_contacts(
     if not payload.contact_ids:
         return {"message": "No contact IDs provided", "deleted_count": 0}
 
-    # Delete associated activities if any
-    await db.execute(
-        delete(Activity).where(
-            or_(
-                Activity.contact_id.in_(payload.contact_ids),
-                Activity.lead_id.in_(payload.contact_ids)
+    deleted_count = 0
+    for i in range(0, len(payload.contact_ids), 500):
+        batch = payload.contact_ids[i:i+500]
+        await db.execute(
+            delete(Activity).where(
+                or_(
+                    Activity.contact_id.in_(batch),
+                    Activity.lead_id.in_(batch)
+                )
             )
         )
-    )
+        result = await db.execute(
+            delete(Contact).where(Contact.id.in_(batch))
+        )
+        deleted_count += (result.rowcount or len(batch))
 
-    # Delete contacts
-    result = await db.execute(
-        delete(Contact).where(Contact.id.in_(payload.contact_ids))
-    )
     await db.commit()
-    deleted_count = result.rowcount or len(payload.contact_ids)
 
     return {
         "status": "success",

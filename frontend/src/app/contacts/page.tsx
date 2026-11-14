@@ -732,11 +732,15 @@ export default function ContactsPage() {
   }, [activeTab, contacts.length, filteredContacts, selectedSource]);
 
   const toggleSelectAll = () => {
-    if (selectedIds.size === paginatedContacts.length) {
+    if (selectedIds.size > 0) {
       setSelectedIds(new Set());
     } else {
       setSelectedIds(new Set(paginatedContacts.map((c) => c.id)));
     }
+  };
+
+  const selectAllFilteredContacts = () => {
+    setSelectedIds(new Set(filteredContacts.map((c) => c.id)));
   };
 
   const toggleSelectOne = (id: number | string) => {
@@ -1018,6 +1022,39 @@ export default function ContactsPage() {
           </div>
 
           {/* DUAL VIEW RENDER: TABLE VIEW OR KANBAN BOARD */}
+          {/* Multi-Page Select All Banner */}
+          {selectedIds.size > 0 && filteredContacts.length > paginatedContacts.length && (
+            <div className="w-full bg-amber-50 border border-amber-200/90 text-amber-900 px-4 py-2 text-xs flex items-center justify-between rounded-xl mb-3 shrink-0 animate-in fade-in duration-150">
+              {selectedIds.size === filteredContacts.length ? (
+                <>
+                  <span className="font-medium">
+                    All <strong>{filteredContacts.length}</strong> contacts are selected across all pages.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedIds(new Set())}
+                    className="text-red-600 font-bold underline hover:text-red-700 cursor-pointer ml-3"
+                  >
+                    Clear selection
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="font-medium">
+                    All <strong>{paginatedContacts.length}</strong> contacts on this page are selected.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={selectAllFilteredContacts}
+                    className="text-red-600 font-bold underline hover:text-red-700 cursor-pointer ml-3"
+                  >
+                    Select all {filteredContacts.length} contacts across all pages
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
           {viewMode === "table" ? (
           <div className="bg-white border border-slate-200/80 rounded-xl shadow-xs flex-1 flex flex-col min-h-0 overflow-hidden">
             {/* Scrollable table body area */}
@@ -1032,7 +1069,7 @@ export default function ContactsPage() {
                           onClick={toggleSelectAll}
                           className="flex items-center justify-center cursor-pointer text-slate-400 hover:text-slate-600 transition-colors"
                         >
-                          {selectedIds.size > 0 && selectedIds.size === paginatedContacts.length ? (
+                          {selectedIds.size > 0 ? (
                             <CheckSquare className="w-4 h-4 text-red-600" />
                           ) : (
                             <Square className="w-4 h-4 text-slate-300 hover:text-slate-400" />
@@ -1955,6 +1992,16 @@ export default function ContactsPage() {
                     <span className="text-xs font-semibold text-red-600 bg-red-50 px-2.5 py-1 rounded-full border border-red-200">
                       {selectedIds.size} {selectedIds.size === 1 ? "contact" : "contacts"} selected
                     </span>
+
+                    {selectedIds.size > 0 && selectedIds.size < filteredContacts.length && (
+                      <button
+                        type="button"
+                        onClick={selectAllFilteredContacts}
+                        className="text-xs text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2.5 py-1 rounded-lg font-medium cursor-pointer transition-colors"
+                      >
+                        Select All ({filteredContacts.length})
+                      </button>
+                    )}
 
                     <button
                       type="button"
