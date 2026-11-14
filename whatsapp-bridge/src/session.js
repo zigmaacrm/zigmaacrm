@@ -577,6 +577,26 @@ export class WASession {
            AND updated_at < ${NOW_UTC} - interval '3 minutes'`,
         [this.organizationId, this.accountId]
       );
+      // Auto-heal any chats where name is missing or equals phone number
+      try {
+        await this.db.query(`
+          UPDATE whatsapp_chats c
+          SET name = COALESCE(NULLIF(ct.full_name, ''), NULLIF(msg.contact_name, ''), c.push_name, c.name),
+              updated_at = ${NOW_UTC}
+          FROM (
+            SELECT DISTINCT ON (chat_id) chat_id, contact_name
+            FROM whatsapp_messages
+            WHERE organization_id = $1 AND contact_name IS NOT NULL AND contact_name != '' AND contact_name NOT LIKE '%∙%' AND contact_name NOT LIKE '+%'
+            ORDER BY chat_id, timestamp DESC
+          ) msg
+          LEFT JOIN contacts ct ON ct.organization_id = $1 AND ct.phone IS NOT NULL AND RIGHT(REGEXP_REPLACE(ct.phone, '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE(c.phone_number, '[^0-9]', '', 'g'), 10)
+          WHERE c.organization_id = $1 AND (c.session_id = $2 OR c.session_id = $3)
+            AND c.id = msg.chat_id
+            AND (c.name IS NULL OR c.name = '' OR c.name = c.phone_number OR c.name = ('+' || c.phone_number) OR c.name LIKE '%∙%')
+        `, [this.organizationId, this.accountId, this.id]);
+      } catch (err) {
+        this.log.debug({ err: err.message }, 'auto-healing chat names note');
+      }
     }
     if (this.media) {
       try {
@@ -1023,7 +1043,9 @@ export class WASession {
     const entries = [];
     const mappings = [];
     for (const c of contacts) {
-      const ref = chatRefFromJids(c?.id, c?.lid, c?.phoneNumber);
+      const pnCandidate = c?.phoneNumber || (c?.id && !String(c.id).endsWith('@lid') ? c.id : null);
+      const lidCandidate = c?.lid || (c?.id && String(c.id).endsWith('@lid') ? c.id : null);
+      const ref = chatRefFromJids(c?.id, lidCandidate, pnCandidate);
       if (!ref) continue;
       if (ref.pn && ref.lid) mappings.push({ pn: pnJid(ref.pn), lid: lidJid(ref.lid) });
       const name = c?.name || c?.displayName || null;

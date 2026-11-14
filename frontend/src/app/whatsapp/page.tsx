@@ -1467,9 +1467,12 @@ export default function WhatsAppPage() {
   const activeChat = useMemo(() => {
     if (qrStatus !== "CONNECTED") return null;
     if (!activePhone) return null;
+    const cleanActive = activePhone.replace(/[^0-9]/g, "");
     return (
-      conversations.find((c) => c.phone.replace(/[^0-9]/g, "") === activePhone.replace(/[^0-9]/g, "")) ||
-      null
+      conversations.find((c) => {
+        const cleanC = c.phone.replace(/[^0-9]/g, "");
+        return (cleanC && cleanActive && cleanC === cleanActive) || c.id === activePhone || c.phone === activePhone;
+      }) || null
     );
   }, [conversations, activePhone, qrStatus]);
 
@@ -1488,7 +1491,7 @@ export default function WhatsAppPage() {
       if (digitsOnly === s) return false;
       const cleaned = s.replace(/[\s\+\-\(\)]/g, "");
       if (/^\d+$/.test(cleaned)) return false;
-      if (!/[a-zA-Z\u0080-\uFFFF]/.test(s)) return false;
+      if (!/[a-zA-Z\u0080-\uFFFF\uD800-\uDFFF]/.test(s)) return false;
       return true;
     };
 
@@ -1498,6 +1501,8 @@ export default function WhatsAppPage() {
       raw.contact_name,
       raw.crm?.lead_name,
       raw.lead_name,
+      raw.saved_name,
+      raw.display_name,
       raw.name,
       raw.push_name,
       raw.verified_name

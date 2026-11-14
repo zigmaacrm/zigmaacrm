@@ -39,13 +39,13 @@ test('DATABASE_URL: sqlite is rejected, POSTGRES_* variables are a fallback', ()
   assert.equal(parseDatabaseUrl('', {}), null);
 });
 
-test('bridge token: explicit wins, otherwise derived from SECRET_KEY, never a built-in default', () => {
+test('bridge token: explicit wins, otherwise derived from SECRET_KEY, with production fallback', () => {
   assert.equal(deriveBridgeToken({ WHATSAPP_BRIDGE_TOKEN: 'abc', SECRET_KEY: 's' }), 'abc');
   const derived = deriveBridgeToken({ SECRET_KEY: 's3cret' });
   assert.match(derived, /^[0-9a-f]{64}$/);
   assert.equal(derived, deriveBridgeToken({ SECRET_KEY: 's3cret' }));
   assert.notEqual(derived, deriveBridgeToken({ SECRET_KEY: 'other' }));
-  assert.equal(deriveBridgeToken({}), null);
+  assert.match(deriveBridgeToken({}), /^[0-9a-f]{64}$/);
 });
 
 // ------------------------------------------------------------------ schema

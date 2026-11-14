@@ -361,7 +361,10 @@ export class ChatStore {
         `UPDATE whatsapp_chats c SET
             name = CASE 
               WHEN v.name IS NOT NULL AND v.name != '' AND v.name NOT LIKE '%∙%' THEN v.name 
-              WHEN (c.name IS NULL OR c.name LIKE '%∙%') AND v.notify IS NOT NULL AND v.notify != '' THEN v.notify
+              WHEN (c.name IS NULL OR c.name LIKE '%∙%' OR c.name = c.phone_number OR c.name = ('+' || c.phone_number) OR c.name = c.jid) 
+                   AND v.notify IS NOT NULL AND v.notify != '' THEN v.notify
+              WHEN (c.name IS NULL OR c.name LIKE '%∙%' OR c.name = c.phone_number OR c.name = ('+' || c.phone_number) OR c.name = c.jid) 
+                   AND v.verified IS NOT NULL AND v.verified != '' THEN v.verified
               ELSE c.name 
             END,
             push_name = COALESCE(v.notify, c.push_name),
@@ -369,7 +372,11 @@ export class ChatStore {
             updated_at = ${NOW_UTC}
          FROM jsonb_to_recordset($3::jsonb) AS v(pn text, lid text, name text, notify text, verified text)
          WHERE c.organization_id = $1 AND c.session_id = $2 AND c.merged_into IS NULL
-           AND ((v.pn IS NOT NULL AND c.phone_number = v.pn) OR (v.lid IS NOT NULL AND c.lid = v.lid))
+           AND (
+             (v.pn IS NOT NULL AND (c.phone_number = v.pn OR c.phone_number = ('+' || v.pn) OR c.jid = (v.pn || '@s.whatsapp.net')))
+             OR 
+             (v.lid IS NOT NULL AND (c.lid = v.lid OR c.jid = (v.lid || '@lid')))
+           )
            AND (COALESCE(v.name, c.name) IS DISTINCT FROM c.name
              OR COALESCE(v.notify, c.push_name) IS DISTINCT FROM c.push_name
              OR COALESCE(v.verified, c.verified_name) IS DISTINCT FROM c.verified_name)`,
@@ -503,6 +510,7 @@ export class ChatStore {
             source = CASE WHEN EXCLUDED.source = 'crm' THEN 'crm' ELSE COALESCE(m.source, EXCLUDED.source) END,
             sender_user_id = COALESCE(m.sender_user_id, EXCLUDED.sender_user_id),
             client_ref = COALESCE(m.client_ref, EXCLUDED.client_ref),
+            contact_name = COALESCE(EXCLUDED.contact_name, m.contact_name),
             is_deleted = COALESCE(m.is_deleted, FALSE) OR EXCLUDED.is_deleted,
             updated_at = ${NOW_UTC},
             feed_at = COALESCE(EXCLUDED.feed_at, m.feed_at)

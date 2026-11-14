@@ -43,7 +43,12 @@ export function isIgnoredJid(jid) {
  */
 export function parseUserJid(jid) {
   if (!jid || typeof jid !== 'string' || isIgnoredJid(jid)) return null;
-  const normalized = jid.endsWith('@c.us') ? jid.replace(/@c\.us$/, `@${PN_SERVER}`) : jid;
+  let normalized = jid.endsWith('@c.us') ? jid.replace(/@c\.us$/, `@${PN_SERVER}`) : jid;
+  if (!normalized.includes('@')) {
+    const d = digitsOnly(normalized);
+    if (/^\d{7,16}$/.test(d)) return { kind: 'pn', user: d };
+    return null;
+  }
   const decoded = jidDecode(normalized);
   if (!decoded || !decoded.user) return null;
   const user = String(decoded.user);

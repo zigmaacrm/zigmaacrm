@@ -56,8 +56,8 @@ def is_valid_contact_name(val: Optional[str]) -> bool:
     # If it looks like a WhatsApp JID or LID
     if "@s.whatsapp.net" in s or "@lid" in s or "@g.us" in s:
         return False
-    # It must contain at least one letter or word character (English, Tamil, Hindi, multilingual, etc.)
-    if not re.search(r"[a-zA-Z\u0080-\uFFFF]", s):
+    # It must contain at least one letter or word character (English, Tamil, Hindi, multilingual, emojis, etc.)
+    if not re.search(r"[a-zA-Z\u0080-\U0010FFFF]", s):
         return False
     return True
 
