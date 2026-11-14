@@ -384,7 +384,15 @@ export class WASession {
         if (this.auth.restored) this.log.info('credentials restored from the database');
       }
       const creds = this.auth.state.creds;
-      if (creds.me?.id) this._adoptAccount(creds.me);
+      // Strip provisional/unregistered `me` so Baileys does not attempt bogus stream reconnects
+      if (!this.paired && creds.me && !this.pairingPhone) {
+        delete creds.me;
+        delete creds.pairingCode;
+        this.accountId = null;
+        this.lid = null;
+        await this.auth.saveCreds().catch(() => {});
+      }
+      if (this.paired && creds.me?.id) this._adoptAccount(creds.me);
       if (creds.platform) this.platform = String(creds.platform).slice(0, 64);
 
       const baileysLog = getBaileysLogger(this.id);
@@ -490,6 +498,7 @@ export class WASession {
       this.qrTimestamp = Date.now();
       this.qrExpiresAt = Date.now() + ttl;
       await this._setStatus('SCAN_QR', { qr: dataUrl, qr_expires_at: this.qrExpiresAt, desired_state: 'running' });
+      this.log.info({ session: this.id }, 'WhatsApp QR code ready for scanning');
       this.notifier.ping(this.id);
       for (const waiter of this.qrWaiters) {
         try { waiter({ status: 'qr_ready', qr_code: dataUrl, qr: dataUrl }); } catch {}
@@ -500,6 +509,7 @@ export class WASession {
     if (isNewLogin) {
       // The phone accepted the code. WhatsApp now closes the stream with 515
       // and expects an immediate reconnect with the new credentials.
+      this.log.info({ session: this.id }, 'WhatsApp pairing accepted by phone; establishing connection');
       this.qr = null;
       this.latestQrDataUrl = null;
       this.qrTimestamp = 0;
@@ -528,6 +538,7 @@ export class WASession {
       this.qrWaiters.clear();
       this._adoptAccount(sock.user || this.auth.state.creds.me);
       if (this.auth.state.creds.platform) this.platform = String(this.auth.state.creds.platform).slice(0, 64);
+      this.log.info({ session: this.id, phone: this.accountId, name: this.pushName }, 'WhatsApp connected successfully! Ready to send and receive messages');
       await this._setStatus('CONNECTED', {
         desired_state: 'running',
         phone_number: this.accountId,
@@ -751,6 +762,19 @@ export class WASession {
   async waitForQr(timeoutMs = 10000) {
     if (this.removed) throw new BridgeError(410, 'This session was unlinked. Start a new one.');
     if (this.paired || this.status === 'CONNECTED') return this.snapshot();
+
+    // If not paired, clear any dangling unconfirmed credentials so Baileys emits a fresh QR
+    if (!this.paired && this.auth?.state?.creds?.me) {
+      delete this.auth.state.creds.me;
+      delete this.auth.state.creds.pairingCode;
+      this.accountId = null;
+      this.lid = null;
+      await this.auth.saveCreds().catch(() => {});
+      if (this.sock) {
+        this._closeSocket();
+        this._clearReconnect();
+      }
+    }
 
     // 1. Instant in-memory cache check (< 20s old)
     if (this.status === 'SCAN_QR' && this.latestQrDataUrl && Date.now() - this.qrTimestamp < 20_000) {

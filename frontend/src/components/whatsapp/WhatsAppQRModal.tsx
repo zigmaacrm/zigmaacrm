@@ -130,6 +130,8 @@ export default function WhatsAppQRModal({
           pollIntervalRef.current = null;
         }
         if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
+        const cleanP = data.phone ? `+${data.phone.replace(/[^0-9]/g, "")}` : "device";
+        toast.success("WhatsApp Connected!", `Successfully linked ${cleanP}. All conversations and messages are now synced.`);
         setTimeout(() => {
           onClose();
         }, 1200);

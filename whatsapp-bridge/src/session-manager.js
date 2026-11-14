@@ -143,7 +143,8 @@ export class SessionManager {
 
   _isPaired(credsText) {
     try {
-      return Boolean(deserialize(credsText)?.me?.id);
+      const c = deserialize(credsText);
+      return Boolean((c?.registered || c?.account) && c?.me?.id);
     } catch {
       return false;
     }
@@ -153,12 +154,10 @@ export class SessionManager {
   async _expireAbandonedQr() {
     await this.db.query(
       `UPDATE whatsapp_sessions
-       SET status = 'QR_EXPIRED', desired_state = 'stopped', qr = NULL, qr_expires_at = NULL, updated_at = ${NOW_UTC}
-       WHERE status IN ('SCAN_QR', 'CONNECTING') AND desired_state = 'running'
-         AND (creds IS NULL OR (creds::jsonb #>> '{me,id}') IS NULL)
-         AND updated_at < ${NOW_UTC} - interval '3 minutes'
-         AND (owner_instance IS NULL OR heartbeat_at IS NULL OR heartbeat_at < ${NOW_UTC} - make_interval(secs => $1))`,
-      [this.config.session.leaseTtlSeconds]
+       SET status = 'NOT_LINKED', desired_state = 'stopped', qr = NULL, qr_expires_at = NULL, updated_at = ${NOW_UTC}
+       WHERE status IN ('SCAN_QR', 'CONNECTING', 'QR_EXPIRED')
+         AND (creds IS NULL OR (creds::jsonb #>> '{registered}') IS NULL OR (creds::jsonb #>> '{registered}') != 'true')
+         AND updated_at < ${NOW_UTC} - interval '2 minutes'`
     );
   }
 
