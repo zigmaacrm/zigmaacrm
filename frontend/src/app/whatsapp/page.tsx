@@ -1206,27 +1206,22 @@ export default function WhatsAppPage() {
             } catch (_) {}
           }
           loadConversations(true);
-        } else if (data.status === "CONNECTING" && data.phone && qrStatus === "CONNECTED") {
+        } else if (data.status === "CONNECTING" && data.phone && (qrStatus as string) === "CONNECTED") {
           // Paired session in reconnecting or background state
           setQrPhone(data.phone);
           qrPhoneRef.current = data.phone;
           setQrStatus("CONNECTING");
-          try {
-            localStorage.setItem("zigmaa_whatsapp_phone", data.phone);
-          } catch (_) {}
           loadConversations(true);
-        } else if (data.status === "NOT_LINKED" || data.status === "DISCONNECTED" || data.status === "LOGGED_OUT" || data.status === "QR_EXPIRED") {
+        } else {
           setQrStatus((data.status as any) || "NOT_LINKED");
           setQrPhone(null);
           qrPhoneRef.current = null;
+          setConversations([]);
+          setActivePhone("");
           try {
             localStorage.removeItem("zigmaa_whatsapp_status");
             localStorage.removeItem("zigmaa_whatsapp_phone");
           } catch (_) {}
-        } else {
-          if (data.status) {
-            setQrStatus(data.status as any);
-          }
         }
         if (data.qr) {
           setCachedQR(data.qr);
@@ -1269,7 +1264,7 @@ export default function WhatsAppPage() {
     qrStatus === "CONNECTED" && (qrPhone || currentUser?.whatsapp_phone_number)
   );
   const isConnectingState = qrStatus === "CONNECTING" || isLoadingConversations;
-  const isTrulyUnlinked = !hasAnyLinkedPhone && qrStatus !== "CONNECTED" && qrStatus !== "CONNECTING" && conversations.length === 0;
+  const isTrulyUnlinked = qrStatus !== "CONNECTED";
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState("");
@@ -1470,12 +1465,13 @@ export default function WhatsAppPage() {
 
   // Active conversation object
   const activeChat = useMemo(() => {
+    if (qrStatus !== "CONNECTED") return null;
     if (!activePhone) return null;
     return (
       conversations.find((c) => c.phone.replace(/[^0-9]/g, "") === activePhone.replace(/[^0-9]/g, "")) ||
       null
     );
-  }, [conversations, activePhone]);
+  }, [conversations, activePhone, qrStatus]);
 
   // Transform backend raw conversation into WhatsAppConversation
   const mapBackendConv = (raw: any, index: number): WhatsAppConversation => {
@@ -1568,6 +1564,15 @@ export default function WhatsAppPage() {
 
   // Load conversations from backend
   const loadConversations = useCallback(async (isSilent = false, repFilter?: string) => {
+    // Only load conversations if user is actually connected!
+    if (qrStatus !== "CONNECTED") {
+      setConversations([]);
+      setActivePhone("");
+      setIsLoadingConversations(false);
+      setIsRefreshing(false);
+      return;
+    }
+
     // Only show grey skeletons on the very first mount when NO conversations exist yet
     if (!isSilent && conversationsRef.current.length === 0) {
       setIsLoadingConversations(true);
@@ -1889,8 +1894,11 @@ export default function WhatsAppPage() {
 
   // Initial load and auto-reload on session change
   useEffect(() => {
-    if (qrPhone || qrPhoneRef.current) {
+    if (qrStatus === "CONNECTED" && (qrPhone || qrPhoneRef.current)) {
       loadConversations(true);
+    } else if (qrStatus !== "CONNECTED") {
+      setConversations([]);
+      setActivePhone("");
     }
   }, [loadConversations, qrPhone, qrStatus]);
 
@@ -2694,7 +2702,7 @@ export default function WhatsAppPage() {
               )}
 
               {/* Reconnecting / Background Sync State */}
-              {qrStatus === "CONNECTING" && Boolean(qrPhone || currentUser?.whatsapp_phone_number) && (
+              {qrStatus === "CONNECTING" && Boolean(currentUser?.whatsapp_phone_number) && (
                 <div className={cn(
                   "w-full flex items-center justify-between px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all shadow-2xs",
                   isDark
@@ -2985,7 +2993,7 @@ export default function WhatsAppPage() {
             "flex-1 flex flex-col relative min-w-0 transition-colors",
             isDark ? "bg-[#0D0B14]" : "bg-[#F0F2F5]"
           )}>
-            {activeChat ? (
+            {qrStatus === "CONNECTED" && activeChat ? (
               <>
                 {/* Chat Header */}
                 <div className={cn(

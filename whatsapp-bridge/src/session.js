@@ -656,15 +656,18 @@ export class WASession {
     }
 
     if (!this.paired) {
+      const hasActivePairing = Boolean(this.pairingCode || this.pairingPhone);
       this.qr = null;
       this.latestQrDataUrl = null;
       this.qrTimestamp = 0;
       this.qrExpiresAt = null;
-      this.pairingCode = null;
-      this.pairingPhone = null;
+      if (!hasActivePairing) {
+        this.pairingCode = null;
+        this.pairingPhone = null;
+      }
       const qrWasShown = this.qrCount > 0;
-      if (isConflict || isRestart || (!qrWasShown && this.unpairedFailures < 5)) {
-        // Transient stream collision, restart or initial connect: keep session alive.
+      if (hasActivePairing || isConflict || isRestart || (!qrWasShown && this.unpairedFailures < 5)) {
+        // Pairing code waiting for phone entry, stream collision, restart or initial connect: keep session alive.
         this.unpairedFailures += 1;
         await this._setStatus('CONNECTING', record);
         this._scheduleReconnect(1500 * this.unpairedFailures, { count: false });
@@ -911,33 +914,42 @@ export class WASession {
     this.pairingCode = null;
 
     // 1. Wipe any stale unpaired state to start completely clean
+    const oldSock = this.sock;
     this._closeSocket();
     this._clearReconnect();
+    if (oldSock?.ws) {
+      try { oldSock.ws.close(); } catch {}
+    }
+    await new Promise((r) => setTimeout(r, 600));
+
     await this.db.query('DELETE FROM whatsapp_session_keys WHERE session_id = $1', [this.id]);
     await this.db.query("UPDATE whatsapp_sessions SET creds = NULL, qr = NULL, status = 'CONNECTING', phone_number = NULL, owner_instance = $2, heartbeat_at = NOW() WHERE id = $1", [this.id, this.config.instanceId]);
     this.auth = null;
 
-    // 2. Connect fresh socket with standard browser identity
+    // 2. Connect fresh socket with pairingPhone set so QR is not triggered
     this.startPromise = this._connect();
     await this.startPromise;
     this.startPromise = null;
 
     // 3. Wait until socket WS is open and requestPairingCode is ready
     let attempts = 0;
-    while ((!this.sock?.ws || this.sock.ws.isClosed || !this.sock.requestPairingCode) && attempts < 40) {
-      await new Promise((r) => setTimeout(r, 250));
+    while ((!this.sock?.ws || !this.sock.ws.isOpen || !this.sock.requestPairingCode) && attempts < 60) {
+      await new Promise((r) => setTimeout(r, 200));
       attempts++;
     }
-    if (!this.sock?.requestPairingCode) throw new BridgeError(500, 'WhatsApp socket failed to initialize');
+    if (!this.sock?.ws?.isOpen || !this.sock?.requestPairingCode) {
+      throw new BridgeError(500, 'WhatsApp socket connection timed out');
+    }
 
-    // Brief stabilization pause
-    await new Promise((r) => setTimeout(r, 500));
+    // Brief stabilization pause after WebSocket open
+    await new Promise((r) => setTimeout(r, 600));
 
     try {
       const code = await this.sock.requestPairingCode(clean);
       this.pairingPhone = clean;
       this.pairingCode = code;
-      await this._setStatus('CONNECTING', { desired_state: 'running', phone_number: clean });
+      // Do NOT set phone_number in DB until actual pairing succeeds!
+      await this._setStatus('CONNECTING', { desired_state: 'running', qr: null, qr_expires_at: null });
       this.log.info({ phone: clean, code }, 'WhatsApp pairing code generated successfully');
       return { status: 'pairing_code', pairing_code: code, phone: clean };
     } catch (err) {
