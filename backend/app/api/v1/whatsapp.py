@@ -369,8 +369,16 @@ async def logout_whatsapp_session(
         logger.warning("Bridge logout notification returned: %s", exc)
 
     # Completely wipe database session row, Signal keys, and user whatsapp_phone_number
-    await repository.unlink_user_session(db, current_user.organization_id, current_user.id)
-    current_user.whatsapp_phone_number = None
+    try:
+        await repository.unlink_user_session(db, current_user.organization_id, current_user.id)
+    except Exception as exc:
+        logger.error("Failed to unlink user session in repository: %s", exc)
+
+    try:
+        current_user.whatsapp_phone_number = None
+        await db.commit()
+    except Exception as exc:
+        logger.error("Failed to commit user whatsapp_phone_number null: %s", exc)
 
     try:
         from app.api.v1.webhooks.whatsapp import _qr_status_cache
@@ -378,7 +386,10 @@ async def logout_whatsapp_session(
     except Exception:
         pass
 
-    hub.notify(sid)
+    try:
+        hub.notify(sid)
+    except Exception:
+        pass
     return {"status": "NOT_LINKED", "message": "WhatsApp device unlinked successfully."}
 
 

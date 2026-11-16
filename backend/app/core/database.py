@@ -22,6 +22,10 @@ if db_url.count("@") > 1 and "://" in db_url:
     except Exception:
         pass
 
+# Auto-switch to transaction pooler port (6543) if using Supabase pooler on session port (5432)
+if "pooler.supabase.com:5432" in db_url:
+    db_url = db_url.replace("pooler.supabase.com:5432", "pooler.supabase.com:6543")
+
 # Asyncpg requires 'ssl=' instead of 'sslmode='
 if "sslmode=" in db_url:
     db_url = db_url.replace("sslmode=", "ssl=")
@@ -39,12 +43,12 @@ engine_kwargs = {
 if db_url.startswith("sqlite"):
     connect_args["check_same_thread"] = False
 else:
-    # High-concurrency Supabase / PostgreSQL async connection pool
+    # Safe Supabase / PostgreSQL async connection pool that prevents exceeding pool_size: 15
     engine_kwargs.update({
-        "pool_size": 10,
-        "max_overflow": 20,
-        "pool_recycle": 300,
-        "pool_timeout": 30,
+        "pool_size": 4,
+        "max_overflow": 2,
+        "pool_recycle": 60,
+        "pool_timeout": 15,
         "pool_pre_ping": True,
     })
 

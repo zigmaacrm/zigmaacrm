@@ -138,6 +138,9 @@ export function parseDatabaseUrl(rawUrl, env = process.env) {
     host = portMatch[1];
     port = Number(portMatch[2]);
   }
+  if (host.includes('pooler.supabase.com') && port === 5432) {
+    port = 6543;
+  }
   if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
 
   const params = new URLSearchParams(query);
@@ -271,7 +274,7 @@ export function buildConfig(env = process.env) {
       password: db.password,
       database: db.database,
       ssl: resolveSsl(db, env),
-      poolMax: intEnv(env, 'WA_DB_POOL_MAX', 8)
+      poolMax: intEnv(env, 'WA_DB_POOL_MAX', 3)
     },
     media: {
       storage,

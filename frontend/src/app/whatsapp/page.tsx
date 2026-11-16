@@ -2045,38 +2045,45 @@ export default function WhatsAppPage() {
       return;
     }
     setIsLoggingOutWhatsApp(true);
+    let apiError: any = null;
     try {
       await api.disconnectWhatsAppQR();
-      setQrStatus("NOT_LINKED");
-      setQrPhone(null);
-      qrPhoneRef.current = null;
-      setCurrentUser((prev: any) => prev ? { ...prev, whatsapp_phone_number: null, whatsapp_phone_number_id: null } : null);
-      try {
-        localStorage.removeItem("zigmaa_whatsapp_status");
-        localStorage.removeItem("zigmaa_whatsapp_phone");
-        for (const k of ["zigmaa_user", "zigmaa_current_user"]) {
-          const uStr = localStorage.getItem(k);
-          if (uStr) {
-            const parsed = JSON.parse(uStr);
-            delete parsed.whatsapp_phone_number;
-            delete parsed.whatsapp_phone_number_id;
-            localStorage.setItem(k, JSON.stringify(parsed));
-          }
-        }
-        window.dispatchEvent(new CustomEvent("zigmaa_user_updated"));
-      } catch (_) {}
-      setCachedQR(null);
-      setConversations([]);
-      setMessages([]);
-      setActivePhone("");
-      setShowRightDrawer(false);
-      setShowQRModal(false);
-      toast.success("Logged Out", "WhatsApp session unlinked successfully.");
     } catch (err: any) {
-      toast.error("Logout Error", err.message || "Failed to disconnect WhatsApp session.");
-    } finally {
-      setIsLoggingOutWhatsApp(false);
+      console.warn("API disconnect warning:", err);
+      apiError = err;
     }
+
+    // Always clear local frontend state and cached session so user is never stuck
+    setQrStatus("NOT_LINKED");
+    setQrPhone(null);
+    qrPhoneRef.current = null;
+    setCurrentUser((prev: any) => prev ? { ...prev, whatsapp_phone_number: null, whatsapp_phone_number_id: null } : null);
+    try {
+      localStorage.removeItem("zigmaa_whatsapp_status");
+      localStorage.removeItem("zigmaa_whatsapp_phone");
+      for (const k of ["zigmaa_user", "zigmaa_current_user"]) {
+        const uStr = localStorage.getItem(k);
+        if (uStr) {
+          const parsed = JSON.parse(uStr);
+          delete parsed.whatsapp_phone_number;
+          delete parsed.whatsapp_phone_number_id;
+          localStorage.setItem(k, JSON.stringify(parsed));
+        }
+      }
+      window.dispatchEvent(new CustomEvent("zigmaa_user_updated"));
+    } catch (_) {}
+    setCachedQR(null);
+    setConversations([]);
+    setMessages([]);
+    setActivePhone("");
+    setShowRightDrawer(false);
+    setShowQRModal(false);
+    if (apiError) {
+      toast.warning("Logged Out", "Session unlinked locally. Backend may take a moment to synchronize.");
+    } else {
+      toast.success("Logged Out", "WhatsApp session unlinked successfully.");
+    }
+    setIsLoggingOutWhatsApp(false);
   };
 
   // Pin / Archive / Clear / Block / Delete Handlers
