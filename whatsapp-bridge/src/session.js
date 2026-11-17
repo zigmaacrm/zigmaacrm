@@ -922,6 +922,19 @@ export class WASession {
     return this.waitForQr(timeoutMs);
   }
 
+  async getProfilePicture(phoneNumber) {
+    if (!this.sock) return null;
+    const clean = String(phoneNumber || '').replace(/[^0-9]/g, '');
+    if (!clean) return null;
+    const jid = `${clean}@s.whatsapp.net`;
+    try {
+      const url = await this.sock.profilePictureUrl(jid, 'image');
+      return url || null;
+    } catch {
+      return null;
+    }
+  }
+
   async requestPairingCode(phoneNumber) {
     const clean = String(phoneNumber || '').replace(/[^0-9]/g, '');
     if (!clean || clean.length < 8) throw new BridgeError(400, 'Invalid phone number for pairing code');

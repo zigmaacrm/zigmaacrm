@@ -115,6 +115,16 @@ function isValidImageUrl(url?: string | null): boolean {
   return lower.startsWith("http") || lower.startsWith("data:image") || lower.startsWith("/") || lower.includes("googleusercontent");
 }
 
+function isSamePhoneNumber(p1?: string | null, p2?: string | null): boolean {
+  if (!p1 || !p2) return false;
+  const d1 = p1.replace(/[^0-9]/g, "");
+  const d2 = p2.replace(/[^0-9]/g, "");
+  if (!d1 || !d2) return false;
+  if (d1 === d2) return true;
+  if (d1.length >= 10 && d2.length >= 10 && d1.slice(-10) === d2.slice(-10)) return true;
+  return false;
+}
+
 function parseQuotedReply(rawText?: string | null): {
   hasQuote: boolean;
   quotedSender: string;
@@ -1195,25 +1205,22 @@ export default function WhatsAppPage() {
         } catch (_) {}
       }
       api.getWhatsAppQRStatus(sId || undefined).then((data) => {
-        if (data.status === "CONNECTED") {
-          setQrStatus("CONNECTED");
-          if (data.phone) {
-            setQrPhone(data.phone);
-            qrPhoneRef.current = data.phone;
+        const isPaired = data.status === "CONNECTED" || (data as any)?.linked || Boolean(data.phone);
+        if (isPaired || data.status === "CONNECTED") {
+          const effectiveStatus = data.status === "CONNECTED" ? "CONNECTED" : "CONNECTING";
+          setQrStatus(effectiveStatus);
+          const effectivePhone = data.phone || (typeof window !== "undefined" ? localStorage.getItem("zigmaa_whatsapp_phone") : null);
+          if (effectivePhone) {
+            setQrPhone(effectivePhone);
+            qrPhoneRef.current = effectivePhone;
             try {
-              localStorage.setItem("zigmaa_whatsapp_status", "CONNECTED");
-              localStorage.setItem("zigmaa_whatsapp_phone", data.phone);
+              localStorage.setItem("zigmaa_whatsapp_status", effectiveStatus);
+              localStorage.setItem("zigmaa_whatsapp_phone", effectivePhone);
             } catch (_) {}
           }
-          loadConversations(true);
-        } else if (data.status === "CONNECTING" && data.phone && (qrStatus as string) === "CONNECTED") {
-          // Paired session in reconnecting or background state
-          setQrPhone(data.phone);
-          qrPhoneRef.current = data.phone;
-          setQrStatus("CONNECTING");
-          loadConversations(true);
-        } else {
-          setQrStatus((data.status as any) || "NOT_LINKED");
+          loadConversations(true, undefined, true);
+        } else if (data.status === "LOGGED_OUT") {
+          setQrStatus("NOT_LINKED");
           setQrPhone(null);
           qrPhoneRef.current = null;
           setConversations([]);
@@ -1222,6 +1229,16 @@ export default function WhatsAppPage() {
             localStorage.removeItem("zigmaa_whatsapp_status");
             localStorage.removeItem("zigmaa_whatsapp_phone");
           } catch (_) {}
+        } else if (data.status === "SCAN_QR" || data.qr) {
+          const savedPhone = typeof window !== "undefined" ? localStorage.getItem("zigmaa_whatsapp_phone") : null;
+          if (!savedPhone) {
+            setQrStatus("SCAN_QR");
+          }
+        } else {
+          const savedPhone = typeof window !== "undefined" ? localStorage.getItem("zigmaa_whatsapp_phone") : null;
+          if (!savedPhone) {
+            setQrStatus((data.status as any) || "NOT_LINKED");
+          }
         }
         if (data.qr) {
           setCachedQR(data.qr);
@@ -1398,7 +1415,7 @@ export default function WhatsAppPage() {
                 : m
             );
             chatMessagesCacheRef.current[cleanPhone] = updatedList;
-            if (activePhoneRef.current === cleanPhone) {
+            if (isSamePhoneNumber(activePhoneRef.current, cleanPhone)) {
               setMessages(updatedList);
             }
             loadConversations(true);
@@ -1465,16 +1482,13 @@ export default function WhatsAppPage() {
 
   // Active conversation object
   const activeChat = useMemo(() => {
-    if (qrStatus !== "CONNECTED") return null;
     if (!activePhone) return null;
-    const cleanActive = activePhone.replace(/[^0-9]/g, "");
     return (
       conversations.find((c) => {
-        const cleanC = c.phone.replace(/[^0-9]/g, "");
-        return (cleanC && cleanActive && cleanC === cleanActive) || c.id === activePhone || c.phone === activePhone;
+        return isSamePhoneNumber(c.phone, activePhone) || c.id === activePhone || c.phone === activePhone;
       }) || null
     );
-  }, [conversations, activePhone, qrStatus]);
+  }, [conversations, activePhone]);
 
   // Transform backend raw conversation into WhatsAppConversation
   const mapBackendConv = (raw: any, index: number): WhatsAppConversation => {
@@ -1568,9 +1582,12 @@ export default function WhatsAppPage() {
   };
 
   // Load conversations from backend
-  const loadConversations = useCallback(async (isSilent = false, repFilter?: string) => {
-    // Only load conversations if user is actually connected!
-    if (qrStatus !== "CONNECTED") {
+  const loadConversations = useCallback(async (isSilent = false, repFilter?: string, forceConnected = false) => {
+    const hasLivePhone = Boolean(qrPhoneRef.current || qrPhone || (typeof window !== "undefined" ? localStorage.getItem("zigmaa_whatsapp_phone") : null));
+    const isConn = forceConnected || qrStatus === "CONNECTED" || hasLivePhone;
+
+    // Only load conversations if user is actually connected or reconnecting!
+    if (!isConn && qrStatus !== "CONNECTING") {
       setConversations([]);
       setActivePhone("");
       setIsLoadingConversations(false);
@@ -1758,7 +1775,7 @@ export default function WhatsAppPage() {
       });
 
       // Guard: Ignore response if user switched to another contact in the meantime
-      if (activePhoneRef.current && activePhoneRef.current !== clean) {
+      if (activePhoneRef.current && !isSamePhoneNumber(activePhoneRef.current, clean)) {
         return;
       }
 
@@ -1864,7 +1881,7 @@ export default function WhatsAppPage() {
         // Store into in-memory cache for 0ms instant retrieval on chat switch
         chatMessagesCacheRef.current[clean] = finalMsgs;
 
-        if (activePhoneRef.current === clean) {
+        if (isSamePhoneNumber(activePhoneRef.current, clean)) {
           setMessages((prev) => {
             if (prev.length === finalMsgs.length) {
               const lastPrev = prev[prev.length - 1];
@@ -1881,17 +1898,17 @@ export default function WhatsAppPage() {
         // Mark unread messages as read in backend and update conversation list badge only if unread
         api.markWhatsAppConversationRead(clean).catch(() => {});
         setConversations((prev) => {
-          const match = prev.find(c => c.phone.replace(/[^0-9]/g, "") === clean);
+          const match = prev.find(c => isSamePhoneNumber(c.phone, clean));
           if (!match || match.unreadCount === 0) return prev;
           return prev.map((c) =>
-            c.phone.replace(/[^0-9]/g, "") === clean ? { ...c, unreadCount: 0 } : c
+            isSamePhoneNumber(c.phone, clean) ? { ...c, unreadCount: 0 } : c
           );
         });
       }
     } catch (e: any) {
       console.warn("Could not fetch messages for", phone, e);
     } finally {
-      if (activePhoneRef.current === clean) {
+      if (isSamePhoneNumber(activePhoneRef.current, clean)) {
         setIsLoadingMessages(false);
       }
     }
@@ -1899,9 +1916,10 @@ export default function WhatsAppPage() {
 
   // Initial load and auto-reload on session change
   useEffect(() => {
-    if (qrStatus === "CONNECTED" && (qrPhone || qrPhoneRef.current)) {
+    const hasPhone = Boolean(qrPhone || qrPhoneRef.current || (typeof window !== "undefined" ? localStorage.getItem("zigmaa_whatsapp_phone") : null));
+    if ((qrStatus === "CONNECTED" || qrStatus === "CONNECTING") && hasPhone) {
       loadConversations(true);
-    } else if (qrStatus !== "CONNECTED") {
+    } else if (qrStatus === "NOT_LINKED" && !hasPhone) {
       setConversations([]);
       setActivePhone("");
     }
@@ -2293,7 +2311,7 @@ export default function WhatsAppPage() {
             : m
         );
         chatMessagesCacheRef.current[cleanPhone] = updatedList;
-        if (activePhoneRef.current === cleanPhone) {
+        if (isSamePhoneNumber(activePhoneRef.current, cleanPhone)) {
           setMessages(updatedList);
         }
         loadConversations(true);
@@ -2601,7 +2619,7 @@ export default function WhatsAppPage() {
             : m
         );
         chatMessagesCacheRef.current[cleanPhone] = updatedList;
-        if (activePhoneRef.current === cleanPhone) {
+        if (isSamePhoneNumber(activePhoneRef.current, cleanPhone)) {
           setMessages(updatedList);
         }
         loadConversations(true);
@@ -3005,7 +3023,7 @@ export default function WhatsAppPage() {
             "flex-1 flex flex-col relative min-w-0 transition-colors",
             isDark ? "bg-[#0D0B14]" : "bg-[#F0F2F5]"
           )}>
-            {qrStatus === "CONNECTED" && activeChat ? (
+            {(qrStatus === "CONNECTED" || qrStatus === "CONNECTING" || Boolean(qrPhone || qrPhoneRef.current)) && activeChat ? (
               <>
                 {/* Chat Header */}
                 <div className={cn(
@@ -4885,12 +4903,25 @@ export default function WhatsAppPage() {
           if (phone) {
             setQrPhone(phone);
             qrPhoneRef.current = phone;
+            try {
+              localStorage.setItem("zigmaa_whatsapp_status", "CONNECTED");
+              localStorage.setItem("zigmaa_whatsapp_phone", phone);
+            } catch (_) {}
           }
           if (status === "CONNECTED") {
-            loadConversations(false);
+            loadConversations(false, undefined, true);
+            // WhatsApp Baileys syncs contacts in chunks over 2-5 seconds.
+            // Automatically poll and sync them so user never needs to press F5/refresh!
             setTimeout(() => {
+              loadConversations(true, undefined, true);
+            }, 2000);
+            setTimeout(() => {
+              loadConversations(true, undefined, true);
+            }, 4500);
+            setTimeout(() => {
+              loadConversations(true, undefined, true);
               setShowQRModal(false);
-            }, 1000);
+            }, 7000);
           }
         }}
       />

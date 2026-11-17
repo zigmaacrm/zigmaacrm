@@ -471,6 +471,55 @@ async def get_single_chat(
     return serializers.serialize_chat(chat, own_phone=phone)
 
 
+@router.get("/contacts/{phone}/avatar")
+async def get_contact_avatar(
+    phone: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Fetches the contact's WhatsApp profile picture via the Baileys bridge or cached chat avatar.
+    """
+    clean_p = re.sub(r"[^0-9]", "", str(phone or ""))
+    if not clean_p:
+        return {"phone": phone, "avatar_url": None}
+
+    # 1. Check if we already have it in whatsapp_chats
+    clean_10 = clean_p[-10:] if len(clean_p) >= 10 else clean_p
+    stmt = text(
+        """SELECT avatar_url FROM whatsapp_chats 
+           WHERE organization_id = :org_id AND (phone_number = :clean_p OR phone_number LIKE :p10)
+             AND avatar_url IS NOT NULL AND avatar_url != ''
+           LIMIT 1"""
+    )
+    res = await db.execute(stmt, {"org_id": current_user.organization_id, "clean_p": clean_p, "p10": f"%{clean_10}%"})
+    cached_avatar = res.scalar()
+    if cached_avatar:
+        return {"phone": clean_p, "avatar_url": cached_avatar}
+
+    # 2. Query Baileys bridge
+    session_row, _ = await repository.get_user_session(db, current_user.organization_id, current_user.id)
+    sid = (session_row.get("id") if session_row else None) or _get_user_session_id(current_user)
+    try:
+        bridge_res = await bridge.get_contact_avatar(sid, clean_p)
+        avatar_url = bridge_res.get("avatar_url") if isinstance(bridge_res, dict) else None
+        if avatar_url:
+            await db.execute(
+                text(
+                    """UPDATE whatsapp_chats 
+                       SET avatar_url = :av 
+                       WHERE organization_id = :org_id AND (phone_number = :clean_p OR phone_number LIKE :p10)"""
+                ),
+                {"av": avatar_url, "org_id": current_user.organization_id, "clean_p": clean_p, "p10": f"%{clean_10}%"}
+            )
+            await db.commit()
+            return {"phone": clean_p, "avatar_url": avatar_url}
+    except Exception:
+        pass
+
+    return {"phone": clean_p, "avatar_url": None}
+
+
 @router.patch("/chats/{chat_id}")
 async def update_chat_flags(
     chat_id: str,

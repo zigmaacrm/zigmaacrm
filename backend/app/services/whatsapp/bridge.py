@@ -250,6 +250,10 @@ async def refresh_avatar(session_id: str, chat_id: str) -> Dict[str, Any]:
     return await call("POST", f"/sessions/{session_id}/chats/{chat_id}/avatar", timeout=15.0)
 
 
+async def get_contact_avatar(session_id: str, phone: str) -> Dict[str, Any]:
+    return await call("GET", f"/sessions/{session_id}/contacts/{phone}/avatar", timeout=6.0)
+
+
 async def request_history(session_id: str, chat_id: str, count: int = 50) -> Dict[str, Any]:
     return await call("POST", f"/sessions/{session_id}/chats/{chat_id}/history", json={"count": count})
 

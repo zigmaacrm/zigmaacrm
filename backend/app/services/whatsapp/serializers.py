@@ -343,18 +343,20 @@ def serialize_session(row: Optional[Mapping[str, Any]], *, gateway_online: Optio
         except Exception:
             pass
 
-    linked = (status == "CONNECTED") and bool(clean_phone_digits)
-    if status == "CONNECTED":
+    has_credentials = bool(row.get("has_creds") or row.get("creds"))
+    is_explicit_logout = status == "LOGGED_OUT"
+    linked = bool(clean_phone_digits or has_credentials) and not is_explicit_logout
+
+    if linked:
         show_qr = False
         qr_val = None
-    elif not linked:
+        if status == "CONNECTED" and not stale:
+            status = "CONNECTED"
+        else:
+            status = "CONNECTING"
+    else:
         show_qr = bool(row.get("qr"))
         status = "SCAN_QR" if show_qr else ("NOT_LINKED" if status in ("DISCONNECTED", "NOT_LINKED", "LOGGED_OUT") else status)
-        qr_val = row.get("qr") if show_qr else None
-    else:
-        if stale and status in ("CONNECTED", "CONNECTING"):
-            status = "CONNECTING"
-        show_qr = bool(row.get("qr")) and not linked
         qr_val = row.get("qr") if show_qr else None
 
     last = None
@@ -368,7 +370,7 @@ def serialize_session(row: Optional[Mapping[str, Any]], *, gateway_online: Optio
     return {
         "status": status,
         "linked": linked,
-        "phone": (format_phone(raw_phone) or format_phone(clean_phone_digits)) if linked else None,
+        "phone": (format_phone(raw_phone) or format_phone(clean_phone_digits)) if (linked or bool(clean_phone_digits)) else None,
         "session_id": clean_phone_digits if linked else None,
         "name": row.get("push_name") if linked else None,
         "avatar_url": row.get("avatar_url") if linked else None,

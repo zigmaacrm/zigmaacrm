@@ -173,6 +173,16 @@ export function createHttpApp({ manager, config }) {
     })
   );
 
+  app.get(
+    '/sessions/:id/contacts/:phone/avatar',
+    wrap(async (req, res) => {
+      const session = manager.get(req.params.id);
+      if (!session) return res.json({ phone: req.params.phone, avatar_url: null });
+      const avatarUrl = await session.getProfilePicture(req.params.phone);
+      res.json({ phone: req.params.phone, avatar_url: avatarUrl });
+    })
+  );
+
   // ---- messaging -------------------------------------------------------
   app.post(
     '/sessions/:id/messages',
