@@ -820,6 +820,7 @@ from pydantic import BaseModel
 class SendEmailRequest(BaseModel):
     subject: str
     body: str
+    recipient_email: Optional[str] = None
 
 @router.post("/contacts/{contact_id}/send-email")
 async def send_contact_email(
@@ -833,8 +834,12 @@ async def send_contact_email(
     if not contact:
         raise HTTPException(status_code=404, detail="Contact not found")
 
-    if not contact.email:
+    target_email = (req.recipient_email or contact.email or "").strip()
+    if not target_email:
         raise HTTPException(status_code=400, detail="This contact does not have a registered email address")
+
+    if not contact.email and target_email:
+        contact.email = target_email
 
     if not req.subject.strip() or not req.body.strip():
         raise HTTPException(status_code=400, detail="Subject and body cannot be empty")
@@ -851,7 +856,7 @@ async def send_contact_email(
     dispatch_res = await dispatch_email_service(
         db=db,
         current_user=current_user,
-        to_email=contact.email,
+        to_email=target_email,
         subject=req.subject,
         body=req.body,
         contact_id=contact.id

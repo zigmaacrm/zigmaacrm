@@ -1997,7 +1997,7 @@ export const zigmaaApi = {
     return true;
   },
 
-  async sendContactEmail(id: number | string, data: { subject: string; body: string }): Promise<any> {
+  async sendContactEmail(id: number | string, data: { subject: string; body: string; recipient_email?: string }): Promise<any> {
     const res = await fetch(`${API_BASE}/contacts/${id}/send-email`, {
       method: "POST",
       headers: {
