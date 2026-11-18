@@ -90,12 +90,23 @@ export function useColumnVisibility(
   });
   const [isLoaded, setIsLoaded] = useState(true);
 
-  // When combinedColumns change, only update visibleColumns if there are new unconfigured columns
+  // When combinedColumns change, update visibleColumns: add new columns, and purge removed custom fields
   // Return `prev` if no change so React avoids infinite re-render loops
   useEffect(() => {
     setVisibleColumns((prev) => {
       let hasChanges = false;
       const next = { ...prev };
+      const validIds = new Set(combinedColumns.map((c) => c.id));
+
+      // 1. Purge removed / deleted fields so they NEVER linger
+      Object.keys(next).forEach((key) => {
+        if (!validIds.has(key)) {
+          delete next[key];
+          hasChanges = true;
+        }
+      });
+
+      // 2. Add new unconfigured columns
       combinedColumns.forEach((col) => {
         if (col.locked) {
           if (next[col.id] !== true) {
@@ -107,9 +118,16 @@ export function useColumnVisibility(
           hasChanges = true;
         }
       });
+
+      if (hasChanges && typeof window !== "undefined") {
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(next));
+        } catch (_) {}
+      }
+
       return hasChanges ? next : prev;
     });
-  }, [combinedColumns]);
+  }, [combinedColumns, storageKey]);
 
   const toggleColumn = useCallback((columnId: string) => {
     const col = combinedColumns.find((c) => c.id === columnId);

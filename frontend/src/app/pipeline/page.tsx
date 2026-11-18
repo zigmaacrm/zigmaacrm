@@ -542,7 +542,10 @@ export default function PipelineDealsPage() {
                 return (
                   <div
                     key={st.id || colIndex}
-                    onDragOver={(e) => e.preventDefault()}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                    }}
                     onDrop={(e) => {
                       e.preventDefault();
                       const dealId = e.dataTransfer.getData("dealId");
@@ -570,9 +573,31 @@ export default function PipelineDealsPage() {
                     </div>
 
                     {/* Column Body: Individual Vertical Scrollbar */}
-                    <div className="flex-1 p-3 space-y-2.5 overflow-y-auto custom-scrollbar flex flex-col">
+                    <div
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = "move";
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const dealId = e.dataTransfer.getData("dealId");
+                        if (dealId) handleStageChange(dealId, st.label);
+                      }}
+                      className="flex-1 p-3 space-y-2.5 overflow-y-auto custom-scrollbar flex flex-col"
+                    >
                       {stageDeals.length === 0 ? (
-                        <div className="min-h-[140px] border-2 border-dashed border-slate-200/80 rounded-xl flex items-center justify-center text-slate-400 text-xs font-normal select-none">
+                        <div
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = "move";
+                          }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            const dealId = e.dataTransfer.getData("dealId");
+                            if (dealId) handleStageChange(dealId, st.label);
+                          }}
+                          className="min-h-[140px] border-2 border-dashed border-slate-200/80 rounded-xl flex items-center justify-center text-slate-400 text-xs font-normal select-none"
+                        >
                           Drop deal here
                         </div>
                       ) : (
@@ -590,7 +615,10 @@ export default function PipelineDealsPage() {
                             <div
                               key={deal.id}
                               draggable
-                              onDragStart={(e) => e.dataTransfer.setData("dealId", String(deal.id))}
+                              onDragStart={(e) => {
+                                e.dataTransfer.setData("dealId", String(deal.id));
+                                e.dataTransfer.effectAllowed = "move";
+                              }}
                               onClick={() => setSelectedDealForDetails(deal)}
                               className="border border-slate-200/80 rounded-xl shadow-xs hover:shadow-md transition-shadow p-3.5 bg-white cursor-grab active:cursor-grabbing space-y-2.5 group shrink-0"
                             >

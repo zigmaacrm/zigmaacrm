@@ -276,10 +276,16 @@ export default function ContactSlideDrawer({
     if (!newNote.trim()) return;
     setSubmittingNote(true);
     try {
-      const newAct = {
+      const noteText = newNote.trim();
+      const savedAct = await api.createActivity({
+        contact_id: String(currentContact.id),
+        type: "NOTE",
+        notes: noteText
+      });
+      const newAct = savedAct || {
         id: Date.now(),
         type: "NOTE",
-        notes: newNote.trim(),
+        notes: noteText,
         created_at: new Date().toISOString()
       };
       setDetail((prev: any) => ({
@@ -289,8 +295,8 @@ export default function ContactSlideDrawer({
       setNewNote("");
       toast.success("Note Saved", "Interaction recorded to contact notes.");
       if (onUpdated) onUpdated();
-    } catch {
-      toast.error("Error", "Could not log note.");
+    } catch (err: any) {
+      toast.error("Error", err.message || "Could not log note.");
     } finally {
       setSubmittingNote(false);
     }
@@ -1229,18 +1235,28 @@ export default function ContactSlideDrawer({
 
               {/* Past notes */}
               <div className="space-y-2.5">
-                {timelineActivities.filter((a: any) => a.type === "NOTE" || a.notes).map((act: any) => (
-                  <div key={act.id} className="p-4 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-1.5">
-                    <div className="flex items-center justify-between text-[11px] text-slate-400">
-                      <span className="font-bold text-slate-600 flex items-center gap-1.5">
-                        <FileText className="w-3.5 h-3.5 text-slate-400" />
-                        <span>Call Note</span>
-                      </span>
-                      <span>{act.created_at ? formatDate(act.created_at) : "Recently"}</span>
-                    </div>
-                    <p className="text-xs text-slate-800 leading-relaxed font-medium">{act.notes}</p>
+                {timelineActivities.filter((a: any) => (a.type || "").toUpperCase() === "NOTE" || a.notes).length === 0 ? (
+                  <div className="p-8 text-center bg-white rounded-2xl border border-dashed border-slate-200 text-slate-400">
+                    <FileText className="w-8 h-8 mx-auto mb-2 text-slate-300 stroke-[1.5]" />
+                    <p className="text-xs font-semibold text-slate-600">No notes recorded yet</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">Use the box above to log internal discussions, calls, or meeting takeaways.</p>
                   </div>
-                ))}
+                ) : (
+                  timelineActivities
+                    .filter((a: any) => (a.type || "").toUpperCase() === "NOTE" || a.notes)
+                    .map((act: any) => (
+                      <div key={act.id} className="p-4 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-1.5">
+                        <div className="flex items-center justify-between text-[11px] text-slate-400">
+                          <span className="font-bold text-slate-600 flex items-center gap-1.5">
+                            <FileText className="w-3.5 h-3.5 text-slate-400" />
+                            <span>{(act.type || "").toUpperCase() === "NOTE" ? "Call & Discussion Note" : "Activity Note"}</span>
+                          </span>
+                          <span>{act.created_at ? formatDate(act.created_at) : "Recently"}</span>
+                        </div>
+                        <p className="text-xs text-slate-800 leading-relaxed font-medium">{act.notes || act.description}</p>
+                      </div>
+                    ))
+                )}
               </div>
             </div>
           )}

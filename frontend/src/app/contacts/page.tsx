@@ -128,6 +128,7 @@ export default function ContactsPage() {
   const [activeTab, setActiveTab] = useState<SmartViewTab>("All Contacts");
   const [showMoreViewsDropdown, setShowMoreViewsDropdown] = useState(false);
   const [selectedSource, setSelectedSource] = useState<string>("All Sources");
+  const [selectedStage, setSelectedStage] = useState<string>("All Stages");
   const [searchQuery, setSearchQuery] = useState("");
 
   // Dual View Mode: Table vs Kanban
@@ -275,14 +276,14 @@ export default function ContactsPage() {
     setContacts((prev) =>
       prev.map((c) =>
         String(c.id) === String(contactId)
-          ? { ...c, lifecycle_stage: targetStage.id, status: targetStage.name }
+          ? { ...c, lifecycle_stage: targetStage.name, status: targetStage.name }
           : c
       )
     );
     toast.info("Stage Changed", `Contact moved to "${targetStage.name}"`);
     try {
       await api.updateContact(contactId, {
-        lifecycle_stage: targetStage.id,
+        lifecycle_stage: targetStage.name,
         status: targetStage.name
       });
     } catch (err: any) {
@@ -702,7 +703,15 @@ export default function ContactsPage() {
         else if (!contactSrc.includes(targetSrc) && !targetSrc.includes(contactSrc)) return false;
       }
 
-      // 3. Instant Search Query
+      // 3. Stage Selector Filtering
+      if (selectedStage && selectedStage !== "All Stages") {
+        const contactStage = (c.lifecycle_stage || c.status || "New").toLowerCase().trim();
+        const targetSt = selectedStage.toLowerCase().trim();
+        const matchesDirect = contactStage === targetSt || contactStage.includes(targetSt) || targetSt.includes(contactStage);
+        if (!matchesDirect) return false;
+      }
+
+      // 4. Instant Search Query
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         return (
@@ -716,7 +725,7 @@ export default function ContactsPage() {
 
       return true;
     });
-  }, [contacts, activeTab, selectedSource, searchQuery, currentUser]);
+  }, [contacts, activeTab, selectedSource, selectedStage, searchQuery, currentUser]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -726,10 +735,11 @@ export default function ContactsPage() {
         totalRecords: contacts.length,
         visibleCount: filteredContacts.length,
         selectedSource,
+        selectedStage,
         sampleNames: filteredContacts.slice(0, 5).map((c) => c.name).filter(Boolean)
       };
     }
-  }, [activeTab, contacts.length, filteredContacts, selectedSource]);
+  }, [activeTab, contacts.length, filteredContacts, selectedSource, selectedStage]);
 
   const toggleSelectAll = () => {
     if (selectedIds.size > 0) {
@@ -890,6 +900,18 @@ export default function ContactsPage() {
                 options={availableSources.filter((s) => s !== "All Sources")}
                 onChange={(val) => {
                   setSelectedSource(val === "ALL" ? "All Sources" : val);
+                  setCurrentPage(1);
+                }}
+                className="shrink-0 [&>button]:h-9 [&>button]:py-0 [&>button]:px-2.5 sm:[&>button]:px-3 [&>button]:text-xs sm:[&>button]:text-sm"
+              />
+
+              {/* Dynamic Stage FilterSelect Dropdown */}
+              <FilterSelect
+                placeholder="Stage"
+                value={selectedStage === "All Stages" ? "" : selectedStage}
+                options={contactStages.map((s) => s.name)}
+                onChange={(val) => {
+                  setSelectedStage(val === "ALL" ? "All Stages" : val);
                   setCurrentPage(1);
                 }}
                 className="shrink-0 [&>button]:h-9 [&>button]:py-0 [&>button]:px-2.5 sm:[&>button]:px-3 [&>button]:text-xs sm:[&>button]:text-sm"
@@ -2055,7 +2077,10 @@ export default function ContactsPage() {
                 return (
                   <div
                     key={stage.id || colIndex}
-                    onDragOver={(e) => e.preventDefault()}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                    }}
                     onDrop={(e) => {
                       e.preventDefault();
                       const contactId = e.dataTransfer.getData("contactId");
@@ -2080,9 +2105,31 @@ export default function ContactsPage() {
                     </div>
 
                     {/* Column Body: Scrollable Cards Container */}
-                    <div className="flex-1 p-3 space-y-2.5 overflow-y-auto custom-scrollbar flex flex-col">
+                    <div
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = "move";
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const contactId = e.dataTransfer.getData("contactId");
+                        if (contactId) handleKanbanStageChange(contactId, stage);
+                      }}
+                      className="flex-1 p-3 space-y-2.5 overflow-y-auto custom-scrollbar flex flex-col"
+                    >
                       {stageContacts.length === 0 ? (
-                        <div className="min-h-[140px] border-2 border-dashed border-slate-200/80 rounded-xl flex items-center justify-center text-slate-400 text-xs font-normal select-none">
+                        <div
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = "move";
+                          }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            const contactId = e.dataTransfer.getData("contactId");
+                            if (contactId) handleKanbanStageChange(contactId, stage);
+                          }}
+                          className="min-h-[140px] border-2 border-dashed border-slate-200/80 rounded-xl flex items-center justify-center text-slate-400 text-xs font-normal select-none"
+                        >
                           Drop contact here
                         </div>
                       ) : (
@@ -2095,7 +2142,10 @@ export default function ContactsPage() {
                             <div
                               key={contact.id}
                               draggable
-                              onDragStart={(e) => e.dataTransfer.setData("contactId", String(contact.id))}
+                              onDragStart={(e) => {
+                                e.dataTransfer.setData("contactId", String(contact.id));
+                                e.dataTransfer.effectAllowed = "move";
+                              }}
                               onClick={() => {
                                 setOpenDrawerInEditMode(false);
                                 setSelectedContact(contact);

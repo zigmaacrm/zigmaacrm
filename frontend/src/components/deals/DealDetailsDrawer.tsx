@@ -20,7 +20,9 @@ import {
   Printer,
   Share2,
   Mail,
-  Phone
+  Phone,
+  MessageSquare,
+  Send
 } from "lucide-react";
 import WhatsAppIcon from "@/components/common/WhatsAppIcon";
 import { Deal, Invoice } from "@/lib/mockData";
@@ -61,6 +63,9 @@ export default function DealDetailsDrawer({
   const [showQuoteDrawer, setShowQuoteDrawer] = useState(false);
   const [dealQuotes, setDealQuotes] = useState<Invoice[]>([]);
   const [previewInvoice, setPreviewInvoice] = useState<Invoice | null>(null);
+  const [dealNotes, setDealNotes] = useState<any[]>([]);
+  const [newNote, setNewNote] = useState("");
+  const [submittingNote, setSubmittingNote] = useState(false);
 
   const loadDealQuotes = useCallback(async () => {
     if (!deal?.id) return;
@@ -70,11 +75,49 @@ export default function DealDetailsDrawer({
     } catch {}
   }, [deal?.id]);
 
+  const loadDealNotes = useCallback(async () => {
+    if (!deal?.id) return;
+    try {
+      const acts = await api.getActivities({ deal_id: String(deal.id) });
+      const notesOnly = (acts || []).filter((a: any) => (a.type || "").toUpperCase() === "NOTE" || a.notes);
+      setDealNotes(notesOnly);
+    } catch {}
+  }, [deal?.id]);
+
   useEffect(() => {
     if (isOpen && deal?.id) {
       loadDealQuotes();
+      loadDealNotes();
     }
-  }, [isOpen, deal?.id, loadDealQuotes]);
+  }, [isOpen, deal?.id, loadDealQuotes, loadDealNotes]);
+
+  const handleAddDealNote = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newNote.trim() || !deal?.id) return;
+    setSubmittingNote(true);
+    try {
+      const noteText = newNote.trim();
+      const savedAct = await api.createActivity({
+        deal_id: String(deal.id),
+        contact_id: deal.contact_id ? String(deal.contact_id) : undefined,
+        type: "NOTE",
+        notes: noteText
+      });
+      const newAct = savedAct || {
+        id: "act_" + Date.now(),
+        type: "NOTE",
+        notes: noteText,
+        created_at: new Date().toISOString()
+      };
+      setDealNotes((prev) => [newAct, ...prev]);
+      setNewNote("");
+      toast.success("Note Saved", "Interaction note recorded to deal.");
+    } catch (err: any) {
+      toast.error("Error", err.message || "Could not save note.");
+    } finally {
+      setSubmittingNote(false);
+    }
+  };
 
   if (!isOpen || !deal) return null;
 
@@ -399,6 +442,71 @@ export default function DealDetailsDrawer({
             ) : (
               <div className="p-3 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200 text-slate-400 text-xs">
                 No quotes generated yet for this deal.
+              </div>
+            )}
+          </div>
+
+          {/* Internal Notes & Activity Section */}
+          <div className="p-5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs space-y-3.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                <MessageSquare className="w-3.5 h-3.5 text-red-600" />
+                Internal Notes & Activity
+              </span>
+              <span className="text-[11px] text-slate-400 font-medium">
+                {dealNotes.length} note{dealNotes.length === 1 ? "" : "s"}
+              </span>
+            </div>
+
+            {/* Note Input Box */}
+            <form onSubmit={handleAddDealNote} className="space-y-2">
+              <textarea
+                value={newNote}
+                onChange={(e) => setNewNote(e.target.value)}
+                placeholder="Log a call summary, discussion notes, or next action items..."
+                rows={2}
+                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white transition-all resize-none shadow-2xs"
+              />
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  disabled={submittingNote || !newNote.trim()}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer"
+                >
+                  <Send className="w-3 h-3" />
+                  <span>{submittingNote ? "Saving..." : "Add Note"}</span>
+                </button>
+              </div>
+            </form>
+
+            {/* Notes List */}
+            {dealNotes.length > 0 ? (
+              <div className="space-y-2.5 pt-1">
+                {dealNotes.map((act) => (
+                  <div
+                    key={act.id}
+                    className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 space-y-1.5"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-white text-slate-700 border border-slate-200">
+                        <FileText className="w-2.5 h-2.5 text-red-600" />
+                        Internal Note
+                      </span>
+                      <span className="text-[10px] text-slate-400">
+                        {act.created_at ? formatDate(act.created_at) : "Recently"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-700 whitespace-pre-wrap leading-relaxed">
+                      {act.notes || act.description || "—"}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-4 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200 text-slate-400 text-xs">
+                <FileText className="w-6 h-6 mx-auto mb-1.5 text-slate-300 stroke-[1.5]" />
+                <p className="font-medium text-slate-600">No notes recorded yet</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">Use the box above to log internal discussion notes.</p>
               </div>
             )}
           </div>

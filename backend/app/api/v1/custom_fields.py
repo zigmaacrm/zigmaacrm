@@ -218,19 +218,15 @@ async def create_custom_field(
 @router.delete("/custom-fields/{field_id}")
 async def delete_custom_field(
     field_id: str,
-    hard_delete: bool = Query(False),
+    hard_delete: bool = Query(True),
     db: AsyncSession = Depends(get_db)
 ):
     res = await db.execute(select(CustomField).where(CustomField.id == field_id))
     cf = res.scalar_one_or_none()
     if not cf:
-        raise HTTPException(status_code=404, detail="Custom field not found")
+        return {"status": "success", "message": "Custom field already deleted", "id": field_id}
 
-    if hard_delete:
-        await db.delete(cf)
-    else:
-        cf.is_active = False
-
+    await db.delete(cf)
     await db.commit()
     return {
         "status": "success",

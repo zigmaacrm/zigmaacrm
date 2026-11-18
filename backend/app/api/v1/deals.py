@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, delete, text
 from typing import List, Optional, Any, Dict
 from pydantic import BaseModel
 import logging
@@ -455,9 +455,6 @@ async def update_deal(
         raise HTTPException(status_code=404, detail="Deal not found")
     if current_user.organization_id and deal.organization_id and deal.organization_id != current_user.organization_id:
         raise HTTPException(status_code=403, detail="Access denied: Cannot update a deal from another organization.")
-    if (current_user.role or "").upper() == "SALES_REP":
-        if deal.owner_id and deal.owner_id != current_user.id and deal.assigned_user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Access denied: You can only update deals assigned to you.")
 
     if "custom_properties" in deal_in:
         deal.custom_properties = deal_in["custom_properties"]
@@ -492,15 +489,28 @@ async def update_deal(
                     stage_obj = st_res.scalars().first()
                     if stage_obj:
                         break
-        if stage_obj:
-            deal.stage_id = stage_obj.id
-            cdata = dict(deal.custom_data or {})
-            cdata["stage"] = stage_obj.title
-            deal.custom_data = cdata
-            if "won" in stage_obj.title.lower():
-                deal.status = "WON"
-            elif "lost" in stage_obj.title.lower():
-                deal.status = "LOST"
+        if not stage_obj:
+            import uuid
+            new_stage = PipelineStage(
+                id=str(uuid.uuid4()),
+                pipeline_id=deal.pipeline_id,
+                title=target_stage,
+                stage_order=99,
+                probability=50,
+                color_code="#6366F1"
+            )
+            db.add(new_stage)
+            await db.flush()
+            stage_obj = new_stage
+
+        deal.stage_id = stage_obj.id
+        cdata = dict(deal.custom_data or {})
+        cdata["stage"] = stage_obj.title
+        deal.custom_data = cdata
+        if "won" in stage_obj.title.lower():
+            deal.status = "WON"
+        elif "lost" in stage_obj.title.lower():
+            deal.status = "LOST"
 
     for key, val in deal_in.items():
         if key not in ["id", "created_at", "custom_properties", "custom_data", "stage", "stage_id"] and hasattr(deal, key):
@@ -531,9 +541,6 @@ async def update_deal_stage(
 
     if current_user.organization_id and deal.organization_id and deal.organization_id != current_user.organization_id:
         raise HTTPException(status_code=403, detail="Access denied: Cannot update a deal from another organization.")
-    if (current_user.role or "").upper() == "SALES_REP":
-        if deal.owner_id and deal.owner_id != current_user.id and deal.assigned_user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Access denied: You can only update deals assigned to you.")
 
     target_stage = move_in.stage_id or move_in.stage
     if not target_stage:
@@ -646,8 +653,13 @@ async def delete_deal(
 
     if current_user.organization_id and deal.organization_id and deal.organization_id != current_user.organization_id:
         raise HTTPException(status_code=403, detail="Access denied: Cannot delete a deal from another organization.")
-    if (current_user.role or "").upper() == "SALES_REP":
-        raise HTTPException(status_code=403, detail="Access denied: Sales representatives are not authorized to delete deals.")
+
+    # Decouple foreign keys to prevent IntegrityError
+    await db.execute(delete(Activity).where(Activity.deal_id == deal_id))
+    try:
+        await db.execute(text("UPDATE invoices SET deal_id = NULL WHERE deal_id = :did"), {"did": deal_id})
+    except Exception:
+        pass
 
     await db.delete(deal)
     await db.commit()

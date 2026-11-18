@@ -1731,13 +1731,27 @@ export const zigmaaApi = {
 
   async deleteDeal(id: number | string): Promise<boolean> {
     try {
-      const res = await fetch(`${API_BASE}/deals/${id}`, { method: "DELETE" });
-      if (res.ok) return true;
-    } catch {}
-    const deals = getStorage<Deal[]>("zigmaa_deals", INITIAL_DEALS);
-    const filtered = deals.filter(d => String(d.id) !== String(id));
-    setStorage("zigmaa_deals", filtered);
-    return true;
+      const res = await fetch(`${API_BASE}/deals/${id}`, {
+        method: "DELETE",
+        headers: getAuthHeaders()
+      });
+      if (res.ok) {
+        clientMemoryCache.delete("deals:all");
+        clientMemoryCache.delete("deals:board");
+        const deals = getStorage<Deal[]>("zigmaa_deals", INITIAL_DEALS);
+        const filtered = deals.filter(d => String(d.id) !== String(id));
+        setStorage("zigmaa_deals", filtered);
+        return true;
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || "Failed to delete deal from server");
+      }
+    } catch (err) {
+      const deals = getStorage<Deal[]>("zigmaa_deals", INITIAL_DEALS);
+      const filtered = deals.filter(d => String(d.id) !== String(id));
+      setStorage("zigmaa_deals", filtered);
+      throw err;
+    }
   },
 
   // ===== CONTACTS CRUD =====
@@ -1940,17 +1954,21 @@ export const zigmaaApi = {
       });
       if (res.ok) {
         invalidateClientCache("contacts");
+        clientMemoryCache.delete("contacts:all");
         const contacts = getStorage<Contact[]>("zigmaa_contacts", INITIAL_CONTACTS);
         const remaining = contacts.filter(c => String(c.id) !== String(id));
         setStorage("zigmaa_contacts", remaining);
         return true;
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || "Failed to delete contact from server");
       }
-    } catch {}
-
-    const contacts = getStorage<Contact[]>("zigmaa_contacts", INITIAL_CONTACTS);
-    const remaining = contacts.filter(c => String(c.id) !== String(id));
-    setStorage("zigmaa_contacts", remaining);
-    return true;
+    } catch (err) {
+      const contacts = getStorage<Contact[]>("zigmaa_contacts", INITIAL_CONTACTS);
+      const remaining = contacts.filter(c => String(c.id) !== String(id));
+      setStorage("zigmaa_contacts", remaining);
+      throw err;
+    }
   },
 
   async bulkDeleteContacts(ids: (number | string)[]): Promise<boolean> {
@@ -2234,7 +2252,10 @@ export const zigmaaApi = {
     try {
       const res = await fetch(`${API_BASE}/custom-fields`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders()
+        },
         body: JSON.stringify(payload)
       });
       if (res.ok) {
@@ -2243,6 +2264,7 @@ export const zigmaaApi = {
         const filtered = list.filter(f => f.id !== created.id && f.key !== created.key);
         filtered.push(created);
         setStorage(`zigmaa_cf_${finalModule}`, filtered);
+        setStorage(`zigmaa_cf_${normModule}`, filtered);
         window.dispatchEvent(new CustomEvent("zigmaa_custom_fields_updated", { detail: { module: finalModule } }));
         return created;
       } else {
@@ -2259,12 +2281,16 @@ export const zigmaaApi = {
     const raw = (moduleOrEntity || "contacts").toLowerCase();
     const finalModule = raw.endsWith("s") ? raw : raw + "s";
     try {
-      const res = await fetch(`${API_BASE}/custom-fields/${fieldId}`, { method: "DELETE" });
+      const res = await fetch(`${API_BASE}/custom-fields/${fieldId}?hard_delete=true`, {
+        method: "DELETE",
+        headers: getAuthHeaders()
+      });
+      const list = getStorage<any[]>(`zigmaa_cf_${finalModule}`, []);
+      const filtered = list.filter(f => f.id !== fieldId && f.key !== fieldId && f.field_key !== fieldId);
+      setStorage(`zigmaa_cf_${finalModule}`, filtered);
+      setStorage(`zigmaa_cf_${raw}`, filtered);
+      window.dispatchEvent(new CustomEvent("zigmaa_custom_fields_updated", { detail: { module: finalModule } }));
       if (res.ok) {
-        const list = getStorage<any[]>(`zigmaa_cf_${finalModule}`, []);
-        const filtered = list.filter(f => f.id !== fieldId);
-        setStorage(`zigmaa_cf_${finalModule}`, filtered);
-        window.dispatchEvent(new CustomEvent("zigmaa_custom_fields_updated", { detail: { module: finalModule } }));
         return true;
       } else {
         const errJson = await res.json().catch(() => ({}));
@@ -2273,8 +2299,9 @@ export const zigmaaApi = {
     } catch (err: any) {
       console.error("deleteCustomField error:", err);
       const list = getStorage<any[]>(`zigmaa_cf_${finalModule}`, []);
-      const filtered = list.filter(f => f.id !== fieldId);
+      const filtered = list.filter(f => f.id !== fieldId && f.key !== fieldId && f.field_key !== fieldId);
       setStorage(`zigmaa_cf_${finalModule}`, filtered);
+      setStorage(`zigmaa_cf_${raw}`, filtered);
       window.dispatchEvent(new CustomEvent("zigmaa_custom_fields_updated", { detail: { module: finalModule } }));
       return true;
     }
@@ -3124,7 +3151,7 @@ export const zigmaaApi = {
     };
   },
 
-  async getActivities(params?: { contact_id?: string; type?: string }): Promise<any[]> {
+  async getActivities(params?: { contact_id?: string; deal_id?: string; lead_id?: string; type?: string }): Promise<any[]> {
     try {
       const query = new URLSearchParams(params as any).toString();
       const res = await fetch(`${API_BASE}/activities${query ? `?${query}` : ""}`, {

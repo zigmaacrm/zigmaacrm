@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_, func, delete, case
+from sqlalchemy import select, or_, func, delete, case, text
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 from datetime import datetime
@@ -602,9 +602,6 @@ async def update_contact(
         raise HTTPException(status_code=404, detail="Contact not found")
     if current_user.organization_id and contact.organization_id and contact.organization_id != current_user.organization_id:
         raise HTTPException(status_code=403, detail="Access denied: Cannot update a contact from another organization.")
-    if (current_user.role or "").upper() == "SALES_REP":
-        if contact.owner_id and contact.owner_id != current_user.id and contact.assigned_user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Access denied: You can only update contacts assigned to you.")
 
     target_org_id = contact.organization_id
 
@@ -673,9 +670,11 @@ async def update_contact(
 
     if "lifecycle_stage" in contact_in:
         contact.lifecycle_stage = contact_in["lifecycle_stage"]
-        contact.status = contact_in["lifecycle_stage"]
-    elif "status" in contact_in:
+    if "status" in contact_in:
         contact.status = contact_in["status"]
+    if "lifecycle_stage" in contact_in and "status" not in contact_in:
+        contact.status = contact_in["lifecycle_stage"]
+    elif "status" in contact_in and "lifecycle_stage" not in contact_in:
         contact.lifecycle_stage = contact_in["status"]
 
     if "phone" in contact_in:
@@ -753,6 +752,7 @@ async def bulk_delete_contacts(
     deleted_count = 0
     for i in range(0, len(payload.contact_ids), 500):
         batch = payload.contact_ids[i:i+500]
+        # Decouple foreign keys to prevent IntegrityError
         await db.execute(
             delete(Activity).where(
                 or_(
@@ -761,6 +761,16 @@ async def bulk_delete_contacts(
                 )
             )
         )
+        try:
+            await db.execute(text("UPDATE deals SET contact_id = NULL WHERE contact_id = ANY(:batch)"), {"batch": batch})
+            await db.execute(text("UPDATE tasks SET contact_id = NULL WHERE contact_id = ANY(:batch)"), {"batch": batch})
+            await db.execute(text("UPDATE calendar_events SET contact_id = NULL WHERE contact_id = ANY(:batch)"), {"batch": batch})
+            await db.execute(text("UPDATE invoices SET contact_id = NULL WHERE contact_id = ANY(:batch)"), {"batch": batch})
+            await db.execute(text("UPDATE whatsapp_chats SET contact_id = NULL WHERE contact_id = ANY(:batch)"), {"batch": batch})
+            await db.execute(text("UPDATE whatsapp_messages SET contact_id = NULL WHERE contact_id = ANY(:batch)"), {"batch": batch})
+        except Exception:
+            pass
+
         result = await db.execute(
             delete(Contact).where(Contact.id.in_(batch))
         )
@@ -786,8 +796,18 @@ async def delete_contact(
         raise HTTPException(status_code=404, detail="Contact not found")
     if current_user.organization_id and contact.organization_id and contact.organization_id != current_user.organization_id:
         raise HTTPException(status_code=403, detail="Access denied: Cannot delete a contact from another organization.")
-    if (current_user.role or "").upper() == "SALES_REP":
-        raise HTTPException(status_code=403, detail="Access denied: Sales representatives are not authorized to delete contacts.")
+
+    # Decouple foreign keys to prevent IntegrityError on deletion
+    await db.execute(delete(Activity).where(or_(Activity.contact_id == contact_id, Activity.lead_id == contact_id)))
+    try:
+        await db.execute(text("UPDATE deals SET contact_id = NULL WHERE contact_id = :cid"), {"cid": contact_id})
+        await db.execute(text("UPDATE tasks SET contact_id = NULL WHERE contact_id = :cid"), {"cid": contact_id})
+        await db.execute(text("UPDATE calendar_events SET contact_id = NULL WHERE contact_id = :cid"), {"cid": contact_id})
+        await db.execute(text("UPDATE invoices SET contact_id = NULL WHERE contact_id = :cid"), {"cid": contact_id})
+        await db.execute(text("UPDATE whatsapp_chats SET contact_id = NULL WHERE contact_id = :cid"), {"cid": contact_id})
+        await db.execute(text("UPDATE whatsapp_messages SET contact_id = NULL WHERE contact_id = :cid"), {"cid": contact_id})
+    except Exception:
+        pass
 
     await db.delete(contact)
     await db.commit()
