@@ -206,68 +206,92 @@ export default function ContactsPage() {
     return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   };
 
-  // Helper: Filter contacts for a specific Kanban stage
-  const getContactsForStage = (stage: ContactStageConfig, colIndex: number) => {
-    return filteredContacts.filter((c) => {
-      const rawStage = (c.lifecycle_stage || c.status || "").trim().toLowerCase();
-      const stageId = stage.id.trim().toLowerCase();
-      const stageName = stage.name.trim().toLowerCase();
+  // Deterministic helper: Maps each contact to EXACTLY ONE stage in the Kanban board
+  const getStageIdForContact = useCallback((c: Contact): string => {
+    const raw = (c.lifecycle_stage || c.status || "new").trim().toLowerCase();
+    if (!raw) return contactStages[0]?.id || "new_leads";
 
-      // 1. Direct match on id or name
-      if (rawStage === stageId || rawStage === stageName) return true;
+    // 1. Direct exact match by id
+    const directIdMatch = contactStages.find((s) => s.id.trim().toLowerCase() === raw);
+    if (directIdMatch) return directIdMatch.id;
 
-      // 2. Standard normalized mapping
-      if (stageId === "new_leads" || stageName.includes("new") || stageName.includes("lead")) {
-        if (rawStage === "new" || rawStage === "new lead" || rawStage === "new leads" || rawStage === "lead" || rawStage === "new_leads" || !rawStage) {
-          return true;
-        }
-      }
-      if (stageId === "contacted" || stageName.includes("contacted")) {
-        if (rawStage === "contacted" || rawStage === "in_contact" || rawStage === "reached") {
-          return true;
-        }
-      }
-      if (stageId === "qualified" || stageName.includes("qualified")) {
-        if (rawStage === "qualified" || rawStage === "interested") {
-          return true;
-        }
-      }
-      if (stageId === "proposal_sent" || stageName.includes("proposal")) {
-        if (rawStage.includes("proposal") || rawStage.includes("quote") || rawStage === "proposal_sent") {
-          return true;
-        }
-      }
-      if (stageId === "customer" || stageName.includes("customer")) {
-        if (rawStage === "customer" || rawStage === "client" || rawStage === "won" || rawStage === "converted") {
-          return true;
-        }
-      }
-      if (stageId === "lost" || stageName.includes("lost") || stageName.includes("unqualified")) {
-        if (rawStage === "lost" || rawStage === "unqualified" || rawStage === "disqualified" || rawStage === "junk") {
-          return true;
-        }
-      }
+    // 2. Direct exact match by name
+    const directNameMatch = contactStages.find((s) => s.name.trim().toLowerCase() === raw);
+    if (directNameMatch) return directNameMatch.id;
 
-      // 3. Fallback: If colIndex === 0 (the first stage, e.g. "New Leads"),
-      // any contact that doesn't match any other column goes into the first stage!
-      if (colIndex === 0) {
-        const matchesAnyOther = contactStages.some((otherSt, idx) => {
-          if (idx === 0) return false;
-          const osl = otherSt.name.trim().toLowerCase();
-          const osi = otherSt.id.trim().toLowerCase();
-          if (rawStage === osi || rawStage === osl) return true;
-          if ((osi === "contacted" || osl.includes("contacted")) && (rawStage === "contacted" || rawStage === "in_contact" || rawStage === "reached")) return true;
-          if ((osi === "qualified" || osl.includes("qualified")) && (rawStage === "qualified" || rawStage === "interested")) return true;
-          if ((osi === "proposal_sent" || osl.includes("proposal")) && (rawStage.includes("proposal") || rawStage.includes("quote") || rawStage === "proposal_sent")) return true;
-          if ((osi === "customer" || osl.includes("customer")) && (rawStage === "customer" || rawStage === "client" || rawStage === "won" || rawStage === "converted")) return true;
-          if ((osi === "lost" || osl.includes("lost") || osl.includes("unqualified")) && (rawStage === "lost" || rawStage === "unqualified" || rawStage === "disqualified" || rawStage === "junk")) return true;
-          return false;
-        });
-        if (!matchesAnyOther) return true;
-      }
+    // 3. Strict semantic classification (MUTUALLY EXCLUSIVE)
+    // Lost / Unqualified: Check this BEFORE qualified so "unqualified" is never treated as "qualified"
+    if (raw === "lost" || raw === "unqualified" || raw === "disqualified" || raw === "junk") {
+      const lostStage = contactStages.find(
+        (s) =>
+          s.id.toLowerCase() === "lost" ||
+          s.name.toLowerCase().includes("lost") ||
+          s.name.toLowerCase().includes("unqualif")
+      );
+      if (lostStage) return lostStage.id;
+    }
 
-      return false;
-    });
+    // Customer / Won
+    if (raw === "customer" || raw === "client" || raw === "won" || raw === "converted") {
+      const customerStage = contactStages.find(
+        (s) =>
+          s.id.toLowerCase() === "customer" ||
+          s.name.toLowerCase().includes("customer") ||
+          s.name.toLowerCase().includes("won")
+      );
+      if (customerStage) return customerStage.id;
+    }
+
+    // Proposal / Quote
+    if (raw.includes("proposal") || raw.includes("quote") || raw === "proposal_sent") {
+      const propStage = contactStages.find(
+        (s) =>
+          s.id.toLowerCase() === "proposal_sent" ||
+          s.name.toLowerCase().includes("proposal") ||
+          s.name.toLowerCase().includes("quote")
+      );
+      if (propStage) return propStage.id;
+    }
+
+    // Qualified / Interested: CRITICAL FIX -> ensure stage name does NOT contain "unqualif"
+    if (raw === "qualified" || raw === "interested") {
+      const qualStage = contactStages.find(
+        (s) =>
+          s.id.toLowerCase() === "qualified" ||
+          (s.name.toLowerCase().includes("qualified") && !s.name.toLowerCase().includes("unqualif"))
+      );
+      if (qualStage) return qualStage.id;
+    }
+
+    // Contacted / Reached
+    if (raw === "contacted" || raw === "in_contact" || raw === "reached") {
+      const contactedStage = contactStages.find(
+        (s) => s.id.toLowerCase() === "contacted" || s.name.toLowerCase().includes("contacted")
+      );
+      if (contactedStage) return contactedStage.id;
+    }
+
+    // New / Lead
+    if (
+      raw === "new" ||
+      raw === "lead" ||
+      raw === "new lead" ||
+      raw === "new leads" ||
+      raw === "new_leads"
+    ) {
+      const newStage = contactStages.find(
+        (s) => s.id.toLowerCase() === "new_leads" || s.name.toLowerCase().includes("new") || s.name.toLowerCase().includes("lead")
+      );
+      if (newStage) return newStage.id;
+    }
+
+    // 4. Default: fallback to first column
+    return contactStages[0]?.id || "new_leads";
+  }, [contactStages]);
+
+  // Helper: Filter contacts for a specific Kanban stage (Guaranteed mutually exclusive: 1 contact in 1 column only!)
+  const getContactsForStage = (stage: ContactStageConfig) => {
+    return filteredContacts.filter((c) => getStageIdForContact(c) === stage.id);
   };
 
   // Kanban Stage Change Handler with Optimistic UI & Backend Persist
@@ -2071,7 +2095,7 @@ export default function ContactsPage() {
           <div className="w-full flex-1 min-h-0 overflow-x-auto pb-4 pt-1 custom-scrollbar">
             <div className="flex items-start gap-4 min-w-max h-full">
               {contactStages.map((stage, colIndex) => {
-                const stageContacts = getContactsForStage(stage, colIndex);
+                const stageContacts = getContactsForStage(stage);
                 const colorPreset = getContactStageColorPreset(stage.color);
 
                 return (

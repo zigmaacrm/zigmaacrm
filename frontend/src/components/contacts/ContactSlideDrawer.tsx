@@ -27,7 +27,9 @@ import {
   TrendingUp,
   Edit2,
   Check,
-  Briefcase
+  Briefcase,
+  Users,
+  Timer
 } from "lucide-react";
 import Link from "next/link";
 import { Contact, Deal } from "@/lib/mockData";
@@ -69,7 +71,7 @@ export default function ContactSlideDrawer({
   const { toast } = useToast();
   const [detail, setDetail] = useState<any>(null);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<"Overview" | "Timeline" | "Activities" | "Notes">("Overview");
+  const [activeTab, setActiveTab] = useState<"Overview" | "Activities & Notes">("Overview");
 
   // Inline Editing State (Twozo style)
   const [editingField, setEditingField] = useState<string | null>(null);
@@ -85,8 +87,15 @@ export default function ContactSlideDrawer({
   });
   const [savingField, setSavingField] = useState(false);
   
-  // Note logger state
+  // Note & Activity logger state
   const [newNote, setNewNote] = useState("");
+  const [noteType, setNoteType] = useState<"NOTE" | "CALL" | "MEETING" | "WHATSAPP" | "EMAIL">("NOTE");
+  const [noteDate, setNoteDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [noteTime, setNoteTime] = useState(() => {
+    const d = new Date();
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  });
+  const [noteDuration, setNoteDuration] = useState("15");
   const [submittingNote, setSubmittingNote] = useState(false);
 
   // Quick Deal Modal State
@@ -277,15 +286,23 @@ export default function ContactSlideDrawer({
     setSubmittingNote(true);
     try {
       const noteText = newNote.trim();
+      const scheduledIso = `${noteDate}T${noteTime}:00`;
+      const durationFormatted = noteDuration ? `${noteDuration} mins` : "";
+      const metaPrefix = durationFormatted ? `[Duration: ${durationFormatted}] ` : "";
+      const fullNote = `${metaPrefix}${noteText}`;
+
       const savedAct = await api.createActivity({
         contact_id: String(currentContact.id),
-        type: "NOTE",
-        notes: noteText
+        type: noteType,
+        notes: fullNote,
+        scheduled_at: scheduledIso,
+        status: "COMPLETED"
       });
       const newAct = savedAct || {
-        id: Date.now(),
-        type: "NOTE",
-        notes: noteText,
+        id: "act_" + Date.now(),
+        type: noteType,
+        notes: fullNote,
+        scheduled_at: scheduledIso,
         created_at: new Date().toISOString()
       };
       setDetail((prev: any) => ({
@@ -293,10 +310,10 @@ export default function ContactSlideDrawer({
         activities: [newAct, ...(prev?.activities || [])]
       }));
       setNewNote("");
-      toast.success("Note Saved", "Interaction recorded to contact notes.");
+      toast.success("Activity Saved", `${noteType} interaction recorded.`);
       if (onUpdated) onUpdated();
     } catch (err: any) {
-      toast.error("Error", err.message || "Could not log note.");
+      toast.error("Error", err.message || "Could not log activity.");
     } finally {
       setSubmittingNote(false);
     }
@@ -494,9 +511,9 @@ export default function ContactSlideDrawer({
           </div>
         </div>
 
-        {/* 3. CONTENT TABS: [ Overview | Timeline | Activities | Notes ] */}
+        {/* 3. CONTENT TABS: [ Overview | Activities & Notes ] */}
         <div className="border-b border-slate-200 px-6 bg-white flex items-center gap-6">
-          {(["Overview", "Timeline", "Activities", "Notes"] as const).map((tab) => (
+          {(["Overview", "Activities & Notes"] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -1172,92 +1189,238 @@ export default function ContactSlideDrawer({
             </div>
           )}
 
-          {/* TAB 2 & 3: TIMELINE / ACTIVITIES */}
-          {(activeTab === "Timeline" || activeTab === "Activities") && (
-            <div className="space-y-4 animate-in fade-in duration-100">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 block">
-                Activity & Interaction History
-              </span>
-
-              {timelineActivities.length === 0 ? (
-                <div className="p-8 text-center bg-white rounded-2xl border border-slate-200 text-xs text-slate-500">
-                  <ActivityIcon className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                  <p className="font-semibold text-slate-700">No activities recorded</p>
-                  <p className="text-slate-400 mt-0.5">Calls, meetings, and updates will be logged here.</p>
-                </div>
-              ) : (
-                <div className="space-y-2.5">
-                  {timelineActivities.map((act: any) => (
-                    <div key={act.id} className="p-4 bg-white rounded-2xl border border-slate-200 shadow-2xs flex items-start gap-3">
-                      <div className="p-2 rounded-xl bg-red-100 text-red-600 shrink-0 mt-0.5">
-                        <Clock className="w-4 h-4" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-bold text-slate-800">{act.notes || act.description || "Activity recorded"}</p>
-                        <span className="text-[11px] text-slate-400 block mt-1">
-                          {act.created_at ? formatDate(act.created_at) : "Recently"}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* TAB 4: NOTES TAB (Rich Note Logger) */}
-          {activeTab === "Notes" && (
-            <div className="space-y-4 animate-in fade-in duration-100">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 block">
-                Call & Meeting Notes
-              </span>
-
-              <form onSubmit={handleAddNote} className="p-4 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-3">
-                <textarea
-                  rows={3}
-                  value={newNote}
-                  onChange={(e) => setNewNote(e.target.value)}
-                  placeholder="Record summary of client call, key requirements, negotiation takeaways..."
-                  className="w-full bg-slate-50 text-slate-900 text-xs p-3.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white resize-none"
-                />
+          {/* TAB 2: ACTIVITIES & NOTES (Unified Activity & Note Logger + History) */}
+          {activeTab === "Activities & Notes" && (
+            <div className="space-y-6 animate-in fade-in duration-150">
+              
+              {/* TOP: + ADD NOTE & ACTIVITY FORM */}
+              <div className="p-5 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-4">
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] text-slate-400 font-medium">Recorded to interaction timeline</span>
-                  <button
-                    type="submit"
-                    disabled={submittingNote}
-                    className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                  >
-                    <Send className="w-3.5 h-3.5" />
-                    <span>{submittingNote ? "Saving..." : "Save Note"}</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <span className="w-7 h-7 rounded-xl bg-red-50 text-red-600 flex items-center justify-center font-bold">
+                      <Plus className="w-4 h-4" />
+                    </span>
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800">Add Note & Activity</h4>
+                      <p className="text-[11px] text-slate-400">Record calls, meetings, WhatsApp conversations, or internal notes</p>
+                    </div>
+                  </div>
                 </div>
-              </form>
 
-              {/* Past notes */}
-              <div className="space-y-2.5">
-                {timelineActivities.filter((a: any) => (a.type || "").toUpperCase() === "NOTE" || a.notes).length === 0 ? (
+                <form onSubmit={handleAddNote} className="space-y-3.5 pt-1">
+                  {/* Activity Type Selector Pills */}
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-500 block mb-1.5 uppercase tracking-wider">
+                      Activity Type
+                    </label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        { type: "NOTE", label: "Note", icon: FileText },
+                        { type: "CALL", label: "Call", icon: Phone },
+                        { type: "MEETING", label: "Meeting", icon: Users },
+                        { type: "WHATSAPP", label: "WhatsApp", icon: WhatsAppIcon },
+                        { type: "EMAIL", label: "Email", icon: Mail },
+                      ].map((item) => {
+                        const Icon = item.icon;
+                        const isSelected = noteType === item.type;
+                        return (
+                          <button
+                            key={item.type}
+                            type="button"
+                            onClick={() => setNoteType(item.type as any)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer border ${
+                              isSelected
+                                ? "bg-red-600 text-white border-red-600 shadow-xs"
+                                : "bg-slate-50 text-slate-600 border-slate-200/80 hover:bg-slate-100"
+                            }`}
+                          >
+                            <Icon className={`w-3.5 h-3.5 ${item.type === "WHATSAPP" && !isSelected ? "text-emerald-600" : ""}`} />
+                            <span>{item.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Note / Description Textarea */}
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-500 block mb-1.5 uppercase tracking-wider">
+                      Description / Notes
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={newNote}
+                      onChange={(e) => setNewNote(e.target.value)}
+                      placeholder={`Enter ${noteType.toLowerCase()} discussion takeaways, key client requirements, or next steps...`}
+                      className="w-full bg-slate-50 text-slate-900 text-xs p-3.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white resize-none transition-all placeholder:text-slate-400"
+                    />
+                  </div>
+
+                  {/* Date, Time & Duration row */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-0.5">
+                    {/* Date */}
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-500 flex items-center gap-1 mb-1.5 uppercase tracking-wider">
+                        <Calendar className="w-3 h-3 text-slate-400" />
+                        Date
+                      </label>
+                      <input
+                        type="date"
+                        value={noteDate}
+                        onChange={(e) => setNoteDate(e.target.value)}
+                        className="w-full bg-slate-50 text-slate-800 text-xs px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white"
+                      />
+                    </div>
+
+                    {/* Time */}
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-500 flex items-center gap-1 mb-1.5 uppercase tracking-wider">
+                        <Clock className="w-3 h-3 text-slate-400" />
+                        Time
+                      </label>
+                      <input
+                        type="time"
+                        value={noteTime}
+                        onChange={(e) => setNoteTime(e.target.value)}
+                        className="w-full bg-slate-50 text-slate-800 text-xs px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white"
+                      />
+                    </div>
+
+                    {/* Duration */}
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-500 flex items-center gap-1 mb-1.5 uppercase tracking-wider">
+                        <Timer className="w-3 h-3 text-slate-400" />
+                        Duration
+                      </label>
+                      <select
+                        value={noteDuration}
+                        onChange={(e) => setNoteDuration(e.target.value)}
+                        className="w-full bg-slate-50 text-slate-800 text-xs px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white cursor-pointer"
+                      >
+                        <option value="5">5 mins</option>
+                        <option value="10">10 mins</option>
+                        <option value="15">15 mins</option>
+                        <option value="30">30 mins</option>
+                        <option value="45">45 mins</option>
+                        <option value="60">1 hour</option>
+                        <option value="90">1.5 hours</option>
+                        <option value="120">2 hours</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Form Footer Action */}
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                    <span className="text-[11px] text-slate-400 font-medium">
+                      Logged to timeline & activity history
+                    </span>
+                    <button
+                      type="submit"
+                      disabled={submittingNote || !newNote.trim()}
+                      className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>{submittingNote ? "Saving..." : "Add Note"}</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              {/* BOTTOM: ACTIVITY & NOTES HISTORY */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                      Interaction History
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200/70 text-slate-700">
+                      {timelineActivities.length}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-400 font-medium">Newest first</span>
+                </div>
+
+                {timelineActivities.length === 0 ? (
                   <div className="p-8 text-center bg-white rounded-2xl border border-dashed border-slate-200 text-slate-400">
                     <FileText className="w-8 h-8 mx-auto mb-2 text-slate-300 stroke-[1.5]" />
-                    <p className="text-xs font-semibold text-slate-600">No notes recorded yet</p>
-                    <p className="text-[11px] text-slate-400 mt-0.5">Use the box above to log internal discussions, calls, or meeting takeaways.</p>
+                    <p className="text-xs font-semibold text-slate-600">No activity history recorded yet</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">Use the "+ Add Note" form above to log call takeaways, meetings, or notes.</p>
                   </div>
                 ) : (
-                  timelineActivities
-                    .filter((a: any) => (a.type || "").toUpperCase() === "NOTE" || a.notes)
-                    .map((act: any) => (
-                      <div key={act.id} className="p-4 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-1.5">
-                        <div className="flex items-center justify-between text-[11px] text-slate-400">
-                          <span className="font-bold text-slate-600 flex items-center gap-1.5">
-                            <FileText className="w-3.5 h-3.5 text-slate-400" />
-                            <span>{(act.type || "").toUpperCase() === "NOTE" ? "Call & Discussion Note" : "Activity Note"}</span>
-                          </span>
-                          <span>{act.created_at ? formatDate(act.created_at) : "Recently"}</span>
+                  <div className="space-y-2.5">
+                    {timelineActivities.map((act: any) => {
+                      const rawType = (act.type || "NOTE").toUpperCase();
+                      const rawText = act.notes || act.description || "Activity recorded";
+                      
+                      // Extract duration if encoded e.g. [Duration: 15 mins]
+                      const durationMatch = rawText.match(/\[Duration:\s*([^\]]+)\]/i);
+                      const durationStr = durationMatch ? durationMatch[1] : null;
+                      const cleanText = rawText.replace(/\[Duration:\s*[^\]]+\]\s*/i, "");
+
+                      const dateToDisplay = act.scheduled_at || act.created_at;
+
+                      return (
+                        <div
+                          key={act.id}
+                          className="p-4 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-2 hover:border-slate-300 transition-colors"
+                        >
+                          <div className="flex items-center justify-between gap-2 text-xs">
+                            <div className="flex items-center gap-2">
+                              {rawType === "CALL" && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200/60">
+                                  <Phone className="w-3 h-3" /> Call
+                                </span>
+                              )}
+                              {rawType === "MEETING" && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200/60">
+                                  <Users className="w-3 h-3" /> Meeting
+                                </span>
+                              )}
+                              {rawType === "WHATSAPP" && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/60">
+                                  <WhatsAppIcon className="w-3 h-3 fill-current" /> WhatsApp
+                                </span>
+                              )}
+                              {rawType === "EMAIL" && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200/60">
+                                  <Mail className="w-3 h-3" /> Email
+                                </span>
+                              )}
+                              {(rawType === "NOTE" || (!["CALL", "MEETING", "WHATSAPP", "EMAIL"].includes(rawType))) && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200/60">
+                                  <FileText className="w-3 h-3" /> Note
+                                </span>
+                              )}
+
+                              {durationStr && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200/60">
+                                  <Timer className="w-2.5 h-2.5 text-slate-400" />
+                                  {durationStr}
+                                </span>
+                              )}
+                            </div>
+
+                            <span className="text-[11px] text-slate-400 font-medium shrink-0 flex items-center gap-1">
+                              <Clock className="w-3 h-3 text-slate-300" />
+                              {dateToDisplay ? formatDate(dateToDisplay) : "Recently"}
+                            </span>
+                          </div>
+
+                          <p className="text-xs text-slate-800 leading-relaxed font-medium whitespace-pre-wrap">
+                            {cleanText}
+                          </p>
+
+                          <div className="pt-1 flex items-center justify-between text-[10px] text-slate-400 border-t border-slate-100/80">
+                            <span>Logged by {currentContact.assigned_to || (currentContact as any).assigned_user_name || "Team Member"}</span>
+                            <span className="uppercase text-[9px] font-bold tracking-wider text-slate-300">Recorded</span>
+                          </div>
                         </div>
-                        <p className="text-xs text-slate-800 leading-relaxed font-medium">{act.notes || act.description}</p>
-                      </div>
-                    ))
+                      );
+                    })}
+                  </div>
                 )}
               </div>
+
             </div>
           )}
 

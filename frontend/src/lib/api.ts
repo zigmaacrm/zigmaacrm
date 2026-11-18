@@ -3128,6 +3128,7 @@ export const zigmaaApi = {
     type: string;
     notes?: string;
     status?: string;
+    scheduled_at?: string;
   }): Promise<any> {
     try {
       const res = await fetch(`${API_BASE}/activities`, {

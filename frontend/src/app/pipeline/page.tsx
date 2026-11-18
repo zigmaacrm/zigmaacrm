@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   Handshake,
@@ -368,6 +368,44 @@ export default function PipelineDealsPage() {
     return pipelineStages.map((s) => s.label);
   }, [pipelineStages]);
 
+  // Deterministic helper: Maps each deal to EXACTLY ONE stage in the Kanban board
+  const getStageIdForDeal = useCallback((d: Deal): string => {
+    const ds = (d.stage || (d as any).stage_id || "").trim().toLowerCase();
+    if (!ds) return pipelineStages[0]?.id || "new";
+
+    // 1. Exact match by id or label
+    const exact = pipelineStages.find((s) => s.id.toLowerCase() === ds || s.label.toLowerCase() === ds);
+    if (exact) return exact.id;
+
+    // 2. Semantic matching (mutually exclusive)
+    if (ds.includes("lost") || ds.includes("disqualif")) {
+      const lost = pipelineStages.find((s) => s.id.toLowerCase() === "lost" || s.label.toLowerCase().includes("lost"));
+      if (lost) return lost.id;
+    }
+    if (ds.includes("won") || ds.includes("customer")) {
+      const won = pipelineStages.find((s) => s.id.toLowerCase() === "won" || s.label.toLowerCase().includes("won"));
+      if (won) return won.id;
+    }
+    if (ds.includes("negotiat")) {
+      const neg = pipelineStages.find((s) => s.label.toLowerCase().includes("negotiat"));
+      if (neg) return neg.id;
+    }
+    if (ds.includes("proposal") || ds.includes("quote")) {
+      const prop = pipelineStages.find((s) => s.label.toLowerCase().includes("proposal"));
+      if (prop) return prop.id;
+    }
+    if (ds.includes("discovery") || ds.includes("qualif")) {
+      const disc = pipelineStages.find((s) => s.label.toLowerCase().includes("discovery"));
+      if (disc) return disc.id;
+    }
+    if (ds.includes("new") || ds.includes("lead")) {
+      const n = pipelineStages.find((s) => s.label.toLowerCase().includes("new") || s.label.toLowerCase().includes("lead"));
+      if (n) return n.id;
+    }
+
+    return pipelineStages[0]?.id || "new";
+  }, [pipelineStages]);
+
   return (
     <div className="flex h-screen bg-[#F8FAFC] dark:bg-[#0b0f19] text-slate-900 dark:text-slate-100 font-sans overflow-hidden select-none">
       <Sidebar />
@@ -505,38 +543,7 @@ export default function PipelineDealsPage() {
           <div className="w-full overflow-x-auto pb-4 pt-1 scrollbar-thin scrollbar-thumb-slate-200">
             <div className="flex items-start gap-4 min-w-max">
               {pipelineStages.map((st, colIndex) => {
-                const stageDeals = filteredDeals.filter((d) => {
-                  const ds = (d.stage || (d as any).stage_id || "").trim().toLowerCase();
-                  const sl = st.label.trim().toLowerCase();
-                  const si = st.id.trim().toLowerCase();
-                  if (ds === sl || ds === si) return true;
-                  if (sl.includes("discovery") && ds.includes("discovery")) return true;
-                  if (sl.includes("proposal") && (ds.includes("proposal") || ds.includes("quote"))) return true;
-                  if (sl.includes("negotiat") && ds.includes("negotiat")) return true;
-                  if (sl.includes("won") && (ds.includes("won") || ds.includes("customer"))) return true;
-                  if (sl.includes("lost") && (ds.includes("lost") || ds.includes("disqualif"))) return true;
-                  if ((sl.includes("new") || sl.includes("lead")) && (ds.includes("new") || ds.includes("lead"))) return true;
-
-                  // Catch-all: If colIndex is 0 (first column) and deal does not match any other column, show it here
-                  if (colIndex === 0) {
-                    const matchesOther = pipelineStages.some((otherSt, idx) => {
-                      if (idx === 0) return false;
-                      const osl = otherSt.label.trim().toLowerCase();
-                      const osi = otherSt.id.trim().toLowerCase();
-                      if (ds === osl || ds === osi) return true;
-                      if (osl.includes("discovery") && ds.includes("discovery")) return true;
-                      if (osl.includes("proposal") && (ds.includes("proposal") || ds.includes("quote"))) return true;
-                      if (osl.includes("negotiat") && ds.includes("negotiat")) return true;
-                      if (osl.includes("won") && (ds.includes("won") || ds.includes("customer"))) return true;
-                      if (osl.includes("lost") && (ds.includes("lost") || ds.includes("disqualif"))) return true;
-                      if ((osl.includes("new") || osl.includes("lead")) && (ds.includes("new") || ds.includes("lead"))) return true;
-                      return false;
-                    });
-                    if (!matchesOther) return true;
-                  }
-
-                  return false;
-                });
+                const stageDeals = filteredDeals.filter((d) => getStageIdForDeal(d) === st.id);
                 const stageTotalValue = stageDeals.reduce((sum, d) => sum + (d.value || d.deal_value || 0), 0);
 
                 return (

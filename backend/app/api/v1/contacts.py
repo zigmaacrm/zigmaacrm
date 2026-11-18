@@ -217,7 +217,8 @@ async def get_contact_detail(
                 "type": a.type,
                 "notes": a.notes,
                 "status": a.status,
-                "created_at": a.created_at
+                "created_at": a.created_at,
+                "scheduled_at": a.scheduled_at
             }
             for a in activities
         ]
