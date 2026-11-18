@@ -60,6 +60,8 @@ import ContactStagesModal, {
   getContactStageColorPreset
 } from "@/components/contacts/ContactStagesModal";
 
+export const CONTACTS_VIEW_MODE_KEY = "zigmaa_contacts_view_mode";
+
 const CONTACT_COLUMNS: ColumnDefinition[] = [
   { id: "name", label: "Contact Name", locked: true },
   { id: "email", label: "Email" },
@@ -131,8 +133,15 @@ export default function ContactsPage() {
   const [selectedStage, setSelectedStage] = useState<string>("All Stages");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Dual View Mode: Table vs Kanban
+  // Dual View Mode: Table vs Kanban (Persisted in localStorage)
   const [viewMode, setViewMode] = useState<"table" | "kanban">("table");
+
+  const handleViewModeChange = useCallback((mode: "table" | "kanban") => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem(CONTACTS_VIEW_MODE_KEY, mode);
+    } catch {}
+  }, []);
   const [contactStages, setContactStages] = useState<ContactStageConfig[]>(DEFAULT_CONTACT_STAGES);
   const [showStageSettingsModal, setShowStageSettingsModal] = useState(false);
   
@@ -183,7 +192,7 @@ export default function ContactsPage() {
   // In-App Phone Call Dialer Modal
   const [callModalContact, setCallModalContact] = useState<Contact | null>(null);
 
-  // Load persisted contact stages from localStorage
+  // Load persisted contact stages & view mode from localStorage
   useEffect(() => {
     try {
       const saved = localStorage.getItem(CONTACT_STAGES_STORAGE_KEY);
@@ -196,6 +205,13 @@ export default function ContactsPage() {
     } catch (err) {
       console.error("Failed to read contact stages from localStorage:", err);
     }
+
+    try {
+      const savedView = localStorage.getItem(CONTACTS_VIEW_MODE_KEY);
+      if (savedView === "kanban" || savedView === "table") {
+        setViewMode(savedView);
+      }
+    } catch {}
   }, []);
 
   // Helper: Get Initials for Avatar
@@ -369,6 +385,10 @@ export default function ContactsPage() {
       const q = params.get("search");
       if (q) {
         setSearchQuery(q);
+      }
+      const qView = params.get("view");
+      if (qView === "kanban" || qView === "table") {
+        handleViewModeChange(qView);
       }
       if (params.get("new") === "true" || params.get("add") === "true") {
         setShowAddDrawer(true);
@@ -1016,7 +1036,7 @@ export default function ContactsPage() {
               <div className="flex items-center bg-slate-100/90 p-0.5 rounded-xl border border-slate-200/80 shadow-2xs shrink-0">
                 <button
                   type="button"
-                  onClick={() => setViewMode("table")}
+                  onClick={() => handleViewModeChange("table")}
                   className={`h-8 px-2 sm:px-2.5 flex items-center gap-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                     viewMode === "table"
                       ? "bg-white text-slate-900 shadow-xs"
@@ -1029,7 +1049,7 @@ export default function ContactsPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setViewMode("kanban")}
+                  onClick={() => handleViewModeChange("kanban")}
                   className={`h-8 px-2 sm:px-2.5 flex items-center gap-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                     viewMode === "kanban"
                       ? "bg-white text-slate-900 shadow-xs"
