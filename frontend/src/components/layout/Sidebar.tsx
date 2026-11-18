@@ -219,6 +219,16 @@ export default function Sidebar() {
                     : currentPath.startsWith(item.href) ||
                       (item.href === "/pipeline" && currentPath.startsWith("/deals"));
 
+                const targetHref = (() => {
+                  if (item.name === "Contacts" && typeof window !== "undefined") {
+                    try {
+                      const v = localStorage.getItem("zigmaa_contacts_view_mode");
+                      if (v === "kanban") return "/contacts?view=kanban";
+                    } catch {}
+                  }
+                  return item.href;
+                })();
+
                 return (
                   <div
                     key={item.name}
@@ -227,11 +237,11 @@ export default function Sidebar() {
                     onMouseLeave={() => setHoveredItem(null)}
                   >
                     <Link
-                      href={item.href}
+                      href={targetHref}
                       prefetch={true}
                       onClick={() => {
-                        if (typeof window !== "undefined" && currentPath !== item.href) {
-                          window.dispatchEvent(new CustomEvent("zigmaa_nav_start", { detail: { to: item.href } }));
+                        if (typeof window !== "undefined" && currentPath !== targetHref) {
+                          window.dispatchEvent(new CustomEvent("zigmaa_nav_start", { detail: { to: targetHref } }));
                         }
                       }}
                       className={cn(

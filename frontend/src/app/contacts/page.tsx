@@ -133,13 +133,33 @@ export default function ContactsPage() {
   const [selectedStage, setSelectedStage] = useState<string>("All Stages");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Dual View Mode: Table vs Kanban (Persisted in localStorage)
-  const [viewMode, setViewMode] = useState<"table" | "kanban">("table");
+  // Dual View Mode: Table vs Kanban (Persisted in localStorage & URL query)
+  const [viewMode, setViewMode] = useState<"table" | "kanban">(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const qView = params.get("view");
+        if (qView === "kanban" || qView === "table") {
+          return qView;
+        }
+        const savedView = localStorage.getItem(CONTACTS_VIEW_MODE_KEY);
+        if (savedView === "kanban" || savedView === "table") {
+          return savedView;
+        }
+      } catch {}
+    }
+    return "table";
+  });
 
   const handleViewModeChange = useCallback((mode: "table" | "kanban") => {
     setViewMode(mode);
     try {
       localStorage.setItem(CONTACTS_VIEW_MODE_KEY, mode);
+      if (typeof window !== "undefined") {
+        const url = new URL(window.location.href);
+        url.searchParams.set("view", mode);
+        window.history.replaceState(null, "", url.toString());
+      }
     } catch {}
   }, []);
   const [contactStages, setContactStages] = useState<ContactStageConfig[]>(DEFAULT_CONTACT_STAGES);
@@ -207,11 +227,41 @@ export default function ContactsPage() {
     }
 
     try {
-      const savedView = localStorage.getItem(CONTACTS_VIEW_MODE_KEY);
+      const params = new URLSearchParams(window.location.search);
+      const qView = params.get("view");
+      const savedView = (qView === "kanban" || qView === "table")
+        ? qView
+        : localStorage.getItem(CONTACTS_VIEW_MODE_KEY);
+
       if (savedView === "kanban" || savedView === "table") {
         setViewMode(savedView);
+        if (typeof window !== "undefined") {
+          const url = new URL(window.location.href);
+          if (url.searchParams.get("view") !== savedView) {
+            url.searchParams.set("view", savedView);
+            window.history.replaceState(null, "", url.toString());
+          }
+        }
       }
     } catch {}
+
+    const handlePopState = () => {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const qView = params.get("view");
+        if (qView === "kanban" || qView === "table") {
+          setViewMode(qView);
+        }
+      } catch {}
+    };
+    if (typeof window !== "undefined") {
+      window.addEventListener("popstate", handlePopState);
+    }
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("popstate", handlePopState);
+      }
+    };
   }, []);
 
   // Helper: Get Initials for Avatar
@@ -388,7 +438,7 @@ export default function ContactsPage() {
       }
       const qView = params.get("view");
       if (qView === "kanban" || qView === "table") {
-        handleViewModeChange(qView);
+        setViewMode(qView);
       }
       if (params.get("new") === "true" || params.get("add") === "true") {
         setShowAddDrawer(true);
