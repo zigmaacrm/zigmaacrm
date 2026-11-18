@@ -60,7 +60,7 @@ import ContactStagesModal, {
   getContactStageColorPreset
 } from "@/components/contacts/ContactStagesModal";
 
-export const CONTACTS_VIEW_MODE_KEY = "zigmaa_contacts_view_mode";
+const CONTACTS_VIEW_MODE_KEY = "zigmaa_contacts_view_mode";
 
 const CONTACT_COLUMNS: ColumnDefinition[] = [
   { id: "name", label: "Contact Name", locked: true },
@@ -107,7 +107,7 @@ const CONTACTS_MORE_VIEWS: SmartViewTab[] = [
   "Recently modified"
 ];
 
-export type SmartViewTab =
+type SmartViewTab =
   | "All Contacts"
   | "My Contacts"
   | "New Leads"
