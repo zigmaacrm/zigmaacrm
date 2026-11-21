@@ -7,8 +7,11 @@ echo ========================================================
 echo Starting Zigmaa CRM Enterprise Stack
 echo ========================================================
 
-echo [0/4] Freeing stale port listeners (3000, 5001, 8000)...
+echo [0/4] Freeing stale port listeners (3000, 5001, 8000) and cleaning cache...
 powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 3000,5001,8000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 500" >nul 2>&1
+if exist "%~dp0frontend\.next" (
+    rmdir /s /q "%~dp0frontend\.next" >nul 2>&1
+)
 
 set "PYTHON_BIN=python"
 if exist "%~dp0.venv\Scripts\python.exe" (
