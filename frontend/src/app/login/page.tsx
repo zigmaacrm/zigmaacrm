@@ -218,7 +218,15 @@ export default function LoginPage() {
       }
       window.location.href = "/";
     } catch (err: any) {
-      const errMsg = err.message || "Incorrect email or password";
+      let errMsg = err.message || "Incorrect email or password";
+      if (
+        errMsg === "Failed to fetch" ||
+        errMsg.includes("Failed to fetch") ||
+        errMsg.includes("NetworkError") ||
+        errMsg.includes("Load failed")
+      ) {
+        errMsg = "Live backend server is unreachable. Please verify that your backend service on Render is active.";
+      }
       setError(errMsg);
       // Keep error message in top banner only - no duplicate underneath the fields
     } finally {
@@ -290,7 +298,15 @@ export default function LoginPage() {
       });
       window.location.href = "/";
     } catch (err: any) {
-      const errMsg = err.message || "Failed to create account.";
+      let errMsg = err.message || "Failed to create account.";
+      if (
+        errMsg === "Failed to fetch" ||
+        errMsg.includes("Failed to fetch") ||
+        errMsg.includes("NetworkError") ||
+        errMsg.includes("Load failed")
+      ) {
+        errMsg = "Live backend server is unreachable. Please verify that your backend service on Render is active.";
+      }
       setError(errMsg);
 
       // Highlight corresponding field

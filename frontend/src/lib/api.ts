@@ -204,11 +204,16 @@ export const zigmaaApi = {
   },
 
   async login(email: string, password: string) {
-    const res = await fetch(`${API_BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email.trim(), password })
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password })
+      });
+    } catch (fetchErr: any) {
+      throw new Error("Unable to connect to live backend server. The backend service on Render is currently suspended or offline.");
+    }
     
     if (!res.ok) {
       let errorMsg = "Incorrect email or password";
@@ -237,14 +242,19 @@ export const zigmaaApi = {
   },
 
   async superAdminLogin(username: string, password: string) {
-    const res = await fetch(`${API_BASE}/auth/login`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Portal": "super_admin"
-      },
-      body: JSON.stringify({ email: username.trim(), password })
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Portal": "super_admin"
+        },
+        body: JSON.stringify({ email: username.trim(), password })
+      });
+    } catch (fetchErr: any) {
+      throw new Error("Unable to connect to live backend server. The backend service on Render is currently suspended or offline.");
+    }
 
     if (!res.ok) {
       let errorMsg = "Incorrect username or password";
@@ -273,11 +283,16 @@ export const zigmaaApi = {
   },
 
   async signup(data: { email: string; password: string; full_name: string; company_name?: string; organization_name?: string; phone?: string; contact_number?: string }) {
-    const res = await fetch(`${API_BASE}/auth/signup`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data)
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE}/auth/signup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data)
+      });
+    } catch (fetchErr: any) {
+      throw new Error("Unable to connect to live backend server. The backend service on Render is currently suspended or offline.");
+    }
 
     if (!res.ok) {
       let errorMsg = "Failed to create account";
@@ -510,6 +525,9 @@ export const zigmaaApi = {
       clearTimeout(timeoutId);
       if (err.name === "AbortError") {
         throw new Error("Server request timed out. Please try again.");
+      }
+      if (err.name === "TypeError" || err.message?.includes("fetch")) {
+        throw new Error("Unable to connect to live backend server. The backend service on Render is currently suspended or offline.");
       }
       throw err;
     } finally {
